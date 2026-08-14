@@ -2,8 +2,8 @@
 # 部署 companion.luxera.top (需 root)
 set -euo pipefail
 
-BACKEND_JAR=/home/ubuntu/claude-workspace/companion-platform/backend/target/companion-platform-backend-1.0.0.jar
-FRONTEND_DIST=/home/ubuntu/claude-workspace/companion-platform/frontend/dist
+BACKEND_JAR=/home/ubuntu/claude-workspace/companion-agent/backend/target/companion-platform-backend-1.0.0.jar
+FRONTEND_DIST=/home/ubuntu/claude-workspace/companion-agent/frontend/dist
 NGINX_SRC=/home/ubuntu/claude-workspace/infrastructure/nginx/sites/companion.conf
 
 echo "==> 1. 前端静态产物 → /var/www/companion"
@@ -29,7 +29,7 @@ Wants=network.target
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/home/ubuntu/claude-workspace/companion-platform/backend
+WorkingDirectory=/home/ubuntu/claude-workspace/companion-agent/backend
 ExecStart=/usr/bin/java -jar $BACKEND_JAR
 Restart=always
 RestartSec=5

@@ -19,7 +19,7 @@
 ## 目录结构
 
 ```
-companion-platform/
+companion-agent/
 ├── backend/                    # Spring Boot 模块化单体 (com.luxera.companion)
 │   └── src/main/java/com/luxera/companion/
 │       ├── auth/               # 用户系统 + JWT
@@ -55,11 +55,11 @@ companion-platform/
 psql -h 127.0.0.1 -U admin -d postgres -c "CREATE DATABASE companion;"
 
 # 2. 启动后端 (端口 8081)
-cd companion-platform/backend
+cd companion-agent/backend
 ./run.sh                          # 或: mvn spring-boot:run
 
 # 3. 启动前端 (端口 5173, 代理 /api → 8081)
-cd companion-platform/frontend
+cd companion-agent/frontend
 npm install
 npm run dev
 
@@ -81,7 +81,7 @@ export LLM_CHAT_MODEL=deepseek-chat
 ### 冒烟测试
 
 ```bash
-BASE=http://127.0.0.1:8081 bash companion-platform/scripts/smoke.sh
+BASE=http://127.0.0.1:8081 bash companion-agent/scripts/smoke.sh
 ```
 
 覆盖: 注册 → 编译人格 → 创建伴侣 → 问候会话 → SSE 流式聊天 → 记忆抽取 → 关系里程碑 → 生日提醒 → 每日反思 → 记忆搜索。
