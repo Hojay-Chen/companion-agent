@@ -137,10 +137,18 @@ public class MockLlmGateway implements LlmGateway {
                 return extractMemories(req.getUser());
             case "user-model-extraction":
                 return extractUserModel(req.getUser());
+            case "perception":
+                return "{\"intent\":\"chat\",\"emotion\":\"neutral\",\"topic\":\"daily\",\"entities\":[]}";
             case "conversation-summary":
                 return "{\"title\":\"我们的日常\",\"summary\":\"一段平凡的对话,藏着彼此的关心。\",\"keywords\":[]}";
             case "daily-reflection":
                 return "{\"summary\":\"今天相处平实而温暖,用户状态稳定。\",\"insights\":[],\"user_insights\":[],\"memory_candidates\":[],\"relationship_candidates\":[]}";
+            case "weekly-reflection":
+                return "{\"summary\":\"这一周相处稳定,彼此更熟悉了。\",\"long_term_user_understanding\":[],\"behavioral_patterns\":[],\"relationship_changes\":[]}";
+            case "persona-evolution":
+                return "{\"adjustments\":[],\"summary_note\":\"\"}";
+            case "reminder-extraction":
+                return "{\"remind\":false,\"title\":\"\",\"content\":\"\",\"remind_at\":\"\",\"type\":\"user_set\"}";
             default:
                 return "{}";
         }

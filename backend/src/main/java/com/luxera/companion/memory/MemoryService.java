@@ -20,11 +20,14 @@ public class MemoryService {
 
     private final MemoryRepository repo;
     private final EmbeddingProvider embeddingProvider;
+    private final MemoryAssociationService associationService;
     private final AppProperties props;
 
-    public MemoryService(MemoryRepository repo, EmbeddingProvider embeddingProvider, AppProperties props) {
+    public MemoryService(MemoryRepository repo, EmbeddingProvider embeddingProvider,
+                         MemoryAssociationService associationService, AppProperties props) {
         this.repo = repo;
         this.embeddingProvider = embeddingProvider;
+        this.associationService = associationService;
         this.props = props;
     }
 
@@ -98,6 +101,15 @@ public class MemoryService {
         // 记忆强化: 被检索到即视为"再次回忆"
         for (Memory m : top) {
             reinforce(m.getId());
+        }
+
+        // 关联记忆扩展: 沿记忆网络取回邻居(设计文档 28 节)
+        if (!top.isEmpty()) {
+            List<Memory> expanded = associationService.expand(top);
+            if (expanded.size() > limit * 2) {
+                return expanded.subList(0, limit * 2);
+            }
+            return expanded;
         }
         return top;
     }

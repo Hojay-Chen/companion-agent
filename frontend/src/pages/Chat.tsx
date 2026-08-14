@@ -18,6 +18,8 @@ import type {
   Companion,
   Conversation,
   Memory,
+  MemoryLink,
+  MemorySourceMessage,
   Message,
   Notification,
   Relationship,
@@ -337,6 +339,8 @@ function drawerTitle(drawer: DrawerTab, companion: Companion) {
 function MemoriesPanel({ companionId }: { companionId: string }) {
   const [memories, setMemories] = useState<Memory[]>([])
   const [q, setQ] = useState('')
+  const [sourceOf, setSourceOf] = useState<Record<string, MemorySourceMessage[]>>({})
+  const [graph, setGraph] = useState<{ nodes: Memory[]; links: MemoryLink[] } | null>(null)
 
   const load = useCallback(async () => {
     const list = await api.get<Memory[]>(`/api/companions/${companionId}/memories`)
@@ -364,7 +368,35 @@ function MemoriesPanel({ companionId }: { companionId: string }) {
     load()
   }
 
+  async function toggleSource(id: string) {
+    if (sourceOf[id]) {
+      setSourceOf((s) => {
+        const next = { ...s }
+        delete next[id]
+        return next
+      })
+      return
+    }
+    const data = await api.get<{ memory: Memory; source: MemorySourceMessage[] }>(
+      `/api/companions/${companionId}/memories/${id}/source`,
+    )
+    setSourceOf((s) => ({ ...s, [id]: data.source }))
+  }
+
+  async function toggleGraph() {
+    if (graph) {
+      setGraph(null)
+      return
+    }
+    const g = await api.get<{ nodes: Memory[]; links: MemoryLink[] }>(
+      `/api/companions/${companionId}/memories/graph`,
+    )
+    setGraph(g)
+  }
+
   const TYPE_ZH: Record<string, string> = { episodic: '经历', semantic: '认知', shared: '共同' }
+  const nodeById = new Map((graph?.nodes || []).map((n) => [n.id, n]))
+  const linkCount = graph ? graph.links.length : 0
 
   return (
     <div className="space-y-3">
@@ -380,12 +412,34 @@ function MemoriesPanel({ companionId }: { companionId: string }) {
           搜
         </button>
       </div>
-      <p className="text-xs text-cocoa-500">她记得这些,并在聊天时自然地使用它们。你可以删除任何一条。</p>
-      <div className="flex justify-end">
+      <p className="text-xs text-cocoa-500">她记得这些,并在聊天时自然地使用它们。点「为什么」可看来源对话。</p>
+      <div className="flex items-center justify-between">
+        <button className="btn-outline !px-3 !py-1 text-xs" onClick={toggleGraph}>
+          {graph ? '收起记忆图谱' : `记忆图谱 (${linkCount} 条关联)`}
+        </button>
         <button className="btn-danger !px-3 !py-1 text-xs" onClick={clearAll}>
           清空全部
         </button>
       </div>
+
+      {graph && graph.nodes.length > 0 && (
+        <div className="space-y-1.5 rounded-xl border border-cocoa-700 bg-cocoa-850 p-3 animate-fadeUp">
+          <p className="text-xs text-cocoa-500">相关记忆彼此相连:</p>
+          {graph.links.map((l) => {
+            const a = nodeById.get(l.fromMemoryId)
+            const b = nodeById.get(l.toMemoryId)
+            if (!a || !b) return null
+            return (
+              <div key={l.id} className="text-xs text-cocoa-300">
+                <span className="text-cocoa-100">{truncate(a.content, 14)}</span>
+                <span className="mx-1 text-ember-soft">↔</span>
+                <span className="text-cocoa-100">{truncate(b.content, 14)}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
       {memories.length === 0 && <p className="py-8 text-center text-sm text-cocoa-500">还没有记忆,去和她聊聊吧。</p>}
       {memories.map((m) => (
         <div key={m.id} className="rounded-xl border border-cocoa-700 bg-cocoa-850 p-3">
@@ -395,15 +449,37 @@ function MemoriesPanel({ companionId }: { companionId: string }) {
               {m.occurredAt ? format(new Date(m.occurredAt), 'M月d日') : ''}
               {m.sourceType === 'conversation' ? ' · 来自你们的对话' : ''}
             </span>
-            <button onClick={() => forget(m.id)} className="ml-auto text-cocoa-500 hover:text-rose-soft">
-              忘记
-            </button>
+            <div className="ml-auto flex items-center gap-2">
+              <button onClick={() => toggleSource(m.id)} className="text-ember-soft hover:underline">
+                为什么
+              </button>
+              <button onClick={() => forget(m.id)} className="text-cocoa-500 hover:text-rose-soft">
+                忘记
+              </button>
+            </div>
           </div>
           <p className="mt-1.5 text-sm text-cocoa-100">{m.content}</p>
+          {sourceOf[m.id] && (
+            <div className="mt-2 space-y-1 rounded-lg bg-cocoa-900 p-2.5 animate-fadeIn">
+              <p className="text-[11px] text-cocoa-500">来源对话:</p>
+              {sourceOf[m.id].map((s, i) => (
+                <p key={i} className="text-xs text-cocoa-300">
+                  <span className={s.sender === 'user' ? 'text-ember-soft' : 'text-cocoa-400'}>
+                    {s.sender === 'user' ? '你' : '她'}:
+                  </span>{' '}
+                  {s.content}
+                </p>
+              ))}
+            </div>
+          )}
         </div>
       ))}
     </div>
   )
+}
+
+function truncate(s: string, n: number) {
+  return s.length > n ? s.slice(0, n) + '…' : s
 }
 
 // ── 用户模型面板 ────────────────────────────

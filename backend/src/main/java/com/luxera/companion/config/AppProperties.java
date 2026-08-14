@@ -55,6 +55,7 @@ public class AppProperties {
     @Data
     public static class Scheduler {
         private String dailyReflectionCron = "0 17 3 * * *";
+        private String weeklyReflectionCron = "0 0 5 * * MON";
         private String proactiveCron = "0 */15 * * * *";
         private String birthdayCron = "0 5 8 * * *";
     }

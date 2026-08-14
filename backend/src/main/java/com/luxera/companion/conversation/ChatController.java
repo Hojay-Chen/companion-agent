@@ -2,6 +2,7 @@ package com.luxera.companion.conversation;
 
 import com.luxera.companion.agent.CompanionRuntime;
 import com.luxera.companion.agent.PerceptionEngine;
+import com.luxera.companion.agent.WorkingMemory;
 import com.luxera.companion.config.CurrentUser;
 import com.luxera.companion.persona.CompanionService;
 import lombok.Data;
@@ -31,16 +32,18 @@ public class ChatController {
     private final CompanionService companionService;
     private final CompanionRuntime runtime;
     private final PerceptionEngine perceptionEngine;
+    private final WorkingMemory workingMemory;
     private final CurrentUser currentUser;
     private final TaskExecutor taskExecutor;
 
     public ChatController(ConversationService conversationService, CompanionService companionService,
-                          CompanionRuntime runtime, PerceptionEngine perceptionEngine,
+                          CompanionRuntime runtime, PerceptionEngine perceptionEngine, WorkingMemory workingMemory,
                           CurrentUser currentUser, TaskExecutor taskExecutor) {
         this.conversationService = conversationService;
         this.companionService = companionService;
         this.runtime = runtime;
         this.perceptionEngine = perceptionEngine;
+        this.workingMemory = workingMemory;
         this.currentUser = currentUser;
         this.taskExecutor = taskExecutor;
     }
@@ -101,7 +104,9 @@ public class ChatController {
                             String conversationId, String content) {
         try {
             PerceptionEngine.Perception perception = perceptionEngine.perceive(content);
-            conversationService.addMessage(conversationId, "user", content, perception, false);
+            Message userMessage = conversationService.addMessage(conversationId, "user", content, perception, false);
+            workingMemory.record(companionId, conversationId,
+                    new WorkingMemory.RecentLine("user", content, userMessage.getCreatedAt()), perception);
             List<Message> recent = conversationService.recentMessages(conversationId, 40);
 
             send(emitter, "meta", Map.of(
@@ -110,7 +115,7 @@ public class ChatController {
                     "topic", perception.topic()));
 
             CompanionRuntime.ChatOutcome outcome = runtime.generate(userId, companionId, conversationId,
-                    content, recent, delta -> send(emitter, "token", Map.of("delta", delta)));
+                    userMessage.getId(), content, recent, delta -> send(emitter, "token", Map.of("delta", delta)));
 
             String reply = outcome.reply();
             if (!reply.equals(outcome.rawReply().trim())) {
@@ -118,6 +123,8 @@ public class ChatController {
                 send(emitter, "replace", Map.of("content", reply));
             }
             Message assistant = conversationService.addMessage(conversationId, "companion", reply, null, false);
+            workingMemory.record(companionId, conversationId,
+                    new WorkingMemory.RecentLine("companion", reply, assistant.getCreatedAt()), null);
             send(emitter, "done", Map.of("messageId", assistant.getId()));
             emitter.complete();
         } catch (Exception e) {

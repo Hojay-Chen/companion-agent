@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Download, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowLeft, Brain, Download, Sparkles, Trash2 } from 'lucide-react'
 import { api } from '@/api/client'
 import CompanionAvatar from '@/components/CompanionAvatar'
-import type { Companion, LifeEvent } from '@/types'
+import type { Companion, LifeEvent, PersonaVersion, ReflectionRecord } from '@/types'
 import { format } from 'date-fns'
 
 export default function Settings() {
@@ -13,18 +13,24 @@ export default function Settings() {
 
   const [companion, setCompanion] = useState<Companion | null>(null)
   const [lifeEvents, setLifeEvents] = useState<LifeEvent[]>([])
+  const [reflections, setReflections] = useState<ReflectionRecord[]>([])
+  const [personaVersions, setPersonaVersions] = useState<PersonaVersion[]>([])
   const [description, setDescription] = useState('')
   const [updating, setUpdating] = useState(false)
   const [msg, setMsg] = useState('')
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
-    const [c, events] = await Promise.all([
+    const [c, events, refs, versions] = await Promise.all([
       api.get<Companion>(`/api/companions/${companionId}`),
       api.get<LifeEvent[]>(`/api/companions/${companionId}/life-events`),
+      api.get<ReflectionRecord[]>(`/api/companions/${companionId}/reflections`),
+      api.get<PersonaVersion[]>(`/api/companions/${companionId}/persona/versions`),
     ])
     setCompanion(c)
     setLifeEvents(events)
+    setReflections(refs)
+    setPersonaVersions(versions)
   }, [companionId])
 
   useEffect(() => {
@@ -135,6 +141,58 @@ export default function Settings() {
             <Sparkles size={15} />
             {updating ? '正在重新认识…' : '更新人格'}
           </button>
+        </section>
+
+        {/* 人格版本历史 */}
+        <section className="card p-6">
+          <div className="mb-1 text-xs uppercase tracking-widest text-ember-soft">人格演化</div>
+          <h3 className="font-editorial text-xl text-cocoa-50">人格版本历史</h3>
+          <div className="mt-4 space-y-2">
+            {personaVersions.map((v) => (
+              <div key={v.id} className="rounded-xl border border-cocoa-700 bg-cocoa-850 px-3 py-2.5">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="chip bg-ember/10 text-ember-soft">v{v.version}</span>
+                  {v.active && <span className="chip bg-emerald-600/20 text-emerald-400">当前</span>}
+                  <span className="ml-auto text-xs text-cocoa-500">
+                    {format(new Date(v.createdAt), 'M月d日 HH:mm')} · {v.changeSource === 'evolution' ? '自动演化' : v.changeSource === 'user' ? '用户设定' : v.changeSource}
+                  </span>
+                </div>
+                {v.changeReason && <p className="mt-1 text-xs text-cocoa-400">{v.changeReason}</p>}
+              </div>
+            ))}
+            {personaVersions.length === 0 && <p className="text-sm text-cocoa-500">还没有版本记录。</p>}
+          </div>
+        </section>
+
+        {/* 反思记录 */}
+        <section className="card p-6">
+          <div className="mb-1 text-xs uppercase tracking-widest text-ember-soft">反思</div>
+          <h3 className="font-editorial text-xl text-cocoa-50">她的复盘</h3>
+          <div className="mt-4 space-y-2">
+            {reflections.map((r) => (
+              <div key={r.id} className="rounded-xl border border-cocoa-700 bg-cocoa-850 px-3 py-2.5">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="chip bg-ember/10 text-ember-soft">{r.type === 'daily' ? '每日' : '每周'}</span>
+                  <span className="text-cocoa-500">{r.period}</span>
+                  {r.insights && r.insights.length > 0 && (
+                    <span className="ml-auto text-cocoa-500">{r.insights.length} 条洞察</span>
+                  )}
+                </div>
+                {r.summary && <p className="mt-1.5 text-sm text-cocoa-200">{r.summary}</p>}
+                {r.insights && r.insights.length > 0 && (
+                  <ul className="mt-1.5 space-y-0.5">
+                    {r.insights.slice(0, 4).map((ins, i) => (
+                      <li key={i} className="flex gap-1.5 text-xs text-cocoa-400">
+                        <Brain size={12} className="mt-0.5 shrink-0 text-ember-soft" />
+                        {String(ins)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+            {reflections.length === 0 && <p className="text-sm text-cocoa-500">还没有反思记录,每天凌晨会自动生成。</p>}
+          </div>
         </section>
 
         {/* 人生时间线 */}

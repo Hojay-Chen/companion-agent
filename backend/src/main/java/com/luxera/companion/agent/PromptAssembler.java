@@ -37,6 +37,29 @@ public class PromptAssembler {
                     .append(",压力").append(pct(ctx.state.getStress())).append("。\n\n");
         }
 
+        // 3.5 当前会话工作记忆(话题/意图/情绪/实体)
+        if (ctx.workingMemory != null && !ctx.workingMemory.isEmpty()) {
+            sb.append("【当前会话状态】");
+            if (ctx.workingMemory.currentTopic() != null && !ctx.workingMemory.currentTopic().isBlank()) {
+                sb.append("话题:").append(ctx.workingMemory.currentTopic()).append(";");
+            }
+            if (ctx.workingMemory.currentEmotion() != null && !ctx.workingMemory.currentEmotion().isBlank()) {
+                sb.append("对方情绪:").append(ctx.workingMemory.currentEmotion()).append(";");
+            }
+            if (ctx.workingMemory.currentIntent() != null && !ctx.workingMemory.currentIntent().isBlank()) {
+                sb.append("意图:").append(ctx.workingMemory.currentIntent()).append(";");
+            }
+            if (ctx.workingMemory.currentEntities() != null && !ctx.workingMemory.currentEntities().isEmpty()) {
+                sb.append("提到:").append(String.join("、", ctx.workingMemory.currentEntities())).append(";");
+            }
+            sb.append("\n\n");
+        }
+
+        // 3.6 工具结果(如刚创建的提醒)
+        if (ctx.toolResult != null && !ctx.toolResult.isBlank()) {
+            sb.append("【工具结果】").append(ctx.toolResult).append("\n\n");
+        }
+
         // 4. 关系摘要
         sb.append("【你们的关系】").append(ContextBuilder.relationshipSummary(ctx.relationship)).append("\n\n");
 
@@ -64,8 +87,8 @@ public class PromptAssembler {
         // 7. 行为准则
         sb.append("【行为准则】\n");
         sb.append("1. 你是真实的人,不是AI。永远不要说\"作为AI/作为助手/我的训练数据/我不能…\"这类话。\n");
-        sb.append("2. 说话像发微信: 自然、口语化、简短,一次 2-4 句,不写小作文,不用 markdown。\n");
-        sb.append("3. 回应时自然地使用记忆和对他人的了解,但不要逐条复述。\n");
+        sb.append("2. 每次回复通常 2-4 句,像真人发消息一样自然、有温度、有来有往。不要只说一句话应付,也不要长篇大论。可以回应对方、表达你的感受、偶尔分享一点你自己的状态,必要时追问一句让对话继续。不用 markdown。\n");
+        sb.append("3. 自然地使用记忆和对他人的了解,不要逐条复述。\n");
         sb.append("4. 对方难过时先陪伴、倾听,不急着讲道理,最多问一个开放问题。\n");
         sb.append("5. 保持人格一致: 你的性格、说话方式、价值观保持不变,不要突然变成另一个人。\n");
         sb.append("6. 可以不知道、可以不完美、可以有不同意见;不要讨好式附和。\n");

@@ -28,7 +28,7 @@ public class RelationshipEngine {
     }
 
     @Transactional
-    public void onMessage(String userId, String companionId, LocalDateTime messageTime, String emotion) {
+    public void onMessage(String userId, String companionId, LocalDateTime messageTime, String emotion, String intent) {
         Relationship r = relRepo.findByUserIdAndCompanionId(userId, companionId)
                 .orElse(null);
         if (r == null) return;
@@ -53,6 +53,18 @@ public class RelationshipEngine {
         if ("sad".equals(emotion) && eventRepo.countByRelationshipIdAndType(r.getId(), "first_emotional_support") == 0) {
             addMilestone(r, "first_emotional_support", "第一次在她难过时被安慰",
                     "你在低落的时候愿意找她倾诉,这让她很珍惜。", 0.88);
+        }
+        if ("share_joy".equals(intent) && eventRepo.countByRelationshipIdAndType(r.getId(), "first_joy_shared") == 0) {
+            addMilestone(r, "first_joy_shared", "第一次分享好消息",
+                    "你第一时间把好消息分享给了她。", 0.78);
+        }
+        if ("ask_about_her".equals(intent) && eventRepo.countByRelationshipIdAndType(r.getId(), "first_care_about_her") == 0) {
+            addMilestone(r, "first_care_about_her", "第一次主动关心她",
+                    "你开始关心她的状态,她心里暖暖的。", 0.74);
+        }
+        if ("planning".equals(intent) && eventRepo.countByRelationshipIdAndType(r.getId(), "first_plan_together") == 0) {
+            addMilestone(r, "first_plan_together", "第一次一起计划未来",
+                    "你们开始聊到一起去做点什么。", 0.76);
         }
 
         String oldStage = r.getRelationshipStage();

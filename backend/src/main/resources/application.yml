@@ -61,7 +61,7 @@ app:
 
   # Agent 运行时
   agent:
-    intent-extraction: heuristic       # heuristic | llm
+    intent-extraction: ${INTENT_EXTRACTION:llm}   # heuristic | llm (LLM 感知精炼)
     memory-top-n: 12                   # 上下文注入的记忆条数
     context-max-tokens: 12000
     recent-messages: 20                # 注入的最近消息数
@@ -71,6 +71,7 @@ app:
   # 定时任务(验收时可手动触发 /api/admin/.../run)
   scheduler:
     daily-reflection-cron: 0 17 3 * * *
+    weekly-reflection-cron: 0 0 5 * * MON
     proactive-cron: 0 */15 * * * *
     birthday-cron: 0 5 8 * * *
 

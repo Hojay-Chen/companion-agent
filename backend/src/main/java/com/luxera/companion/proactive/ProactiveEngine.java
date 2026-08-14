@@ -21,8 +21,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 主动消息引擎: 调度器只决定何时检查,真正决定是否打扰的是决策引擎。
- * (设计文档 52-55 节)
+ * 主动消息引擎(设计文档 52-55 节): 调度器只负责何时检查,
+ * 真正决定是否打扰的是决策引擎(打断成本 vs 预期价值)。
  */
 @Slf4j
 @Component
@@ -75,14 +75,14 @@ public class ProactiveEngine {
         int dndStart = props.getProactive().getDndStartHour();
         int dndEnd = props.getProactive().getDndEndHour();
         int hour = now.getHour();
+        boolean inDnd = inDnd(hour, dndStart, dndEnd);
 
-        // 2. 模式触发的主动消息
+        // 2. 每个伴侣: 评估主动触发
         for (Companion c : companionRepo.findAll()) {
             if (c.getDeletedAt() != null) continue;
             String userId = c.getUserId();
-            if (inDnd(hour, dndStart, dndEnd)) continue;
+            if (inDnd) continue;
 
-            // 打扰控制: 频率
             Notification lastProactive = notificationRepo.findTopByCompanionIdAndTypeOrderByCreatedAtDesc(c.getId(), "proactive");
             int minIntervalHours = props.getProactive().getMinIntervalHours();
             if (lastProactive != null && lastProactive.getCreatedAt().isAfter(now.minusHours(minIntervalHours))) continue;
@@ -90,52 +90,90 @@ public class ProactiveEngine {
                     userId, c.getId(), now.toLocalDate().atStartOfDay());
             if (todayCount >= props.getProactive().getMaxNotificationsPerDay()) continue;
 
-            // 触发条件与预期价值
-            double expectedValue = 0;
-            String title = null;
-            String content = null;
-
-            List<Message> week = messageRepo.findUserMessagesSince(c.getId(), now.minusDays(7));
-            long lateCount = week.stream().filter(m -> {
-                int h = m.getCreatedAt().getHour();
-                return h >= 23 || h < 2;
-            }).count();
-            boolean alreadyMentioned = lastProactive != null && lastProactive.getContent().contains("忙到很晚");
-            if (lateCount >= 3 && !alreadyMentioned) {
-                expectedValue = Math.max(expectedValue, 0.62);
-                title = "深夜提醒";
-                content = "你最近是不是又忙到很晚了?我不催你睡,只是想知道你还好吗。";
-            }
-
             Relationship rel = relationshipRepo.findByUserIdAndCompanionId(userId, c.getId()).orElse(null);
             LocalDateTime lastInteraction = rel != null ? rel.getLastInteractionAt() : null;
-            if (rel != null && rel.getFamiliarity() > 0.35 && lastInteraction != null
-                    && lastInteraction.isBefore(now.minusDays(3)) && title == null) {
-                expectedValue = Math.max(expectedValue, 0.5);
-                title = "好久不见";
-                content = "最近几天你都没怎么找我,我有点想你了。要是忙,就告诉我一声,我不吵你。";
+            boolean responsive = isResponsive(userId, c.getId(), lastProactive, now);
+
+            ProactiveDecision decision = decide(c, now, lastInteraction, lastProactive, todayCount, responsive);
+            if (decision.act()) {
+                notificationService.notify(userId, c.getId(), "proactive", decision.title(), decision.content());
+                injectMessage(c.getId(), decision.content());
+                actions.add(c.getName() + " → " + decision.title() + " (预期" + round(decision.expectedValue())
+                        + " vs 成本" + round(decision.interruptionCost()) + ")");
+                log.info("[主动消息] {}: {} (trigger={})", c.getName(), decision.title(), decision.trigger());
             }
-
-            if (title == null) continue;
-
-            // 打断成本 > 预期价值 → 不做
-            double cost = interruptionCost(now, lastInteraction);
-            if (cost >= expectedValue) continue;
-
-            notificationService.notify(userId, c.getId(), "proactive", title, content);
-            injectMessage(c.getId(), content);
-            actions.add(c.getName() + " → " + title);
-            log.info("[主动消息] {}: {}", c.getName(), title);
         }
         return actions;
     }
 
-    private double interruptionCost(LocalDateTime now, LocalDateTime lastInteraction) {
+    /** 决策引擎: 收集触发,计算预期价值与打断成本(设计文档 53-55 节) */
+    ProactiveDecision decide(Companion c, LocalDateTime now, LocalDateTime lastInteraction,
+                             Notification lastProactive, long todayCount, boolean responsive) {
+        String userId = c.getUserId();
+
+        // 触发 1: 深夜加班模式
+        List<Message> week = messageRepo.findUserMessagesSince(c.getId(), now.minusDays(7));
+        long lateCount = week.stream().filter(m -> {
+            int h = m.getCreatedAt().getHour();
+            return h >= 23 || h < 2;
+        }).count();
+        boolean alreadyMentioned = lastProactive != null && lastProactive.getContent().contains("忙到很晚");
+        if (lateCount >= 3 && !alreadyMentioned) {
+            return ProactiveDecision.send("深夜提醒",
+                    "你最近是不是又忙到很晚了?我不催你睡,只是想知道你还好吗。",
+                    "late_work", 0.62, cost(now, lastInteraction, todayCount, responsive));
+        }
+
+        // 触发 2: 分享好消息后的跟进(48h 内,未跟进过)
+        Message lastJoy = null;
+        for (Message m : messageRepo.findUserMessagesSince(c.getId(), now.minusDays(2))) {
+            if ("share_joy".equals(m.getIntent()) || "happy".equals(m.getEmotion())) {
+                lastJoy = m;
+            }
+        }
+        if (lastJoy != null) {
+            boolean followedUp = notificationRepo
+                    .findTop10ByUserIdAndCompanionIdAndCreatedAtAfterOrderByCreatedAtDesc(userId, c.getId(), lastJoy.getCreatedAt())
+                    .stream().anyMatch(n -> "proactive".equals(n.getType()) && n.getTitle().contains("好消息"));
+            if (!followedUp) {
+                return ProactiveDecision.send("跟进好消息",
+                        "前两天你说的那个好消息,后来怎么样了?我一直惦记着呢。",
+                        "follow_up_joy", 0.65, cost(now, lastInteraction, todayCount, responsive));
+            }
+        }
+
+        // 触发 3: 长时间沉默
+        Relationship rel = relationshipRepo.findByUserIdAndCompanionId(userId, c.getId()).orElse(null);
+        if (rel != null && rel.getFamiliarity() > 0.35 && lastInteraction != null
+                && lastInteraction.isBefore(now.minusDays(3))) {
+            return ProactiveDecision.send("好久不见",
+                    "最近几天你都没怎么找我,我有点想你了。要是忙,就告诉我一声,我不吵你。",
+                    "silence", 0.5, cost(now, lastInteraction, todayCount, responsive));
+        }
+
+        return ProactiveDecision.nothing();
+    }
+
+    private double cost(LocalDateTime now, LocalDateTime lastInteraction, long todayCount, boolean responsive) {
         double cost = 0.15;
         int h = now.getHour();
         if (h >= 0 && h < 8) cost += 0.4;
+        if (h >= 22) cost += 0.1;
         if (lastInteraction != null && lastInteraction.isAfter(now.minusHours(4))) cost += 0.35;
+        cost += responsive ? -0.1 : 0.1;
+        if (todayCount >= props.getProactive().getMaxNotificationsPerDay()) cost += 0.3;
         return cost;
+    }
+
+    /** 上次主动消息后 2 小时内用户是否回话(响应率代理) */
+    private boolean isResponsive(String userId, String companionId, Notification lastProactive, LocalDateTime now) {
+        if (lastProactive == null) return true;
+        LocalDateTime windowEnd = lastProactive.getCreatedAt().plusHours(2);
+        if (windowEnd.isAfter(now)) windowEnd = now;
+        for (Message m : messageRepo.findUserMessagesSince(companionId, lastProactive.getCreatedAt())) {
+            if (m.getCreatedAt().isBefore(windowEnd)) return true;
+        }
+        return false;
     }
 
     private void injectMessage(String companionId, String content) {
@@ -149,5 +187,9 @@ public class ProactiveEngine {
             return hour >= start || hour < end;
         }
         return hour >= start && hour < end;
+    }
+
+    private static double round(double v) {
+        return Math.round(v * 100) / 100.0;
     }
 }

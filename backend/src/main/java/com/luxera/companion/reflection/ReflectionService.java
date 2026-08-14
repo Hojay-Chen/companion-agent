@@ -1,7 +1,10 @@
 package com.luxera.companion.reflection;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.luxera.companion.conversation.Message;
 import com.luxera.companion.conversation.MessageRepository;
+import com.luxera.companion.llm.LlmRouter;
+import com.luxera.companion.llm.StructuredRequest;
 import com.luxera.companion.memory.Memory;
 import com.luxera.companion.memory.MemoryService;
 import com.luxera.companion.persona.Companion;
@@ -16,29 +19,55 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
- * 反思引擎(异步,不参与实时聊天): 每日汇总 → 记忆候选 / 用户模型候选 / 伴侣日记。
- * (设计文档 48-51 节)
+ * 反思引擎(设计文档 48-51 节): 异步、不参与实时聊天。
+ * 每日/每周用 LLM 对对话做深度分析,产出记忆候选 / 用户模型候选 / 关系候选。
  */
 @Slf4j
 @Service
 public class ReflectionService {
+
+    private static final String DAILY_SYSTEM = """
+            你是反思引擎,回顾用户与数字伴侣今天的对话,产出对关系的深度洞察。
+            输出严格 JSON,不要输出其他内容:
+            {
+              "summary": "今天相处的总结(2-3句)",
+              "insights": ["对今天关系的洞察,2-4条"],
+              "memory_candidates": [{"content":"值得长期记住的事","type":"episodic|semantic|shared","importance":0-1}],
+              "user_insights": ["对用户的新认识,1-3条"],
+              "relationship_candidates": ["关系变化的观察,1-3条"]
+            }
+            只基于提供的对话,不要编造。""";
+
+    private static final String WEEKLY_SYSTEM = """
+            你是反思引擎,回顾用户与数字伴侣过去一周的对话,形成长期用户理解。
+            输出严格 JSON,不要输出其他内容:
+            {
+              "summary": "这一周的相处总结(2-3句)",
+              "long_term_user_understanding": ["对用户稳定的长期认识,3-6条,必须是这周对话能支撑的"],
+              "behavioral_patterns": [{"pattern":"user_often_works_late","description":"行为模式描述","confidence":0-1}],
+              "relationship_changes": ["关系在这周的变化,1-3条"]
+            }
+            只基于提供的对话,不要编造。""";
 
     private final CompanionRepository companionRepo;
     private final MessageRepository messageRepo;
     private final MemoryService memoryService;
     private final UserModelService userModelService;
     private final ReflectionRecordRepository recordRepo;
+    private final LlmRouter llm;
 
     public ReflectionService(CompanionRepository companionRepo, MessageRepository messageRepo,
                              MemoryService memoryService, UserModelService userModelService,
-                             ReflectionRecordRepository recordRepo) {
+                             ReflectionRecordRepository recordRepo, LlmRouter llm) {
         this.companionRepo = companionRepo;
         this.messageRepo = messageRepo;
         this.memoryService = memoryService;
         this.userModelService = userModelService;
         this.recordRepo = recordRepo;
+        this.llm = llm;
     }
 
     @Transactional
@@ -49,31 +78,40 @@ public class ReflectionService {
             try {
                 results.add(dailyReflect(c));
             } catch (Exception e) {
-                log.warn("反思失败 companion={}: {}", c.getId(), e.getMessage());
+                log.warn("每日反思失败 companion={}: {}", c.getId(), e.getMessage());
             }
         }
         return results;
     }
 
     @Transactional
+    public List<ReflectionRecord> runAllWeekly() {
+        List<ReflectionRecord> results = new ArrayList<>();
+        for (Companion c : companionRepo.findAll()) {
+            if (c.getDeletedAt() != null) continue;
+            try {
+                results.add(weeklyReflect(c));
+            } catch (Exception e) {
+                log.warn("每周反思失败 companion={}: {}", c.getId(), e.getMessage());
+            }
+        }
+        return results;
+    }
+
+    // ── 每日 ─────────────────────────────────
+    @Transactional
     public ReflectionRecord dailyReflect(Companion c) {
         LocalDate today = LocalDate.now();
-        LocalDateTime startOfDay = today.atStartOfDay();
+        String period = today.toString();
         String userId = c.getUserId();
 
-        // 今日用户消息
-        List<Message> todayMessages = messageRepo.findUserMessagesSince(c.getId(), startOfDay);
-        long todayCount = todayMessages.size();
-
-        // 近 7 天深夜活跃模式
-        List<Message> weekMessages = messageRepo.findUserMessagesSince(c.getId(), LocalDateTime.now().minusDays(7));
-        long lateCount = weekMessages.stream()
-                .filter(m -> {
-                    int h = m.getCreatedAt().getHour();
-                    return h >= 23 || h < 2;
-                }).count();
-        boolean latePattern = lateCount >= 3;
-        if (latePattern) {
+        // 确定性规则: 深夜活跃模式(不依赖 LLM,稳定)
+        List<Message> weekUser = messageRepo.findUserMessagesSince(c.getId(), LocalDateTime.now().minusDays(7));
+        long lateCount = weekUser.stream().filter(m -> {
+            int h = m.getCreatedAt().getHour();
+            return h >= 23 || h < 2;
+        }).count();
+        if (lateCount >= 3) {
             UserPattern p = new UserPattern();
             p.setPattern("user_often_works_late");
             p.setDescription("最近经常深夜(23点后)还在忙");
@@ -83,33 +121,114 @@ public class ReflectionService {
             userModelService.savePattern(userId, c.getId(), p);
         }
 
-        // 伴侣日记(episodic)
-        if (todayCount > 0) {
-            Memory diary = new Memory();
-            diary.setUserId(userId);
-            diary.setCompanionId(c.getId());
-            diary.setType("episodic");
-            diary.setContent("今天和用户聊了 " + todayCount + " 条消息"
-                    + (latePattern ? ",用户又忙到很晚" : ",气氛还不错"));
-            diary.setSummary("每日反思日记");
-            diary.setImportance(0.4);
-            diary.setOccurredAt(LocalDateTime.now());
-            diary.setSourceType("reflection");
-            diary.setSourceId("daily");
-            memoryService.save(diary);
-        }
-
+        List<Message> dayMessages = messageRepo.findMessagesBetween(c.getId(), today.atStartOfDay(), today.plusDays(1).atStartOfDay());
         ReflectionRecord rec = new ReflectionRecord();
         rec.setUserId(userId);
         rec.setCompanionId(c.getId());
         rec.setType("daily");
-        rec.setPeriod(today.toString());
-        rec.setSummary((todayCount > 0 ? "你们今天聊了 " + todayCount + " 条消息。" : "今天没有聊天。")
-                + (latePattern ? "注意到用户常在深夜活跃。" : ""));
-        rec.setInsights(new ArrayList<>());
-        rec.setUserModelCandidates(latePattern
-                ? List.of(java.util.Map.of("pattern", "user_often_works_late", "confidence", 0.72))
-                : new ArrayList<>());
+        rec.setPeriod(period);
+
+        if (dayMessages.isEmpty()) {
+            rec.setSummary("今天没有聊天。");
+            rec.setInsights(new ArrayList<>());
+            return recordRepo.save(rec);
+        }
+
+        String excerpt = dayMessages.stream()
+                .map(m -> ("user".equals(m.getSenderType()) ? "用户" : "伴侣") + ": " + m.getContent())
+                .collect(Collectors.joining("\n"));
+        if (excerpt.length() > 3000) excerpt = excerpt.substring(0, 3000);
+
+        try {
+            var res = llm.structured(StructuredRequest.builder()
+                    .task("daily-reflection").system(DAILY_SYSTEM).user(excerpt).temperature(0.3).build());
+            JsonNode root = res.getJson();
+            rec.setSummary(root.path("summary").asText("今天有交流,但没能自动总结。"));
+            rec.setInsights(texts(root.path("insights")));
+            rec.setUserModelCandidates(texts(root.path("user_insights")));
+            rec.setRelationshipCandidates(texts(root.path("relationship_candidates")));
+
+            // 记忆候选入库
+            List<Memory> candidates = new ArrayList<>();
+            for (JsonNode n : root.path("memory_candidates")) {
+                Memory m = new Memory();
+                m.setType(n.path("type").asText("episodic"));
+                m.setContent(n.path("content").asText(""));
+                m.setImportance(clamp(n.path("importance").asDouble(0.5)));
+                m.setOccurredAt(LocalDateTime.now());
+                if (!m.getContent().isBlank()) candidates.add(m);
+            }
+            if (!candidates.isEmpty()) {
+                memoryService.saveBatch(userId, c.getId(), "reflection", "daily-" + period, candidates);
+            }
+            rec.setMemoryCandidates(new ArrayList<>(candidates.stream().map(Memory::getContent).toList()));
+        } catch (Exception e) {
+            log.warn("每日反思 LLM 分析失败,使用兜底摘要: {}", e.getMessage());
+            rec.setSummary("今天聊了 " + dayMessages.size() + " 条消息。");
+        }
         return recordRepo.save(rec);
+    }
+
+    // ── 每周 ─────────────────────────────────
+    @Transactional
+    public ReflectionRecord weeklyReflect(Companion c) {
+        LocalDate today = LocalDate.now();
+        LocalDate weekStart = today.minusDays(6);
+        String period = weekStart + "_" + today;
+        String userId = c.getUserId();
+
+        List<Message> weekMessages = messageRepo.findMessagesBetween(c.getId(), weekStart.atStartOfDay(), today.plusDays(1).atStartOfDay());
+        ReflectionRecord rec = new ReflectionRecord();
+        rec.setUserId(userId);
+        rec.setCompanionId(c.getId());
+        rec.setType("weekly");
+        rec.setPeriod(period);
+
+        if (weekMessages.isEmpty()) {
+            rec.setSummary("这一周没有聊天。");
+            return recordRepo.save(rec);
+        }
+
+        String excerpt = weekMessages.stream()
+                .map(m -> ("user".equals(m.getSenderType()) ? "用户" : "伴侣") + ": " + m.getContent())
+                .collect(Collectors.joining("\n"));
+        if (excerpt.length() > 5000) excerpt = excerpt.substring(0, 5000);
+
+        try {
+            var res = llm.structured(StructuredRequest.builder()
+                    .task("weekly-reflection").system(WEEKLY_SYSTEM).user(excerpt).temperature(0.3).build());
+            JsonNode root = res.getJson();
+            rec.setSummary(root.path("summary").asText("这一周有交流。"));
+            rec.setInsights(texts(root.path("long_term_user_understanding")));
+
+            // 行为模式入库
+            for (JsonNode n : root.path("behavioral_patterns")) {
+                UserPattern p = new UserPattern();
+                p.setPattern(n.path("pattern").asText("user_behavior"));
+                p.setDescription(n.path("description").asText(p.getPattern()));
+                p.setConfidence(clamp(n.path("confidence").asDouble(0.6)));
+                p.setEvidence(List.of("每周反思 " + period));
+                userModelService.savePattern(userId, c.getId(), p);
+            }
+            rec.setRelationshipCandidates(texts(root.path("relationship_changes")));
+        } catch (Exception e) {
+            log.warn("每周反思 LLM 分析失败,使用兜底摘要: {}", e.getMessage());
+            rec.setSummary("这一周聊了 " + weekMessages.size() + " 条消息。");
+        }
+        return recordRepo.save(rec);
+    }
+
+    // ── 工具 ─────────────────────────────────
+    private static List<Object> texts(JsonNode arr) {
+        List<Object> list = new ArrayList<>();
+        for (JsonNode n : arr) {
+            String s = n.asText("");
+            if (!s.isBlank()) list.add(s);
+        }
+        return list;
+    }
+
+    private static double clamp(double v) {
+        return Math.max(0, Math.min(1, v));
     }
 }

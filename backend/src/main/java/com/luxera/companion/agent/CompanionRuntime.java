@@ -5,6 +5,7 @@ import com.luxera.companion.config.AppProperties;
 import com.luxera.companion.llm.ChatRequest;
 import com.luxera.companion.llm.LlmMessage;
 import com.luxera.companion.llm.LlmRouter;
+import com.luxera.companion.tool.ReminderPlanner;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -25,17 +26,20 @@ public class CompanionRuntime {
     private final PromptAssembler promptAssembler;
     private final PerceptionEngine perceptionEngine;
     private final NaturalnessEngine naturalnessEngine;
+    private final ReminderPlanner reminderPlanner;
     private final LlmRouter llm;
     private final AgentPostProcessor postProcessor;
     private final AppProperties props;
 
     public CompanionRuntime(ContextBuilder contextBuilder, PromptAssembler promptAssembler,
                             PerceptionEngine perceptionEngine, NaturalnessEngine naturalnessEngine,
-                            LlmRouter llm, AgentPostProcessor postProcessor, AppProperties props) {
+                            ReminderPlanner reminderPlanner, LlmRouter llm,
+                            AgentPostProcessor postProcessor, AppProperties props) {
         this.contextBuilder = contextBuilder;
         this.promptAssembler = promptAssembler;
         this.perceptionEngine = perceptionEngine;
         this.naturalnessEngine = naturalnessEngine;
+        this.reminderPlanner = reminderPlanner;
         this.llm = llm;
         this.postProcessor = postProcessor;
         this.props = props;
@@ -45,11 +49,16 @@ public class CompanionRuntime {
      * 生成回复。onDelta 用于 SSE 逐 token 推送。
      * 返回经自然度校验后的最终文本与感知结果。
      */
-    public ChatOutcome generate(String userId, String companionId, String conversationId,
+    public ChatOutcome generate(String userId, String companionId, String conversationId, String userMessageId,
                                 String userText, List<Message> recentMessages,
                                 Consumer<String> onDelta) {
         PerceptionEngine.Perception perception = perceptionEngine.perceive(userText);
-        AgentContext ctx = contextBuilder.build(userId, companionId, recentMessages);
+        // 工具调用: 用户请求提醒时,先建提醒并把结果注入上下文,让回复自然确认
+        String toolResult = null;
+        if ("request_tool".equals(perception.intent())) {
+            toolResult = reminderPlanner.tryCreateFromMessage(userId, companionId, userText);
+        }
+        AgentContext ctx = contextBuilder.build(userId, companionId, conversationId, recentMessages, toolResult);
         String system = promptAssembler.buildSystem(ctx);
 
         List<LlmMessage> messages = new ArrayList<>();
@@ -91,7 +100,8 @@ public class CompanionRuntime {
             log.debug("自然度校验问题: {}", validation.issues());
         }
 
-        postProcessor.afterExchange(userId, companionId, conversationId, userText, reply, perception);
+        postProcessor.afterExchange(userId, companionId, conversationId, userMessageId, userText, reply,
+                perception, validation.issues());
         return new ChatOutcome(reply, raw.toString(), perception, ctx);
     }
 

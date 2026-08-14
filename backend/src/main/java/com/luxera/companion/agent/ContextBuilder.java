@@ -25,20 +25,23 @@ public class ContextBuilder {
     private final RelationshipService relationshipService;
     private final AgentStateService agentStateService;
     private final UserModelService userModelService;
+    private final WorkingMemory workingMemory;
     private final AppProperties props;
 
     public ContextBuilder(CompanionService companionService, MemoryService memoryService,
                           RelationshipService relationshipService, AgentStateService agentStateService,
-                          UserModelService userModelService, AppProperties props) {
+                          UserModelService userModelService, WorkingMemory workingMemory, AppProperties props) {
         this.companionService = companionService;
         this.memoryService = memoryService;
         this.relationshipService = relationshipService;
         this.agentStateService = agentStateService;
         this.userModelService = userModelService;
+        this.workingMemory = workingMemory;
         this.props = props;
     }
 
-    public AgentContext build(String userId, String companionId, List<Message> recentMessages) {
+    public AgentContext build(String userId, String companionId, String conversationId, List<Message> recentMessages,
+                              String toolResult) {
         var companion = companionService.requireOwned(userId, companionId);
         var persona = companionService.getPersona(companionId);
         var state = agentStateService.get(companionId);
@@ -46,7 +49,9 @@ public class ContextBuilder {
         String query = recentMessages.isEmpty() ? "" : recentMessages.get(recentMessages.size() - 1).getContent();
         var memories = memoryService.retrieve(userId, companionId, query, props.getAgent().getMemoryTopN());
         var userModel = userModelService.summary(userId, companionId);
-        return new AgentContext(companion, persona, state, relationship, memories, userModel, recentMessages, LocalDateTime.now());
+        var wm = conversationId != null ? workingMemory.get(companionId, conversationId) : null;
+        return new AgentContext(companion, persona, state, relationship, memories, userModel, recentMessages, wm,
+                toolResult, LocalDateTime.now());
     }
 
     public static String relationshipSummary(Relationship r) {

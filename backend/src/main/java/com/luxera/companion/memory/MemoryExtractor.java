@@ -36,10 +36,12 @@ public class MemoryExtractor {
 
     private final LlmRouter llm;
     private final MemoryService memoryService;
+    private final MemoryAssociationService associationService;
 
-    public MemoryExtractor(LlmRouter llm, MemoryService memoryService) {
+    public MemoryExtractor(LlmRouter llm, MemoryService memoryService, MemoryAssociationService associationService) {
         this.llm = llm;
         this.memoryService = memoryService;
+        this.associationService = associationService;
     }
 
     @Async
@@ -72,6 +74,13 @@ public class MemoryExtractor {
             }
             if (!memories.isEmpty()) {
                 memoryService.saveBatch(userId, companionId, "conversation", conversationId, memories);
+                // 为新记忆建立关联(记忆网络): 同批互链 + 与历史记忆互链
+                associationService.linkBatch(memories);
+                for (Memory m : memories) {
+                    if (m.getId() != null) {
+                        associationService.linkNewMemory(userId, companionId, m, 100);
+                    }
+                }
                 log.info("记忆抽取完成: {} 条 (conversation={})", memories.size(), conversationId);
             }
         } catch (Exception e) {

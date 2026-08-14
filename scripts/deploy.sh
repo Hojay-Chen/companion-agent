@@ -29,6 +29,8 @@ Wants=network.target
 [Service]
 Type=simple
 User=ubuntu
+# 敏感配置(如 DEEPSEEK_API_KEY)放在 /etc/companion/.env, 不入 git
+EnvironmentFile=/etc/companion/.env
 WorkingDirectory=/home/ubuntu/claude-workspace/companion-agent/backend
 ExecStart=/usr/bin/java -jar $BACKEND_JAR
 Restart=always

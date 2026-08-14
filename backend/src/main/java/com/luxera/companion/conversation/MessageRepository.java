@@ -16,4 +16,11 @@ public interface MessageRepository extends JpaRepository<Message, String> {
             + "and m.conversationId in (select c.id from Conversation c where c.companionId = :companionId)")
     List<Message> findUserMessagesSince(@Param("companionId") String companionId,
                                         @Param("since") LocalDateTime since);
+
+    @Query("select m from Message m where m.createdAt >= :since and m.createdAt < :until "
+            + "and m.conversationId in (select c.id from Conversation c where c.companionId = :companionId) "
+            + "order by m.createdAt asc")
+    List<Message> findMessagesBetween(@Param("companionId") String companionId,
+                                      @Param("since") LocalDateTime since,
+                                      @Param("until") LocalDateTime until);
 }

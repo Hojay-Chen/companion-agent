@@ -105,6 +105,10 @@ public class CompanionService {
         return personaService.getActive(companionId);
     }
 
+    public List<PersonaVersion> listPersonaVersions(String companionId) {
+        return personaService.history(companionId);
+    }
+
     public List<LifeEvent> listLifeEvents(String companionId) {
         return lifeEvents.findByCompanionIdOrderByStartTimeAsc(companionId);
     }

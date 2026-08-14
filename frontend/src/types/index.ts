@@ -249,3 +249,26 @@ export interface ReflectionRecord {
   insights?: unknown[]
   createdAt: string
 }
+
+export interface MemorySourceMessage {
+  sender: string
+  content: string
+  createdAt: string
+}
+
+export interface MemoryLink {
+  id: string
+  fromMemoryId: string
+  toMemoryId: string
+  relation: string
+  strength: number
+}
+
+export interface PersonaVersion {
+  id: string
+  version: number
+  active: boolean
+  changeSource?: string
+  changeReason?: string
+  createdAt: string
+}

@@ -109,6 +109,13 @@ public class CompanionController {
                 }).toList();
     }
 
+    /** 人格版本历史(含演化记录) */
+    @GetMapping("/{id}/persona/versions")
+    public List<PersonaVersion> personaVersions(@PathVariable String id) {
+        companionService.requireOwned(currentUser.requireUserId(), id);
+        return companionService.listPersonaVersions(id);
+    }
+
     private CompanionDtos.CompanionDto toDto(String userId, Companion c) {
         CompanionDtos.CompanionDto dto = new CompanionDtos.CompanionDto();
         dto.setId(c.getId());
