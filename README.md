@@ -96,7 +96,20 @@ BASE=http://127.0.0.1:8081 bash companion-agent/scripts/smoke.sh
 - **记忆强度**: `importance × confidence × recency_decay × emotional_weight × relationship_weight × retrieval_frequency`;被检索即强化,低活性旧记忆每周归档。
 - **时间是一等公民**: 人生事件/关系里程碑/共同经历/记忆都带时间,Prompt 注入当前时间与关系时长。
 - **主动消息有打断控制**: DND 时段、频率上限、打断成本 vs 预期价值,成本高则 DO_NOTHING。
-- **自然度引擎**: 拦截"作为AI"套话、过度 emoji、说教式建议;流式输出 + 整体替换修正。
+- **自然度引擎**: 拦截"作为AI"套话、模板安慰、过度道歉、过度 emoji、说教式建议;流式输出 + 整体替换修正。
+
+## 进阶能力(2026-08-15,按设计文档补齐)
+
+- **LLM 感知精炼**: 启发式先保实时回复,异步用 LLM 精炼意图/情绪/话题/实体,更新消息元数据、Working Memory 与 Agent 状态(`agent/PerceptionRefiner`, `agent/WorkingMemory`)。
+- **关联记忆图谱**: `memory_links` 表 + 中文二元组重叠近似语义,检索沿关联扩展(`memory/MemoryAssociationService`),前端可查看记忆图谱。
+- **记忆透明**: "为什么你知道" — `/memories/why` 与 `/memories/{id}/source` 返回命中记忆的**来源对话摘录**。
+- **LLM 每日/每周反思**: `reflection/` 用大模型产出洞察/记忆候选/用户模型候选/关系候选;每周反思后自动驱动人格演化。
+- **人格演化**: `persona/PersonaEvolutionService` 由反思证据驱动,保守微调 traits(±0.05/次),生成新版本,可回溯。
+- **聊天内建提醒**: 用户说"帮我记得…" → `tool/ReminderPlanner` LLM 解析时间/内容并创建提醒,回复自然确认。
+- **主动消息决策**: `proactive/ProactiveDecision` 多触发(深夜加班/好消息跟进/长时间沉默),打断成本含响应率。
+- **关系里程碑扩展**: 第一次分享好消息 / 第一次主动关心她 / 第一次一起计划未来。
+
+> 环境约束: 未装 pgvector/无向量库 → 记忆语义近似用中文二元组重叠;Redis 未装 → Working Memory 用内存实现(接口可替换)。
 
 ## 主要 API
 
