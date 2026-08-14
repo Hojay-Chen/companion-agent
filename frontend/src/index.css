@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg: #14100e;
+  --color-surface: #1a1512;
+  --color-raised: #211a16;
+  --color-line: #332a21;
+  --color-ink: #efe5d6;
+  --color-ink-soft: #a89a8e;
+  --color-ember: #d97757;
+  --color-ember-soft: #e8b467;
+  color-scheme: dark;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-cocoa-950 text-cocoa-100 font-sans;
+  }
+  ::selection {
+    background: rgba(217, 119, 87, 0.28);
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #332a21;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #473a2d;
+    background-clip: padding-box;
+    border: 2px solid transparent;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-all duration-150 select-none;
+  }
+  .btn-primary {
+    @apply btn bg-ember text-cocoa-950 hover:bg-ember-soft hover:shadow-glow;
+  }
+  .btn-ghost {
+    @apply btn bg-cocoa-800 text-cocoa-200 hover:bg-cocoa-700 border border-cocoa-700;
+  }
+  .btn-outline {
+    @apply btn border border-cocoa-600 text-cocoa-200 hover:border-ember-soft hover:text-ember-soft;
+  }
+  .btn-danger {
+    @apply btn bg-rosewood/20 text-rosewood-soft border border-rosewood/30 hover:bg-rosewood/30;
+  }
+  .input {
+    @apply w-full rounded-xl bg-cocoa-850 border border-cocoa-700 px-3.5 py-2.5 text-sm text-cocoa-100 placeholder:text-cocoa-500 focus:outline-none focus:border-ember-soft/60 focus:ring-1 focus:ring-ember-soft/30 transition;
+  }
+  .label {
+    @apply block text-xs font-medium text-cocoa-400 mb-1.5 tracking-wide;
+  }
+  .card {
+    @apply rounded-2xl bg-cocoa-900 border border-cocoa-800 shadow-panel;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs;
+  }
+  .page-title {
+    @apply font-editorial text-3xl text-cocoa-50;
+  }
+  .marker-dot {
+    @apply inline-block h-1.5 w-1.5 rounded-full;
+  }
+}

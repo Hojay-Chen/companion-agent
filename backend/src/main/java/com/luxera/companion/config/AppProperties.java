@@ -1,0 +1,78 @@
+package com.luxera.companion.config;
+
+import lombok.Data;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * 全局业务配置,绑定 application.yml 的 app.* 配置树。
+ */
+@Component
+@ConfigurationProperties(prefix = "app")
+@Data
+public class AppProperties {
+
+    private Jwt jwt = new Jwt();
+    private Llm llm = new Llm();
+    private Agent agent = new Agent();
+    private Scheduler scheduler = new Scheduler();
+    private Proactive proactive = new Proactive();
+
+    @Data
+    public static class Jwt {
+        private String secret;
+        private long expirationMs = 604800000L;
+    }
+
+    @Data
+    public static class Llm {
+        /** openai-compatible | anthropic | mock */
+        private String provider = "openai-compatible";
+        private String baseUrl = "https://api.deepseek.com";
+        private String apiKey = "";
+        private String chatModel = "deepseek-chat";
+        private double temperature = 0.9;
+        private double structuredTemperature = 0.3;
+        private int maxTokens = 2048;
+        private int timeoutSeconds = 120;
+        /** api-key 为空时自动降级为 mock */
+        private boolean mockFallback = true;
+    }
+
+    @Data
+    public static class Agent {
+        private String intentExtraction = "heuristic";
+        private int memoryTopN = 12;
+        private int contextMaxTokens = 12000;
+        private int recentMessages = 20;
+        private double memoryMinStrength = 0.02;
+        private int workingMemoryTtlMinutes = 720;
+    }
+
+    @Data
+    public static class Scheduler {
+        private String dailyReflectionCron = "0 17 3 * * *";
+        private String proactiveCron = "0 */15 * * * *";
+        private String birthdayCron = "0 5 8 * * *";
+    }
+
+    @Data
+    public static class Proactive {
+        private int dndStartHour = 23;
+        private int dndEndHour = 8;
+        private int minIntervalHours = 4;
+        private int maxNotificationsPerDay = 3;
+    }
+
+    /** 供定时任务读取自定义 cron 用的便利方法 */
+    public Map<String, String> cronMap() {
+        Map<String, String> m = new HashMap<>();
+        m.put("daily-reflection", scheduler.getDailyReflectionCron());
+        m.put("proactive", scheduler.getProactiveCron());
+        m.put("birthday", scheduler.getBirthdayCron());
+        return m;
+    }
+}

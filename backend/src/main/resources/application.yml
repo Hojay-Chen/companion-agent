@@ -1,0 +1,82 @@
+# Persistent AI Companion 平台后端配置
+# 全部配置本地化,与 blog-platform 保持一致风格
+server:
+  port: 8081
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: companion-platform-backend
+
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/companion
+    username: admin
+    password: shared-secret
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQL10Dialect
+        jdbc.time_zone: Asia/Shanghai
+
+  jackson:
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+    default-property-inclusion: non_null
+
+  task:
+    execution:
+      thread-name-prefix: companion-async-
+      pool:
+        core-size: 4
+        max-size: 12
+        queue-capacity: 200
+
+# ── 业务配置 ────────────────────────────────
+app:
+  # 认证
+  jwt:
+    secret: ${JWT_SECRET:luxera-companion-platform-dev-secret-change-me-0123456789abcdef}
+    expiration-ms: ${JWT_EXPIRATION_MS:604800000}   # 7 天
+
+  # LLM 网关: openai-compatible | anthropic | mock
+  # 默认 DeepSeek(OpenAI 兼容); 未配置 api-key 时自动降级 Mock,保证离线可跑通全流程
+  llm:
+    provider: ${LLM_PROVIDER:openai-compatible}
+    base-url: ${LLM_BASE_URL:https://api.deepseek.com}
+    api-key: ${DEEPSEEK_API_KEY:}
+    chat-model: ${LLM_CHAT_MODEL:deepseek-chat}
+    temperature: 0.9
+    structured-temperature: 0.3
+    max-tokens: 2048
+    timeout-seconds: ${LLM_TIMEOUT_SECONDS:120}
+    mock-fallback: ${LLM_MOCK_FALLBACK:true}
+
+  # Agent 运行时
+  agent:
+    intent-extraction: heuristic       # heuristic | llm
+    memory-top-n: 12                   # 上下文注入的记忆条数
+    context-max-tokens: 12000
+    recent-messages: 20                # 注入的最近消息数
+    memory-min-strength: 0.02          # 检索最低强度阈值
+    working-memory-ttl-minutes: 720    # 会话工作记忆 TTL
+
+  # 定时任务(验收时可手动触发 /api/admin/.../run)
+  scheduler:
+    daily-reflection-cron: 0 17 3 * * *
+    proactive-cron: 0 */15 * * * *
+    birthday-cron: 0 5 8 * * *
+
+  # 主动消息打断控制
+  proactive:
+    dnd-start-hour: 23                 # Do Not Disturb 起始(23:00)
+    dnd-end-hour: 8                    # 结束(08:00)
+    min-interval-hours: 4              # 两次主动消息最小间隔
+    max-notifications-per-day: 3

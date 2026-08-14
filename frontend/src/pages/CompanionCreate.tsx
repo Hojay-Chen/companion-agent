@@ -1,0 +1,213 @@
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { ArrowLeft, Sparkles } from 'lucide-react'
+import { api } from '@/api/client'
+import { useCompanionStore } from '@/stores/companion'
+import CompanionAvatar from '@/components/CompanionAvatar'
+import type { Companion, Persona } from '@/types'
+
+const TRAIT_ZH: Record<string, string> = {
+  warmth: '温柔',
+  maturity: '成熟',
+  independence: '独立',
+  playfulness: '活泼',
+  curiosity: '好奇',
+  confidence: '自信',
+  patience: '耐心',
+  sociability: '外向',
+  emotionalSensitivity: '敏感',
+  rationality: '理性',
+}
+
+const DEFAULT_SCENARIOS = [
+  { label: '工作失败', text: '用户今天工作失败了,有点沮丧地跟你说了这件事。' },
+  { label: '深夜疲惫', text: '用户深夜发消息说,最近加班太累了。' },
+  { label: '分享喜悦', text: '用户开心地告诉你,他通过了重要的面试。' },
+  { label: '被误解', text: '用户有点委屈地说,今天被人误会了。' },
+]
+
+export default function CompanionCreate() {
+  const navigate = useNavigate()
+  const addCompanion = useCompanionStore((s) => s.add)
+  const [description, setDescription] = useState('')
+  const [compiling, setCompiling] = useState(false)
+  const [persona, setPersona] = useState<Persona | null>(null)
+  const [preview, setPreview] = useState('')
+  const [scenario, setScenario] = useState(DEFAULT_SCENARIOS[0].text)
+  const [previewing, setPreviewing] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [error, setError] = useState('')
+
+  async function compile() {
+    if (!description.trim()) return
+    setCompiling(true)
+    setError('')
+    try {
+      const resp = await api.post<{ persona: Persona; preview: string }>('/api/companions/compile', {
+        description: description.trim(),
+      })
+      setPersona(resp.persona)
+      setPreview(resp.preview)
+      setScenario(DEFAULT_SCENARIOS[0].text)
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setCompiling(false)
+    }
+  }
+
+  async function rePreview() {
+    if (!persona) return
+    setPreviewing(true)
+    setError('')
+    try {
+      const resp = await api.post<{ response: string }>('/api/companions/preview', { persona, scenario })
+      setPreview(resp.response)
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setPreviewing(false)
+    }
+  }
+
+  async function create() {
+    if (!persona) return
+    setCreating(true)
+    setError('')
+    try {
+      const c = await api.post<Companion>('/api/companions', { persona })
+      addCompanion(c)
+      navigate(`/companions/${c.id}`, { replace: true })
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const name = persona?.identity?.name || '她'
+  const traits = persona?.personality?.traits || {}
+
+  return (
+    <div className="min-h-screen bg-cocoa-950">
+      <header className="border-b border-cocoa-800">
+        <div className="mx-auto flex max-w-3xl items-center gap-3 px-5 py-4">
+          <button onClick={() => navigate('/companions')} className="btn-ghost !px-3 !py-1.5">
+            <ArrowLeft size={15} />
+          </button>
+          <span className="font-editorial text-lg text-cocoa-50">创建新伴侣</span>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-3xl px-5 py-8">
+        {error && <p className="mb-4 rounded-xl border border-rosewood/30 bg-rosewood/10 px-4 py-2 text-sm text-rose-soft">{error}</p>}
+
+        {/* Step 1: 描述 */}
+        <section className="card p-6">
+          <div className="mb-1 text-xs uppercase tracking-widest text-ember-soft">STEP 1</div>
+          <h2 className="font-editorial text-2xl text-cocoa-50">用你的话描述她</h2>
+          <p className="mt-1 text-sm text-cocoa-400">
+            性格、说话方式、你们的关系、她想要怎样的相处。想到什么说什么,她会从你的描述里诞生。
+          </p>
+          <textarea
+            className="input mt-4 min-h-32 resize-none"
+            placeholder="例如:我想要一个比我成熟一点的女生,温柔但不黏人,有自己的生活,平时活泼一点,偶尔会调侃我。我不开心的时候希望她先陪我,不要一直讲大道理。"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+          <button className="btn-primary mt-4" onClick={compile} disabled={compiling || !description.trim()}>
+            <Sparkles size={16} />
+            {compiling ? '正在读懂你…' : '编译人格'}
+          </button>
+        </section>
+
+        {/* Step 2: 预览 */}
+        {persona && (
+          <section className="card mt-6 p-6 animate-fadeUp">
+            <div className="mb-1 text-xs uppercase tracking-widest text-ember-soft">STEP 2 · 预览</div>
+            <div className="mt-3 flex items-center gap-4">
+              <CompanionAvatar name={name} gender={persona.identity?.gender} size={56} />
+              <div>
+                <h3 className="font-editorial text-2xl text-cocoa-50">{name}</h3>
+                <p className="text-sm text-cocoa-400">
+                  {persona.identity?.gender === 'male' ? '男性' : '女性'} · {persona.relationship?.type === 'friend' ? '朋友' : '恋人'}
+                </p>
+              </div>
+            </div>
+
+            {persona.personality?.summary && (
+              <p className="mt-4 text-sm leading-relaxed text-cocoa-200">{persona.personality.summary}</p>
+            )}
+
+            {Object.keys(traits).length > 0 && (
+              <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2">
+                {Object.entries(traits).map(([key, val]) => (
+                  <div key={key} className="flex items-center gap-2 text-xs">
+                    <span className="w-8 text-cocoa-400">{TRAIT_ZH[key] || key}</span>
+                    <div className="h-1 flex-1 overflow-hidden rounded-full bg-cocoa-800">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-ember-deep to-ember-soft"
+                        style={{ width: `${Math.round((val || 0) * 100)}%` }}
+                      />
+                    </div>
+                    <span className="w-7 text-right text-cocoa-500">{Math.round((val || 0) * 100)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {persona.communication?.style && (
+              <p className="mt-4 text-sm text-cocoa-400">说话方式:{persona.communication.style}</p>
+            )}
+
+            {/* 场景预览 */}
+            <div className="mt-6 rounded-2xl border border-cocoa-700 bg-cocoa-850 p-4">
+              <p className="text-xs text-cocoa-500">场景:{scenario}</p>
+              <div className="mt-3 flex gap-2 flex-wrap">
+                {DEFAULT_SCENARIOS.map((s) => (
+                  <button
+                    key={s.label}
+                    onClick={() => {
+                      setScenario(s.text)
+                      setPreview('')
+                    }}
+                    className={`chip border transition ${
+                      scenario === s.text
+                        ? 'border-ember-soft/50 bg-ember/15 text-ember-soft'
+                        : 'border-cocoa-700 text-cocoa-400 hover:border-cocoa-500'
+                    }`}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+              <button className="btn-ghost mt-3 !px-3 !py-1.5 text-xs" onClick={rePreview} disabled={previewing}>
+                {previewing ? '正在想…' : '换一种回应看看'}
+              </button>
+              {preview && (
+                <div className="mt-4 rounded-2xl border border-cocoa-700 bg-cocoa-800 px-4 py-3 text-sm text-cocoa-100 animate-fadeUp">
+                  {preview}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 flex items-center justify-between">
+              <button
+                className="btn-outline"
+                onClick={() => {
+                  setPersona(null)
+                  setPreview('')
+                }}
+              >
+                重新描述
+              </button>
+              <button className="btn-primary" onClick={create} disabled={creating}>
+                {creating ? '正在遇见…' : '就她了,开始相处'}
+              </button>
+            </div>
+          </section>
+        )}
+      </main>
+    </div>
+  )
+}
