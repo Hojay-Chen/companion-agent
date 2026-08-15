@@ -6,6 +6,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 public interface MessageRepository extends JpaRepository<Message, String> {
     List<Message> findByConversationIdOrderByCreatedAtAsc(String conversationId);
@@ -23,4 +24,18 @@ public interface MessageRepository extends JpaRepository<Message, String> {
     List<Message> findMessagesBetween(@Param("companionId") String companionId,
                                       @Param("since") LocalDateTime since,
                                       @Param("until") LocalDateTime until);
+
+    // ── V3: 主动消息 = Chat 消息(kind=PROACTIVE), 用于去重/间隔 bookkeeping ──
+    @Query("select m from Message m where m.messageKind = :kind "
+            + "and m.conversationId in (select c.id from Conversation c where c.companionId = :companionId) "
+            + "order by m.createdAt desc")
+    Optional<Message> findFirstByCompanionIdAndMessageKindOrderByCreatedAtDesc(
+            @Param("companionId") String companionId, @Param("kind") String kind);
+
+    @Query("select count(m) from Message m where m.messageKind = :kind "
+            + "and m.conversationId in (select c.id from Conversation c where c.companionId = :companionId) "
+            + "and m.createdAt >= :since")
+    long countByCompanionIdAndMessageKindAndCreatedAtAfter(
+            @Param("companionId") String companionId, @Param("kind") String kind,
+            @Param("since") LocalDateTime since);
 }

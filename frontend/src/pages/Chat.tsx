@@ -67,6 +67,15 @@ export default function Chat() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // ── V3 交互运行时: 连发聚合 + 打字指示器 ──
+  const [gathering, setGathering] = useState(false)
+  const [typing, setTyping] = useState(false)
+  const pendingBatchRef = useRef<string[]>([])
+  const gatherTimerRef = useRef<number | null>(null)
+  const batchStartRef = useRef(0)
+  const sendGapsRef = useRef<number[]>([])
+  const lastSendRef = useRef(0)
+
   // ── 数据加载 ─────────────────────────────
   const loadCompanion = useCallback(async () => {
     const c = await api.get<Companion>(`/api/companions/${companionId}`)
@@ -124,37 +133,59 @@ export default function Chat() {
     return () => clearInterval(t)
   }, [loadUnread])
 
-  // ── 发送消息 ─────────────────────────────
-  async function send() {
-    const content = input.trim()
-    if (!content || streaming || !activeConvId) return
-    setInput('')
-    setError('')
+  // 切换会话/卸载时清理连发聚合状态
+  useEffect(() => {
+    if (gatherTimerRef.current) clearTimeout(gatherTimerRef.current)
+    gatherTimerRef.current = null
+    pendingBatchRef.current = []
+    setGathering(false)
+    setTyping(false)
+  }, [activeConvId])
+
+  // ── 发送消息(V3: 连发聚合, 一次请求至多一次回复) ──
+  const MAX_GATHER_MS = 2200
+
+  function recordGap(gap: number) {
+    if (gap > 0 && gap < 60000) {
+      sendGapsRef.current.push(gap)
+      if (sendGapsRef.current.length > 5) sendGapsRef.current.shift()
+    }
+  }
+
+  /** 自适应静默窗口: 按用户近期发送间隔的 1.5 倍, 限 800~2200ms */
+  function nextWindowMs(): number {
+    const gaps = sendGapsRef.current
+    if (gaps.length === 0) return 1400
+    const avg = gaps.reduce((a, b) => a + b, 0) / gaps.length
+    return Math.max(800, Math.min(MAX_GATHER_MS, avg * 1.5))
+  }
+
+  async function fireBatch() {
+    const batch = pendingBatchRef.current
+    if (batch.length === 0) return
+    pendingBatchRef.current = []
     setStreaming(true)
     setStreamingText('')
-
-    const tempUser: Message = {
-      id: `temp-${Date.now()}`,
-      conversationId: activeConvId,
-      senderType: 'user',
-      content,
-      createdAt: new Date().toISOString(),
-    }
-    setMessages((prev) => [...prev, tempUser])
+    setTyping(false)
 
     try {
       await streamPost(
         `/api/companions/${companionId}/conversations/${activeConvId}/chat`,
-        { content },
+        { messages: batch.map((c) => ({ content: c })) },
         (event, data) => {
           const d = data as Record<string, unknown>
           if (event === 'token') {
             setStreamingText((t) => t + String(d.delta ?? ''))
           } else if (event === 'replace') {
             setStreamingText(String(d.content ?? ''))
+          } else if (event === 'typing_start') {
+            setTyping(true)
+          } else if (event === 'typing_stop') {
+            setTyping(false)
           } else if (event === 'error') {
             setError(String(d.message ?? '生成失败'))
           }
+          // meta / boundary / done(skipped/ignored) 无需特判, done 后统一重载
         },
       )
       await loadMessages(activeConvId)
@@ -165,6 +196,51 @@ export default function Chat() {
     } finally {
       setStreaming(false)
       setStreamingText('')
+      setTyping(false)
+    }
+  }
+
+  function send() {
+    const content = input.trim()
+    if (!content || !activeConvId) return
+    // 请求已发出且不在聚合期 → 锁定输入(避免打断流式)
+    if (streaming && !gathering) return
+    setInput('')
+    setError('')
+
+    // 本地即时上屏
+    const tempUser: Message = {
+      id: `temp-${Date.now()}-${pendingBatchRef.current.length}`,
+      conversationId: activeConvId,
+      senderType: 'user',
+      content,
+      createdAt: new Date().toISOString(),
+    }
+    setMessages((prev) => [...prev, tempUser])
+
+    // 入聚合队列
+    const nowMs = Date.now()
+    const isFirst = pendingBatchRef.current.length === 0
+    pendingBatchRef.current = [...pendingBatchRef.current, content]
+    if (isFirst) batchStartRef.current = nowMs
+    recordGap(nowMs - (lastSendRef.current || nowMs))
+    lastSendRef.current = nowMs
+
+    // 自适应窗口(从 batch 开始起算, 总额封顶)
+    const elapsed = nowMs - batchStartRef.current
+    const remaining = Math.max(0, MAX_GATHER_MS - elapsed)
+    const delay = Math.min(nextWindowMs(), remaining || 0)
+    if (gatherTimerRef.current) clearTimeout(gatherTimerRef.current)
+    if (delay <= 0) {
+      setGathering(false)
+      fireBatch()
+    } else {
+      setGathering(true)
+      gatherTimerRef.current = window.setTimeout(() => {
+        gatherTimerRef.current = null
+        setGathering(false)
+        fireBatch()
+      }, delay)
     }
   }
 
@@ -182,6 +258,9 @@ export default function Chat() {
   if (!companion) {
     return <div className="flex min-h-screen items-center justify-center text-cocoa-500">加载中…</div>
   }
+
+  // 请求已发出且不在聚合期 → 锁定输入; 聚合期(静默窗口)允许继续连发
+  const inputLocked = streaming && !gathering
 
   return (
     <div className="flex h-screen overflow-hidden bg-cocoa-950">
@@ -291,7 +370,8 @@ export default function Chat() {
                 </Fragment>
               )
             })}
-            {streaming && <ChatBubble sender="companion" content={streamingText} streaming />}
+            {typing && !streamingText && <ChatBubble sender="companion" content="" streaming />}
+            {streamingText && <ChatBubble sender="companion" content={streamingText} streaming />}
             <div ref={bottomRef} />
           </div>
         </div>
@@ -317,7 +397,7 @@ export default function Chat() {
                 }
               }}
             />
-            <button onClick={send} disabled={streaming || !input.trim()} className="btn-primary !px-3.5">
+            <button onClick={send} disabled={inputLocked || !input.trim()} className="btn-primary !px-3.5">
               <Send size={16} />
             </button>
           </div>

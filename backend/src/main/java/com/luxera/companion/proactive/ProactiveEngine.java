@@ -51,7 +51,6 @@ public class ProactiveEngine {
     private final MessageRepository messageRepo;
     private final ConversationRepository conversationRepo;
     private final ConversationService conversationService;
-    private final NotificationRepository notificationRepo;
     private final NotificationService notificationService;
     private final ReminderRepository reminderRepo;
     private final LlmRouter llm;
@@ -62,7 +61,7 @@ public class ProactiveEngine {
     public ProactiveEngine(AppProperties props, CompanionRepository companionRepo, PersonaService personaService,
                            RelationshipRepository relationshipRepo, MessageRepository messageRepo,
                            ConversationRepository conversationRepo, ConversationService conversationService,
-                           NotificationRepository notificationRepo, NotificationService notificationService,
+                           NotificationService notificationService,
                            ReminderRepository reminderRepo, LlmRouter llm, CompanionSchedule schedule,
                            OpenLoopService openLoopService, ThoughtService thoughtService) {
         this.props = props;
@@ -72,7 +71,6 @@ public class ProactiveEngine {
         this.messageRepo = messageRepo;
         this.conversationRepo = conversationRepo;
         this.conversationService = conversationService;
-        this.notificationRepo = notificationRepo;
         this.notificationService = notificationService;
         this.reminderRepo = reminderRepo;
         this.llm = llm;
@@ -111,11 +109,14 @@ public class ProactiveEngine {
             // 她的作息: 睡觉时不主动打扰(比 DND 更贴合个人作息)
             if (schedule.activityFor(c.getId(), now) == CompanionSchedule.Activity.SLEEP) continue;
 
-            Notification lastProactive = notificationRepo.findTopByCompanionIdAndTypeOrderByCreatedAtDesc(c.getId(), "proactive");
+            // V3: 主动消息 = Chat 消息(kind=PROACTIVE), 不再生成 notification
+            Message lastProactive = messageRepo
+                    .findFirstByCompanionIdAndMessageKindOrderByCreatedAtDesc(c.getId(), "PROACTIVE")
+                    .orElse(null);
             int minIntervalHours = props.getProactive().getMinIntervalHours();
             if (lastProactive != null && lastProactive.getCreatedAt().isAfter(now.minusHours(minIntervalHours))) continue;
-            long todayCount = notificationRepo.countByUserIdAndCompanionIdAndCreatedAtAfter(
-                    userId, c.getId(), now.toLocalDate().atStartOfDay());
+            long todayCount = messageRepo.countByCompanionIdAndMessageKindAndCreatedAtAfter(
+                    c.getId(), "PROACTIVE", now.toLocalDate().atStartOfDay());
             if (todayCount >= props.getProactive().getMaxNotificationsPerDay()) continue;
 
             Relationship rel = relationshipRepo.findByUserIdAndCompanionId(userId, c.getId()).orElse(null);
@@ -125,7 +126,7 @@ public class ProactiveEngine {
             ProactiveDecision decision = decide(c, now, lastInteraction, todayCount, responsive);
             if (decision.act()) {
                 String content = draftMessage(c, decision.trigger(), decision.content(), now);
-                notificationService.notify(userId, c.getId(), "proactive", decision.title(), content);
+                // V3: 主动消息只进聊天框(见设计 §二十七~三十), 它是 Chat 消息, 不是 Notification
                 injectMessage(c.getId(), content);
                 actions.add(c.getName() + " → " + decision.title() + " (预期" + round(decision.expectedValue())
                         + " vs 成本" + round(decision.interruptionCost()) + ")");
@@ -197,8 +198,10 @@ public class ProactiveEngine {
             return h >= 23 || h < 2;
         }).count();
         boolean alreadyMentioned = false;
-        Notification lastP = notificationRepo.findTopByCompanionIdAndTypeOrderByCreatedAtDesc(c.getId(), "proactive");
-        if (lastP != null) alreadyMentioned = lastP.getContent().contains("忙到很晚");
+        Message lastP = messageRepo
+                .findFirstByCompanionIdAndMessageKindOrderByCreatedAtDesc(c.getId(), "PROACTIVE")
+                .orElse(null);
+        if (lastP != null) alreadyMentioned = lastP.getContent() != null && lastP.getContent().contains("忙到很晚");
         if (lateCount >= 3 && !alreadyMentioned) {
             return ProactiveDecision.send("深夜提醒",
                     "你最近是不是又忙到很晚了?我不催你睡,只是想知道你还好吗。",
@@ -229,9 +232,9 @@ public class ProactiveEngine {
             }
         }
         if (lastJoy != null) {
-            boolean followedUp = notificationRepo
-                    .findTop10ByUserIdAndCompanionIdAndCreatedAtAfterOrderByCreatedAtDesc(userId, c.getId(), lastJoy.getCreatedAt())
-                    .stream().anyMatch(n -> "proactive".equals(n.getType()) && n.getTitle().contains("好消息"));
+            boolean followedUp = messageRepo.findMessagesBetween(c.getId(), lastJoy.getCreatedAt(), now)
+                    .stream().anyMatch(m -> "PROACTIVE".equals(m.getMessageKind())
+                            && m.getContent() != null && m.getContent().contains("好消息"));
             if (!followedUp) {
                 return ProactiveDecision.send("跟进好消息",
                         "前两天你说的那个好消息,后来怎么样了?我一直惦记着呢。",
@@ -301,7 +304,7 @@ public class ProactiveEngine {
     }
 
     /** 上次主动消息后 2 小时内用户是否回话(响应率代理) */
-    private boolean isResponsive(String userId, String companionId, Notification lastProactive, LocalDateTime now) {
+    private boolean isResponsive(String userId, String companionId, Message lastProactive, LocalDateTime now) {
         if (lastProactive == null) return true;
         LocalDateTime windowEnd = lastProactive.getCreatedAt().plusHours(2);
         if (windowEnd.isAfter(now)) windowEnd = now;
@@ -313,7 +316,9 @@ public class ProactiveEngine {
 
     /** 该未完成事项是否已经被主动跟进过 */
     private boolean loopFollowedUp(String companionId, String title) {
-        Notification last = notificationRepo.findTopByCompanionIdAndTypeOrderByCreatedAtDesc(companionId, "proactive");
+        Message last = messageRepo
+                .findFirstByCompanionIdAndMessageKindOrderByCreatedAtDesc(companionId, "PROACTIVE")
+                .orElse(null);
         if (last == null) return false;
         String content = last.getContent();
         return content != null && title != null && content.contains(title);
@@ -341,7 +346,9 @@ public class ProactiveEngine {
     private void injectMessage(String companionId, String content) {
         var convs = conversationRepo.findByCompanionIdOrderByLastMessageAtDesc(companionId);
         if (convs.isEmpty()) return;
-        conversationService.addMessage(convs.get(0).getId(), "companion", content, null, true);
+        // V3: 主动消息进入聊天框, 标记 message_kind=PROACTIVE(仍是 Chat Message, 不是 Notification)
+        conversationService.addMessage(convs.get(0).getId(), "companion", content, null, true,
+                "PROACTIVE", null, null);
     }
 
     private static boolean inDnd(int hour, int start, int end) {

@@ -48,6 +48,21 @@ public class Message {
     @Column(name = "is_proactive", nullable = false)
     private boolean proactive = false;
 
+    // ── V3 会话模型 ──────────────────────────
+    @Column(name = "session_id", length = 36)
+    private String sessionId;
+
+    @Column(name = "exchange_id", length = 36)
+    private String exchangeId;
+
+    /** NORMAL/SHORT_ACK/PROACTIVE/FOLLOW_UP/SYSTEM/TOOL_RESULT */
+    @Column(name = "message_kind", length = 24)
+    private String messageKind = "NORMAL";
+
+    /** PENDING/DELIVERED/READ */
+    @Column(name = "delivery_status", length = 16)
+    private String deliveryStatus = "DELIVERED";
+
     @Convert(converter = StringMapConverter.class)
     @Column(columnDefinition = "text")
     private Map<String, Object> metadata;

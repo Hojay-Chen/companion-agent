@@ -61,6 +61,16 @@ public class DefaultCompanionCognitiveRuntime implements CompanionCognitiveRunti
     public CognitiveResult processUserMessage(String userId, String companionId, String conversationId,
                                               String userMessageId, String userText,
                                               List<Message> recentMessages, Consumer<String> onDelta) {
+        return processUserMessage(userId, companionId, conversationId, userMessageId, userText,
+                recentMessages, onDelta, null);
+    }
+
+    /** V3: 带交互决策预算的处理 */
+    @Override
+    public CognitiveResult processUserMessage(String userId, String companionId, String conversationId,
+                                              String userMessageId, String userText,
+                                              List<Message> recentMessages, Consumer<String> onDelta,
+                                              com.luxera.companion.interaction.InteractionDecision interaction) {
         // 1. 感知(质量优先: 同步 LLM 精炼, 失败回退启发式)
         PerceptionEngine.Perception heuristic = perceptionEngine.perceive(userText);
         PerceptionEngine.Perception perception = perceptionRefiner.refineNow(
@@ -78,8 +88,10 @@ public class DefaultCompanionCognitiveRuntime implements CompanionCognitiveRunti
         // 4. 行为策略: Runtime 决定"现在应该做什么"
         BehaviorDecision decision = behaviorPolicyEngine.decide(ctx);
 
-        // 5. 上下文编译: 压缩为 LLM 可消费的提示
-        String system = contextCompiler.buildSystem(ctx, decision);
+        // 5. 上下文编译: 压缩为 LLM 可消费的提示(V3: 带回复预算)
+        com.luxera.companion.interaction.ResponseBudget budget =
+                interaction != null ? interaction.budget : null;
+        String system = contextCompiler.buildSystem(ctx, decision, budget);
 
         // 6. 组装消息
         List<LlmMessage> messages = new ArrayList<>();
@@ -114,8 +126,8 @@ public class DefaultCompanionCognitiveRuntime implements CompanionCognitiveRunti
             if (onDelta != null) onDelta.accept(r.getContent());
         }
 
-        // 8. 自然度校验
-        var validation = naturalnessEngine.validate(raw.toString());
+        // 8. 自然度校验(带 V3 预算: 超出本回合篇幅也会被标记)
+        var validation = naturalnessEngine.validate(raw.toString(), budget);
         String reply = validation.cleaned();
         if (!validation.issues().isEmpty()) {
             log.debug("自然度校验问题: {}", validation.issues());

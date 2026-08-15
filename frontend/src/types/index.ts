@@ -125,6 +125,11 @@ export interface Message {
   emotion?: string | null
   topic?: string | null
   proactive?: boolean
+  /** V3: 会话模型归属 */
+  sessionId?: string | null
+  exchangeId?: string | null
+  /** NORMAL/SHORT_ACK/PROACTIVE/FOLLOW_UP/SYSTEM/TOOL_RESULT */
+  messageKind?: string | null
   createdAt: string
 }
 

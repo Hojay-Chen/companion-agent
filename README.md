@@ -2,13 +2,13 @@
 
 > **不是 Chatbot**：拥有稳定人格、连续人生、持续记忆，随时间与用户建立关系，并在合适的时候主动找你。
 >
-> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案。当前完成 **V2.0(44/44) + 部分 V3**。
+> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime 方案。当前完成 **V2.0(44/44) + V3 P0**。
 
 | 项 | 值 |
 |----|----|
-| 后端 | Spring Boot 2.7.18 · JDK 17 · 模块化单体（180+ 个 Java 类，21 个业务模块） |
+| 后端 | Spring Boot 2.7.18 · JDK 17 · 模块化单体（180+ 个 Java 类，22 个业务模块） |
 | 前端 | React 19 · Vite 8 · TypeScript(strict) · Tailwind CSS 3 · Zustand |
-| 数据库 | PostgreSQL 16 · 29 张表（含 pgvector） |
+| 数据库 | PostgreSQL 16 · 32 张表（含 pgvector） |
 | 大模型 | 统一 LLM 网关 → DeepSeek(deepseek-chat)，无 key 自动降级 Mock；模型用途路由可配 |
 | 线上 | `https://companion.luxera.top`（nginx + systemd jar :8081） |
 | 代码 | GitHub `Hojay-Chen/companion-agent` |
@@ -16,15 +16,6 @@
 
 ## 📖 目录
 
-- [5. 技术栈](#5-技术栈)
-- [6. 总体架构](#6-总体架构)
-  - [6.1 架构风格：前后端分离 + 后端模块化单体](#61-架构风格前后端分离--后端模块化单体)
-  - [6.2 逻辑分层](#62-逻辑分层)
-  - [6.3 部署拓扑](#63-部署拓扑)
-  - [6.4 项目目录](#64-项目目录)
-- [7. 模块组织与依赖](#7-模块组织与依赖)
-  - [7.1 模块全景](#71-模块全景)
-  - [7.2 模块依赖方向](#72-模块依赖方向)
 - [8. 实体关系总览](#8-实体关系总览)
 - [9. 数据表详细设计（29 张表）](#9-数据表详细设计29-张表)
   - [9.1 用户与伴侣](#91-用户与伴侣)
@@ -107,6 +98,14 @@
   - [32.5 完成度](#325-完成度)
   - [32.6 测试与评测](#326-测试与评测)
   - [32.7 待激活项](#327-待激活项)
+- [33. V3.0 Interaction Runtime（P0 完成）](#33-v30-interaction-runtimep0-完成)
+  - [33.1 一句话](#331-一句话)
+  - [33.2 P0 五件事（全部完成）](#332-p0-五件事全部完成)
+  - [33.3 Interaction Runtime 链路](#333-interaction-runtime-链路)
+  - [33.4 会话模型（Conversation → Session → Exchange → Message）](#334-会话模型conversation--session--exchange--message)
+  - [33.5 验收行为（实测通过，`scripts/v3_check.sh`）](#335-验收行为实测通过scriptsv3_checksh)
+  - [33.6 对原方案的两处修正（工程落地）](#336-对原方案的两处修正工程落地)
+  - [33.7 完成度](#337-完成度)
 - [附录](#附录)
 ---
 
@@ -129,9 +128,9 @@ users 1─* companions 1─* conversations 1─* messages
 
 > 所有核心表强制携带 `user_id + companion_id`（多租户隔离，查询强制过滤）。
 
-## 9. 数据表详细设计（29 张表）
+## 9. 数据表详细设计（32 张表）
 
-> 原有 19 表 + V2.0 新增 10 表：`companion_life` / `life_activities` / `thoughts` / `emotional_episodes` / `open_loops` / `self_models` / `experiences` / `relationship_threads` / `promises` / `relationship_narratives`。
+> 原有 19 表 + V2.0 新增 10 表 + V3 新增 3 表（`interaction_sessions` / `conversation_exchanges` / `conversation_boundaries`）。
 
 ### 9.1 用户与伴侣
 
@@ -147,7 +146,10 @@ users 1─* companions 1─* conversations 1─* messages
 | 表 | 字段 |
 |----|------|
 | `conversations` | id, user_id, companion_id, title, started_at, last_message_at, message_count, summary, status, created_at, updated_at |
-| `messages` | id, conversation_id, sender_type, content, intent, emotion, topic, is_proactive, metadata(JSON), created_at |
+| `messages` | id, conversation_id, sender_type, content, intent, emotion, topic, is_proactive, session_id(V3), exchange_id(V3), message_kind(V3: NORMAL/SHORT_ACK/PROACTIVE/FOLLOW_UP/SYSTEM/TOOL_RESULT), delivery_status(V3), metadata(JSON), created_at |
+| `interaction_sessions`(V3) | id, conversation_id, companion_id, user_id, started_at, ended_at, message_count |
+| `conversation_exchanges`(V3) | id, session_id, conversation_id, companion_id, user_id, started_at, ended_at, status(OPEN/CLOSED), message_count |
+| `conversation_boundaries`(V3) | id, conversation_id, companion_id, user_id, type(SOFT_END/HARD_END/PAUSE/BUSY/SLEEP/DISTRACTED/RETURN_LATER), reason, occurred_at |
 
 ### 9.3 记忆
 
@@ -754,6 +756,79 @@ BASE=http://127.0.0.1:8081 bash companion-agent/scripts/smoke.sh
 
 - **pgvector 已装+接线**，需配置 `EMBEDDING_API_KEY`（如硅基流动 `BAAI/bge-large-zh-v1.5`）才启用真实语义向量检索；未配时自动回退结构排序。
 - 一键配置脚本：`scripts/setup_embedding.sh`。
+
+---
+
+## 33. V3.0 Interaction Runtime（P0 完成）
+
+### 33.1 一句话
+
+> **收到消息 ≠ 回复消息。** 她先决定"要不要回、投入多少、怎么回"，再决定"回复什么"。
+> 把"你说一句 → 她立刻回一大段"的 Chatbot 思维，升级为真人相处的运行机制。
+
+V2 已给了她人格/记忆/关系/生活，但主链路仍是 `用户消息 → LLM → 回复`。V3 P0 补上的正是 **Interaction Runtime**：让"不回复、短应、延迟、结束、追问、主动"都成为可解释的行为决策，而不是 LLM 的偶然输出。
+
+### 33.2 P0 五件事（全部完成）
+
+| # | 目标 | 解决 | 核心类 |
+|---|------|------|--------|
+| 1 | Reply Decision | 为什么我说一句她就回一句 | `interaction/InteractionPolicyEngine` + `InteractionDecision` + `ResponseCommitment` |
+| 2 | Response Timing | 为什么秒回 | `interaction/ResponseLatencyEngine` + SSE `typing_start/typing_stop` |
+| 3 | Response Budget | 为什么每次都长篇大论 | `interaction/ResponseBudget`（句数/字数/问题/建议/自我暴露上限） |
+| 4 | Message Burst | 连发多条还一问一答 | **前端聚合** + `/chat` 批量 `{messages:[...]}`（一次请求至多一次回复） |
+| 5 | Proactive → Chat | 主动消息像系统通知 | 主动消息 = `message_kind=PROACTIVE` 的 Chat 消息，**不再生成 Notification** |
+
+### 33.3 Interaction Runtime 链路
+
+```
+用户(可连发多条, 前端聚合)
+   ↓  POST /chat {messages:[{content}...]}
+批量入库(感知+Session/Exchange 归属)
+   ↓
+InteractionDecision: REPLY_NOW / SHORT_ACK / IGNORE / WAIT / END_CONVERSATION
+   + commitment(0=ACK..3=DEEP) + budget(句数/字数/问题/建议)
+   ↓
+typing_start(仅 commitment≥CASUAL) → latency(真人节奏, 非随机) → typing_stop
+   ↓
+LLM 一次生成(带预算 Prompt + Naturalness QA)
+   ↓
+boundary(SOFT_END 等) → done
+```
+
+决策输入：`消息文本+意图+情绪 + 精力/压力 + 关系阶段 + 当前作息(忙/闲)`，**不是随机 Ignore**。低精力→投入降档；高压力→更短、不问；新关系→不自我暴露。
+
+### 33.4 会话模型（Conversation → Session → Exchange → Message）
+
+新增 3 张表，`messages` 增加 `session_id/exchange_id/message_kind/delivery_status`：
+
+| 表 | 含义 |
+|----|------|
+| `interaction_sessions` | 一次连续聊天（如 09:00-09:30），超过 30 分钟为新 Session |
+| `conversation_exchanges` | 一次自然互动（连发+回复=一个 Exchange），超过 5 分钟为新 Exchange |
+| `conversation_boundaries` | 对话边界：`SOFT_END`（"我去洗澡了"→"去吧"，不续聊）等 |
+
+### 33.5 验收行为（实测通过，`scripts/v3_check.sh`）
+
+| 输入 | 她的行为 |
+|------|----------|
+| 连发"气死了/老板改需求/服了" | **一次**回复，不逐条回 ✅ |
+| "今天又加班到很晚了,好累" | 短陪伴，不长篇大论 ✅ |
+| "我去洗澡了" | 短应 + `boundary=SOFT_END`，不再续聊 ✅ |
+| "我回来了" | 自然重开（新 Session），非"欢迎回来" ✅ |
+| "嗯" | `SHORT_ACK` 或 `IGNORE`（合法地不回）✅ |
+
+### 33.6 对原方案的两处修正（工程落地）
+
+1. **连发合并改为前端聚合，而非后端"等窗口"**。原方案建议后端收到第一条后 sleep 等待后续；这在"流式期间锁定输入"的 UI 下永远合并不了，且 gather+锁会阻塞请求。改为：前端在首个消息后启动自适应静默窗口（按用户近期发送间隔 1.5 倍，限 800~2200ms），窗口内连发消息**一批**发给后端，一次生成一次回复。
+2. **主动消息只进聊天框**。落实"主动 = Chat 消息，不是 Notification"：`ProactiveEngine` 不再创建 `type=proactive` 的通知，去重/间隔 bookkeeping 改用 `messages(kind=PROACTIVE)`；提醒（Reminder）仍走 Notification（系统事件）。
+
+### 33.7 完成度
+
+```
+V3 P0: ✅ 回复决策 / 时机 / 预算 / 连发合并 / 主动进聊天框 / 会话模型 / 边界
+V3 P1(下一轮): OpenLoop FollowUp / CompanionAvailability / UserChatStyle / SelfDisclosure 增强 / ResponsePlan(多段消息)
+V3 P2(再往后): Experience 深化 / Self Model / Relationship Narrative / Entity Layer / Memory 3.0
+```
 
 ---
 

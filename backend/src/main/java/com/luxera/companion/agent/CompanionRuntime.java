@@ -24,8 +24,15 @@ public class CompanionRuntime {
 
     public ChatOutcome generate(String userId, String companionId, String conversationId, String userMessageId,
                                 String userText, List<Message> recentMessages, Consumer<String> onDelta) {
+        return generate(userId, companionId, conversationId, userMessageId, userText, recentMessages, onDelta, null);
+    }
+
+    /** V3: 带交互决策(预算)的生成 */
+    public ChatOutcome generate(String userId, String companionId, String conversationId, String userMessageId,
+                                String userText, List<Message> recentMessages, Consumer<String> onDelta,
+                                com.luxera.companion.interaction.InteractionDecision interaction) {
         CognitiveResult result = cognitiveRuntime.processUserMessage(
-                userId, companionId, conversationId, userMessageId, userText, recentMessages, onDelta);
+                userId, companionId, conversationId, userMessageId, userText, recentMessages, onDelta, interaction);
         return new ChatOutcome(result.reply(), result.rawReply(), result.perception(), result.context());
     }
 

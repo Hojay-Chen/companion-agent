@@ -89,6 +89,14 @@ public class ConversationService {
     @Transactional
     public Message addMessage(String conversationId, String senderType, String content,
                               PerceptionEngine.Perception perception, boolean proactive) {
+        return addMessage(conversationId, senderType, content, perception, proactive, null, null, null);
+    }
+
+    /** V3: 带会话归属与消息类型 */
+    @Transactional
+    public Message addMessage(String conversationId, String senderType, String content,
+                              PerceptionEngine.Perception perception, boolean proactive,
+                              String messageKind, String sessionId, String exchangeId) {
         Conversation conv = convRepo.findById(conversationId)
                 .orElseThrow(() -> new javax.persistence.EntityNotFoundException("会话不存在"));
         Message m = new Message();
@@ -101,6 +109,9 @@ public class ConversationService {
             m.setTopic(perception.topic());
         }
         m.setProactive(proactive);
+        if (messageKind != null) m.setMessageKind(messageKind);
+        if (sessionId != null) m.setSessionId(sessionId);
+        if (exchangeId != null) m.setExchangeId(exchangeId);
         m = msgRepo.save(m);
         conv.setMessageCount(conv.getMessageCount() + 1);
         conv.setLastMessageAt(m.getCreatedAt());

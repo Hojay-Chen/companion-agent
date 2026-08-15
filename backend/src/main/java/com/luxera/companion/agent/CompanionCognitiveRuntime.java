@@ -17,6 +17,15 @@ public interface CompanionCognitiveRuntime {
                                        String userMessageId, String userText,
                                        List<Message> recentMessages, Consumer<String> onDelta);
 
+    /** V3: 带交互决策(预算)的处理 */
+    default CognitiveResult processUserMessage(String userId, String companionId, String conversationId,
+                                               String userMessageId, String userText,
+                                               List<Message> recentMessages, Consumer<String> onDelta,
+                                               com.luxera.companion.interaction.InteractionDecision interaction) {
+        return processUserMessage(userId, companionId, conversationId, userMessageId, userText,
+                recentMessages, onDelta);
+    }
+
     /** 无用户交互时的生命/思想/情绪/主动推进 */
     void tick(String companionId, LocalDateTime now);
 }

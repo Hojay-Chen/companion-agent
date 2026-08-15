@@ -1,0 +1,172 @@
+package com.luxera.companion.interaction;
+
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.regex.Pattern;
+
+/**
+ * 交互策略引擎(设计文档 V3 §三~十一): 收到消息后先决定"要不要回复、投入多少、问不问、给不给建议"。
+ * 不是随机 Ignore —— 由消息意义+关系+状态+时间共同决定。
+ */
+@Component
+public class InteractionPolicyEngine {
+
+    private static final Pattern TRIVIAL_ACK = Pattern.compile(
+            "^(嗯|哦|噢|好|行|好的|哦哦|嗯嗯|哈哈|哈哈哈|哈哈哈哈|啊|哦好|知道了|收到|ok|OK|嗯嗯嗯|呵呵|唉|\\.\\.\\.\\.*|……)$"
+                    + "|^(真的|是吗|是嘛|这样啊|原来如此|好吧|那好吧)$");
+
+    private static final Pattern LEAVE_PATTERN = Pattern.compile(
+            "(去忙|去洗澡|去吃饭|去开会|走了|拜拜|先不聊|不聊了|我下了|睡了|要睡了|先睡了|我先去|忙去了|下了|走啦|我走)");
+
+    private static final Pattern RETURN_PATTERN = Pattern.compile(
+            "(我回来了|忙完了|洗完|好了|回来了|刚忙完|我回来)");
+
+    private static final Pattern ADVICE_ASK = Pattern.compile(
+            "(怎么办|该怎么做|怎么处理|帮我想想|给点建议|你觉得我该)");
+
+    /** 决策入口: 基础规则 → 状态调节(精力/压力) */
+    public InteractionDecision decide(InteractionInput in) {
+        InteractionDecision base = decideBase(in);
+        return tuned(base, in.energy, in.stress, in.relationshipStage);
+    }
+
+    private InteractionDecision decideBase(InteractionInput in) {
+        String text = in.userText == null ? "" : in.userText.trim();
+        String intent = in.intent;
+        String emotion = in.emotion;
+
+        boolean intimate = in.intimate;
+        boolean busy = in.busy;
+
+        // 1. 离开 → 结束对话, 短应, 不再续聊
+        if (LEAVE_PATTERN.matcher(text).find()) {
+            return new InteractionDecision(InteractionAction.END_CONVERSATION, ResponseCommitment.ACK,
+                    500, false, false, false, "对方要离开, 自然收尾", 0.9,
+                    ResponseBudget.forCommitment(ResponseCommitment.ACK, intimate));
+        }
+
+        // 2. 回来 → 自然重开(而非"欢迎回来")
+        if (RETURN_PATTERN.matcher(text).find()) {
+            return new InteractionDecision(InteractionAction.REPLY_NOW, ResponseCommitment.CASUAL,
+                    1200, true, true, false, "对方回来了, 自然接上", 0.9,
+                    ResponseBudget.forCommitment(ResponseCommitment.CASUAL, intimate));
+        }
+
+        // 3. 琐碎应和 → 极短回复(可能忽略, 若忙则忽略)
+        boolean trivial = TRIVIAL_ACK.matcher(text).find() || text.length() <= 2;
+        if (trivial) {
+            if (busy) {
+                return new InteractionDecision(InteractionAction.IGNORE, ResponseCommitment.ACK,
+                        0, false, false, false, "在忙, 琐碎消息忽略", 0.7,
+                        ResponseBudget.forCommitment(ResponseCommitment.ACK, intimate));
+            }
+            return new InteractionDecision(InteractionAction.SHORT_ACK, ResponseCommitment.ACK,
+                    700, true, false, false, "琐碎应和, 极短回复", 0.9,
+                    ResponseBudget.forCommitment(ResponseCommitment.ACK, intimate));
+        }
+
+        // 4. 明显情绪低落 → 深入陪伴, 少问少建议
+        if (isLow(emotion)) {
+            boolean deep = text.length() > 30 || "sad".equals(emotion) || "anxious".equals(emotion);
+            ResponseCommitment c = deep ? ResponseCommitment.DEEP : ResponseCommitment.ENGAGED;
+            return new InteractionDecision(InteractionAction.REPLY_NOW, c,
+                    deep ? 2600 : 1600, true, true, false, "情绪低落, 先陪伴", 0.9,
+                    ResponseBudget.forCommitment(c, intimate));
+        }
+
+        // 5. 明确求助 → 投入 + 允许建议
+        if (ADVICE_ASK.matcher(text).find()) {
+            return new InteractionDecision(InteractionAction.REPLY_NOW, ResponseCommitment.ENGAGED,
+                    2000, true, true, false, "对方求助, 进入建议模式", 0.9,
+                    budget(120, 3, 1, 1, 0.6, intimate));
+        }
+
+        // 6. 提问 → 正常回 + 最多一个问题
+        if ("question".equals(intent)) {
+            return new InteractionDecision(InteractionAction.REPLY_NOW, ResponseCommitment.ENGAGED,
+                    1600, true, true, false, "回答问题并自然追问", 0.85,
+                    ResponseBudget.forCommitment(ResponseCommitment.ENGAGED, intimate));
+        }
+
+        // 7. 分享喜悦 → 一起开心, 可调侃
+        if ("share_joy".equals(intent) || "happy".equals(emotion)) {
+            return new InteractionDecision(InteractionAction.REPLY_NOW, ResponseCommitment.ENGAGED,
+                    1400, true, false, true, "一起开心, 可以调侃和分享", 0.9,
+                    ResponseBudget.forCommitment(ResponseCommitment.ENGAGED, intimate));
+        }
+
+        // 8. 默认: 按长度/情绪给 CASUAL~ENGAGED
+        if (text.length() > 60 || "share_upset".equals(intent)) {
+            return new InteractionDecision(InteractionAction.REPLY_NOW, ResponseCommitment.ENGAGED,
+                    1800, true, true, true, "内容较多, 投入回应", 0.8,
+                    ResponseBudget.forCommitment(ResponseCommitment.ENGAGED, intimate));
+        }
+        return new InteractionDecision(InteractionAction.REPLY_NOW, ResponseCommitment.CASUAL,
+                1200, true, false, false, "日常闲聊, 自然回应", 0.85,
+                ResponseBudget.forCommitment(ResponseCommitment.CASUAL, intimate));
+    }
+
+    private static boolean isLow(String emotion) {
+        return emotion != null && List.of("sad", "tired", "anxious", "lonely", "angry").contains(emotion);
+    }
+
+    /**
+     * 状态调节(设计文档 §六/十三): 低精力 → 投入降档、回复更短; 高压力 → 更短、不问问题;
+     * 新关系 → 不主动自我暴露、少追问。这是"行为结果", 不是随机。
+     */
+    private static InteractionDecision tuned(InteractionDecision d, double energy, double stress,
+                                             String relationshipStage) {
+        ResponseBudget b = d.budget;
+        ResponseCommitment c = d.commitment;
+        boolean adjusted = false;
+
+        if (energy < 0.35) {
+            c = downgrade(c);
+            b = ResponseBudget.forCommitment(c, b.allowSelfDisclose);
+            adjusted = true;
+        }
+        if (stress > 0.7) {
+            b = new ResponseBudget(
+                    Math.max(12, (int) (b.maxCharacters * 0.6)),
+                    Math.max(1, b.maxSentences - 1),
+                    0, 0, b.emotionalIntensity, b.allowSelfDisclose);
+            adjusted = true;
+        }
+        // 新关系: 克制, 不自我暴露、不追问(即使规则原本允许)
+        boolean newRel = relationshipStage == null
+                || "new".equals(relationshipStage) || "familiar".equals(relationshipStage);
+        if (newRel && (b.allowSelfDisclose || d.askQuestion)) {
+            b = new ResponseBudget(b.maxCharacters, b.maxSentences, 0, b.adviceBudget,
+                    b.emotionalIntensity, false);
+            adjusted = true;
+        }
+
+        if (!adjusted) return d;
+        return new InteractionDecision(d.action, c, d.delayMs, d.continueConversation,
+                d.askQuestion && b.questionBudget > 0,
+                d.selfDisclose && b.allowSelfDisclose,
+                d.reason + "(状态: 精力" + pct(energy) + " 压力" + pct(stress) + ")", d.confidence, b);
+    }
+
+    private static ResponseCommitment downgrade(ResponseCommitment c) {
+        return switch (c) {
+            case DEEP -> ResponseCommitment.ENGAGED;
+            case ENGAGED -> ResponseCommitment.CASUAL;
+            default -> ResponseCommitment.ACK;
+        };
+    }
+
+    private static String pct(double v) {
+        return (int) (Math.round(Math.max(0, Math.min(1, v)) * 100)) + "%";
+    }
+
+    private static ResponseBudget budget(int chars, int sentences, int q, int adv, double intensity, boolean intimate) {
+        return new ResponseBudget(chars, sentences, q, adv, intensity, intimate);
+    }
+
+    /** 决策输入 */
+    public record InteractionInput(String userText, String intent, String emotion,
+                                   double energy, double stress, String relationshipStage,
+                                   boolean intimate, boolean busy) {}
+}

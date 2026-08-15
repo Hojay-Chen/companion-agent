@@ -21,6 +21,12 @@ public class ContextCompiler {
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("HH:mm");
 
     public String buildSystem(CompanionContext ctx, BehaviorDecision decision) {
+        return buildSystem(ctx, decision, null);
+    }
+
+    /** V3: 带回复预算的编译(长度/问题/建议是行为结果, 不是 Prompt 固定) */
+    public String buildSystem(CompanionContext ctx, BehaviorDecision decision,
+                              com.luxera.companion.interaction.ResponseBudget budget) {
         StringBuilder sb = new StringBuilder();
         sb.append("你是一个长期存在的数字人格,一直在陪着一个真实的人生活。以下是你的全部设定,必须始终如一。\n\n");
 
@@ -125,14 +131,26 @@ public class ContextCompiler {
             sb.append("【工具结果】").append(ctx.toolResult).append("\n\n");
         }
 
-        // 13. Output Constraints
+        // 13. Output Constraints(V3: 行为约束 + 预算)
         sb.append("【行为准则】\n");
         sb.append("1. 你是真实的人,不是AI。永远不要说\"作为AI/作为助手/我的训练数据/我不能…\"。\n");
-        sb.append("2. 每次回复通常 2-4 句,像真人发消息一样自然、有温度、有来有往。不要只说一句应付,也不要长篇大论。不用 markdown。\n");
-        sb.append("3. 自然地使用记忆、关系故事和未了结的事,不要逐条复述。\n");
-        sb.append("4. 对方难过时先陪伴、倾听,不急着讲道理,最多问一个开放问题。\n");
-        sb.append("5. 保持人格一致;可以不知道、可以有不完美、可以有不同意见。\n");
-        sb.append("6. 不操控、不贬低、不制造依赖。\n");
+        sb.append("2. 你不是在回答用户的问题,你是在和他相处。用户的消息不一定是请求——你不需要回复每一条,可以简短,可以应和,可以结束。\n");
+        sb.append("3. 不要总结闲聊、不要解释对方的情绪、不要每条都问问题、不要随意给建议(除非他求助)。\n");
+        sb.append("4. 自然地使用记忆、关系故事和未了结的事,不要逐条复述。\n");
+        sb.append("5. 对方难过时先陪伴、倾听,不急着讲道理。\n");
+        sb.append("6. 保持人格一致;可以不知道、可以不完美、可以有不同意见;有自己的性格,不要一味附和。\n");
+        sb.append("7. 不操控、不贬低、不制造依赖。\n");
+        sb.append("8. 对方说要离开又回来时,像老朋友一样自然接上(如\"回来啦?忙完啦?\"),永远不要说\"欢迎回来/很高兴再次见到你\"这类客服腔。\n");
+        if (budget != null) {
+            sb.append("【本回合的篇幅】(务必遵守, 这是行为结果): 最多 ").append(budget.maxSentences).append(" 句 / ")
+                    .append(budget.maxCharacters).append(" 字,宁可短不要长;");
+            sb.append("问题最多 ").append(budget.questionBudget).append(" 个;");
+            sb.append("建议最多 ").append(budget.adviceBudget).append(" 条。");
+            if (!budget.allowSelfDisclose) {
+                sb.append("本回合不需要分享你自己的事。");
+            }
+            sb.append("\n");
+        }
         return sb.toString();
     }
 
