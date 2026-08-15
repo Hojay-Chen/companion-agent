@@ -2,14 +2,14 @@
 
 > **不是 Chatbot**：拥有稳定人格、连续人生、持续记忆，随时间与用户建立关系，并在合适的时候主动找你。
 >
-> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）。当前完成 **MVP + 大部分 V2 + 部分 V3**。
+> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案。当前完成 **V2.0(44/44) + 部分 V3**。
 
 | 项 | 值 |
 |----|----|
-| 后端 | Spring Boot 2.7.18 · JDK 17 · 模块化单体（116 个 Java 类，14 个业务模块） |
+| 后端 | Spring Boot 2.7.18 · JDK 17 · 模块化单体（180+ 个 Java 类，21 个业务模块） |
 | 前端 | React 19 · Vite 8 · TypeScript(strict) · Tailwind CSS 3 · Zustand |
-| 数据库 | PostgreSQL 16 · 19 张表 |
-| 大模型 | 统一 LLM 网关 → DeepSeek(deepseek-chat)，无 key 自动降级 Mock |
+| 数据库 | PostgreSQL 16 · 29 张表（含 pgvector） |
+| 大模型 | 统一 LLM 网关 → DeepSeek(deepseek-chat)，无 key 自动降级 Mock；模型用途路由可配 |
 | 线上 | `https://companion.luxera.top`（nginx + systemd jar :8081） |
 | 代码 | GitHub `Hojay-Chen/companion-agent` |
 | 当前数据量 | 19 用户 / 19 伴侣 / 134 消息 / 104 记忆 / 61 反思记录 |
@@ -33,7 +33,7 @@
   - [7.1 模块全景](#71-模块全景)
   - [7.2 模块依赖方向](#72-模块依赖方向)
 - [8. 实体关系总览](#8-实体关系总览)
-- [9. 数据表详细设计（19 张表）](#9-数据表详细设计19-张表)
+- [9. 数据表详细设计（29 张表）](#9-数据表详细设计29-张表)
   - [9.1 用户与伴侣](#91-用户与伴侣)
   - [9.2 对话](#92-对话)
   - [9.3 记忆](#93-记忆)
@@ -88,6 +88,7 @@
   - [24.3 会话 / 聊天](#243-会话--聊天)
   - [24.4 记忆](#244-记忆)
   - [24.5 用户模型 / 关系 / 状态 / 提醒 / 通知 / 反思](#245-用户模型--关系--状态--提醒--通知--反思)
+  - [24.7 V2.0 数字人格内核（用户视角）](#247-v20-数字人格内核用户视角)
   - [24.6 管理（验收/运维）](#246-管理验收运维)
 - [25. 快速开始](#25-快速开始)
   - [25.1 环境要求](#251-环境要求)
@@ -105,9 +106,7 @@
 - [29. 已知限制（如实）](#29-已知限制如实)
 - [30. 与设计文档路线图的关系](#30-与设计文档路线图的关系)
 - [31. 演进路线](#31-演进路线)
-- [附录](#附录)
-
----
+- [附录](#附录)---
 
 # 第一部分 · 产品介绍
 
@@ -233,13 +232,19 @@ Time 贯穿一切
 companion-agent/
 ├── backend/                          # Spring Boot 模块化单体
 │   └── src/main/java/com/luxera/companion/
-│       ├── auth/    persona/    conversation/    agent/
-│       ├── memory/  usermodel/  relationship/    state/
-│       ├── reflection/ proactive/ tool/          llm/
+│       ├── auth/  persona/  conversation/  agent/     # 原核心
+│       ├── memory/  usermodel/  relationship/  state/
+│       ├── reflection/  proactive/  tool/  llm/
+│       ├── life/  thought/  emotion/  experience/     # V2.0 生命内核
+│       ├── openloop/  selfmodel/  behavior/           # V2.0 新增
 │       └── config/  common/
 ├── frontend/                         # React SPA
 │   └── src/{api, stores, components, pages, types}
-└── scripts/{deploy.sh, smoke.sh}
+└── scripts/
+    ├── deploy.sh                     # 一键部署
+    ├── smoke.sh                      # 端到端冒烟
+    ├── longterm_test.sh              # V2.0 4类长期连续性测试(自动断言)
+    └── evaluate.sh                   # V2.0 Human-likeness 评测
 ```
 
 ## 7. 模块组织与依赖
@@ -256,10 +261,17 @@ companion-agent/
 | `usermodel/` | UserFact/Preference/Pattern/Hypothesis, UserModelService | 用户理解 |
 | `relationship/` | Relationship, RelationshipEvent, SharedExperience, RelationshipEngine | 关系演化 |
 | `state/` | AgentState, AgentStateService | 短期状态 |
-| `reflection/` | ReflectionService, Daily/WeeklyReflectionJob | 反思 |
-| `proactive/` | ProactiveEngine, ProactiveDecision, Notification | 主动消息 |
+| `reflection/` | ReflectionService, Daily/WeeklyReflectionJob | 反思(多维) |
+| `proactive/` | ProactiveEngine, ProactiveDecision, Notification, ExplainController | 主动消息 + 可解释性 |
 | `tool/` | Reminder, ReminderPlanner, BirthdayService | 提醒/生日 |
-| `llm/` | LlmGateway, LlmRouter, OpenAiCompatibleGateway, AnthropicGateway, MockLlmGateway | LLM 统一网关 |
+| `life/` | CompanionLife, LifeActivity, LifeRuntime, LifeSimulation, LifeTickJob | V2.0 连续生活 |
+| `thought/` | Thought, ThoughtEngine, ThoughtScorer, ThoughtMaintenanceJob | V2.0 内在思想 |
+| `emotion/` | EmotionalEpisode, EmotionEngine, EmotionDecay | V2.0 情绪事件 |
+| `experience/` | Experience, ExperienceProcessor, MemoryConsolidator | V2.0 经历层→记忆固话 |
+| `openloop/` | OpenLoop, OpenLoopService, OpenLoopJob | V2.0 未完成事项 |
+| `selfmodel/` | SelfModel, SelfModelExtractor, SelfNarrativeService | V2.0 自我模型 |
+| `behavior/` | BehaviorDecision, BehaviorPolicyEngine, BehaviorConstraints | V2.0 行为策略 |
+| `llm/` | LlmGateway, LlmRouter(用途路由), OpenAiCompatibleGateway, AnthropicGateway, MockLlmGateway | LLM 统一网关 |
 | `config/` | SecurityConfig, JwtUtil, AppProperties, CurrentUser | 基础设施 |
 | `common/` | JsonCodec, ApiError, BusinessException | 公共 |
 
@@ -293,7 +305,9 @@ users 1─* companions 1─* conversations 1─* messages
 
 > 所有核心表强制携带 `user_id + companion_id`（多租户隔离，查询强制过滤）。
 
-## 9. 数据表详细设计（19 张表）
+## 9. 数据表详细设计（29 张表）
+
+> 原有 19 表 + V2.0 新增 10 表：`companion_life` / `life_activities` / `thoughts` / `emotional_episodes` / `open_loops` / `self_models` / `experiences` / `relationship_threads` / `promises` / `relationship_narratives`。
 
 ### 9.1 用户与伴侣
 
@@ -703,6 +717,15 @@ public interface LlmGateway {
 | GET | `/api/companions/{cid}/notifications/unread-count` | 未读数 |
 | GET | `/api/companions/{cid}/reflections` | 反思记录 |
 
+### 24.7 V2.0 数字人格内核（用户视角）
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/companions/{cid}/life` | 她今天在干嘛（Life Runtime） |
+| GET | `/api/companions/{cid}/self` | 她最近觉得自己怎样（Self Model） |
+| GET | `/api/companions/{cid}/open-loops` | 未了结的事 |
+| GET | `/api/companions/{cid}/experiences` | 最近经历 |
+| GET | `/api/companions/{cid}/relationship/{threads,narrative,promises}` | 关系线索/关系故事/承诺 |
+
 ### 24.6 管理（验收/运维）
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -711,6 +734,12 @@ public interface LlmGateway {
 | POST | `/api/admin/persona/evolve` | 手动人格演化 |
 | POST | `/api/admin/proactive/run` | 手动主动消息 |
 | POST | `/api/admin/birthday/ensure` | 补生日提醒 |
+| POST | `/api/admin/life/tick` | 推进生活 |
+| POST | `/api/admin/thought/run` | 想法维护/补触发 |
+| POST | `/api/admin/memory/consolidate` | 记忆固话 |
+| POST | `/api/admin/cognitive/tick` | 统一内核 tick |
+| GET | `/api/admin/explain/{proactive,memory,persona}` | 可解释性(为什么主动/记住/人格变) |
+| POST | `/api/admin/explain/evaluate` | Human-likeness 自动评测 |
 
 ---
 
@@ -796,6 +825,9 @@ BASE=http://127.0.0.1:8081 bash companion-agent/scripts/smoke.sh
 ## 28. 测试与验证
 
 - **冒烟**（scripts/smoke.sh）：全链路通过。
+- **4 类长期连续性测试**（scripts/longterm_test.sh，自动断言）：记忆/生活/关系/主动连续性全通过。
+- **Human-likeness 评测**（scripts/evaluate.sh，自动打分）：10 维 1-5 分。
+- **验收场景 A-E**（V2.0 §50）：面试跟进、今天干嘛、累的情绪持续、一周沉默后自然联系，全部通过。
 - **真实模型验证**：回复 2-4 句多样、提醒时间正确、记忆图谱建链、记忆透明带来源、LLM 反思有洞察、人格演化在跑、主动消息按时段 LLM 生成、作息体现（周六回复"窝在沙发喝茶"）。
 - **已修 Bug**：
   - LLM 时间幻觉（提醒年份错）→ 注入当前日期 + 过去时间兜底
@@ -803,6 +835,7 @@ BASE=http://127.0.0.1:8081 bash companion-agent/scripts/smoke.sh
   - HQL `:type` 保留字冲突 → 改名 `:mtype`
   - hibernate-types JSONB 泛型 propertyClass null → 弃用，改 text+Converter
   - `去`字误判 planning 意图 → 收紧关键词
+  - `life_activities.updated_at` 非空列 ddl 失败 → 改可空 + 手动补列
 
 ---
 
@@ -810,12 +843,12 @@ BASE=http://127.0.0.1:8081 bash companion-agent/scripts/smoke.sh
 
 ## 29. 已知限制（如实）
 
-1. **无向量检索**：记忆语义用中文二元组近似，未装 pgvector / 未接向量 API（可无缝升级）。
+1. **向量检索需 embedding key 激活**：pgvector 已装+接线，但需配 `EMBEDDING_API_KEY`（DeepSeek 无 embedding 接口）才启用真实向量；未配时回退结构排序。
 2. **WorkingMemory 单实例内存**：多实例部署需换 Redis。
 3. **主动消息仅站内通知**：无 APNs/FCM 手机推送。
-4. **工具层仅提醒**：无 MCP / 日历 / 搜索。
-5. **模型 deepseek-chat**：无推理模式 / 语音 / 图片 / 多模态。
-6. **单机部署**：无高可用、无 K8s（设计文档 §96 后置）。
+4. **工具层仅提醒**：无 MCP / 日历 / 搜索（V2.0 方案 §49 后置）。
+5. **模型 deepseek-chat**：无推理模式 / 语音 / 图片 / 多模态（V3/V4 后置）。
+6. **单机部署**：无高可用、无 K8s（方案后置）。
 7. **认证简单**：用户名+密码 JWT，无邮箱验证 / OAuth / 找回密码。
 8. **多租户应用层过滤**：非数据库 RLS。
 9. **反思/演化批量定时**：非实时。
@@ -827,14 +860,15 @@ BASE=http://127.0.0.1:8081 bash companion-agent/scripts/smoke.sh
 | 阶段 | 状态 |
 |------|------|
 | MVP（§95） | ✅ 完成 |
-| V2（§97） | ✅ 大部分（日历/推送未做） |
-| V3（§98） | ◐ 部分（关联记忆+人格演化已做；多模态未做） |
+| V2.0 重构方案（44/44） | ✅ 全部完成（生命内核/认知内核/自我模型/关系叙事/行为策略/主动2.0/记忆2.0/可解释性/评测） |
+| V2（§97） | ✅ 完成 |
+| V3（§98） | ◐ 部分（关联记忆+人格演化+多模态中的语音/图片未做） |
 | V4（§99 生态） | ⏳ 未启动 |
 
 ## 31. 演进路线
 
-- **短期**：手机推送、向量检索、MCP 工具层（日历/天气/搜索）。
-- **中期**：语音对话、用户自定义作息注入、真实用户灰度。
+- **短期**：配 `EMBEDDING_API_KEY` 激活向量检索、手机推送、MCP 工具层（日历/天气/搜索）。
+- **中期**：语音对话、用户自定义作息注入、真实用户灰度、Human-likeness 评测接入 CI。
 - **长期**：V4 多端共享记忆/身份、K8s 高可用、RLS 加固、审计日志。
 
 ---
