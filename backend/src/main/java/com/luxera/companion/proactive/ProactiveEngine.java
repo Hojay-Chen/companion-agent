@@ -5,8 +5,13 @@ import com.luxera.companion.conversation.ConversationRepository;
 import com.luxera.companion.conversation.ConversationService;
 import com.luxera.companion.conversation.Message;
 import com.luxera.companion.conversation.MessageRepository;
+import com.luxera.companion.llm.ChatRequest;
+import com.luxera.companion.llm.LlmMessage;
+import com.luxera.companion.llm.LlmRouter;
 import com.luxera.companion.persona.Companion;
 import com.luxera.companion.persona.CompanionRepository;
+import com.luxera.companion.persona.Persona;
+import com.luxera.companion.persona.PersonaService;
 import com.luxera.companion.relationship.Relationship;
 import com.luxera.companion.relationship.RelationshipRepository;
 import com.luxera.companion.tool.Reminder;
@@ -17,19 +22,25 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 主动消息引擎(设计文档 52-55 节): 调度器只负责何时检查,
  * 真正决定是否打扰的是决策引擎(打断成本 vs 预期价值)。
+ * 主动消息内容用 LLM 按人格+时间+近期话题生成,让陪伴感真实。
  */
 @Slf4j
 @Component
 public class ProactiveEngine {
 
+    private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("M月d日 HH:mm");
+
     private final AppProperties props;
     private final CompanionRepository companionRepo;
+    private final PersonaService personaService;
     private final RelationshipRepository relationshipRepo;
     private final MessageRepository messageRepo;
     private final ConversationRepository conversationRepo;
@@ -37,14 +48,16 @@ public class ProactiveEngine {
     private final NotificationRepository notificationRepo;
     private final NotificationService notificationService;
     private final ReminderRepository reminderRepo;
+    private final LlmRouter llm;
 
-    public ProactiveEngine(AppProperties props, CompanionRepository companionRepo,
+    public ProactiveEngine(AppProperties props, CompanionRepository companionRepo, PersonaService personaService,
                            RelationshipRepository relationshipRepo, MessageRepository messageRepo,
                            ConversationRepository conversationRepo, ConversationService conversationService,
                            NotificationRepository notificationRepo, NotificationService notificationService,
-                           ReminderRepository reminderRepo) {
+                           ReminderRepository reminderRepo, LlmRouter llm) {
         this.props = props;
         this.companionRepo = companionRepo;
+        this.personaService = personaService;
         this.relationshipRepo = relationshipRepo;
         this.messageRepo = messageRepo;
         this.conversationRepo = conversationRepo;
@@ -52,6 +65,7 @@ public class ProactiveEngine {
         this.notificationRepo = notificationRepo;
         this.notificationService = notificationService;
         this.reminderRepo = reminderRepo;
+        this.llm = llm;
     }
 
     @Scheduled(cron = "${app.scheduler.proactive-cron}")
@@ -77,7 +91,6 @@ public class ProactiveEngine {
         int hour = now.getHour();
         boolean inDnd = inDnd(hour, dndStart, dndEnd);
 
-        // 2. 每个伴侣: 评估主动触发
         for (Companion c : companionRepo.findAll()) {
             if (c.getDeletedAt() != null) continue;
             String userId = c.getUserId();
@@ -94,10 +107,11 @@ public class ProactiveEngine {
             LocalDateTime lastInteraction = rel != null ? rel.getLastInteractionAt() : null;
             boolean responsive = isResponsive(userId, c.getId(), lastProactive, now);
 
-            ProactiveDecision decision = decide(c, now, lastInteraction, lastProactive, todayCount, responsive);
+            ProactiveDecision decision = decide(c, now, lastInteraction, todayCount, responsive);
             if (decision.act()) {
-                notificationService.notify(userId, c.getId(), "proactive", decision.title(), decision.content());
-                injectMessage(c.getId(), decision.content());
+                String content = draftMessage(c, decision.trigger(), decision.content());
+                notificationService.notify(userId, c.getId(), "proactive", decision.title(), content);
+                injectMessage(c.getId(), content);
                 actions.add(c.getName() + " → " + decision.title() + " (预期" + round(decision.expectedValue())
                         + " vs 成本" + round(decision.interruptionCost()) + ")");
                 log.info("[主动消息] {}: {} (trigger={})", c.getName(), decision.title(), decision.trigger());
@@ -108,8 +122,10 @@ public class ProactiveEngine {
 
     /** 决策引擎: 收集触发,计算预期价值与打断成本(设计文档 53-55 节) */
     ProactiveDecision decide(Companion c, LocalDateTime now, LocalDateTime lastInteraction,
-                             Notification lastProactive, long todayCount, boolean responsive) {
+                             long todayCount, boolean responsive) {
         String userId = c.getUserId();
+        int hour = now.getHour();
+        Relationship rel = relationshipRepo.findByUserIdAndCompanionId(userId, c.getId()).orElse(null);
 
         // 触发 1: 深夜加班模式
         List<Message> week = messageRepo.findUserMessagesSince(c.getId(), now.minusDays(7));
@@ -117,14 +133,32 @@ public class ProactiveEngine {
             int h = m.getCreatedAt().getHour();
             return h >= 23 || h < 2;
         }).count();
-        boolean alreadyMentioned = lastProactive != null && lastProactive.getContent().contains("忙到很晚");
+        boolean alreadyMentioned = false;
+        Notification lastP = notificationRepo.findTopByCompanionIdAndTypeOrderByCreatedAtDesc(c.getId(), "proactive");
+        if (lastP != null) alreadyMentioned = lastP.getContent().contains("忙到很晚");
         if (lateCount >= 3 && !alreadyMentioned) {
             return ProactiveDecision.send("深夜提醒",
                     "你最近是不是又忙到很晚了?我不催你睡,只是想知道你还好吗。",
                     "late_work", 0.62, cost(now, lastInteraction, todayCount, responsive));
         }
 
-        // 触发 2: 分享好消息后的跟进(48h 内,未跟进过)
+        // 触发 2: 早安问候(上午 8-11 点,今天还没聊过,且之前聊过)
+        if (hour >= 8 && hour < 11 && todayCount == 0 && rel != null && rel.getMessageCount() > 0) {
+            return ProactiveDecision.send("早安问候",
+                    "早上好呀,新的一天开始啦。你今天有什么安排吗?",
+                    "morning_greeting", 0.52, cost(now, lastInteraction, todayCount, responsive));
+        }
+
+        // 触发 3: 傍晚回访(今天聊过,但 2-8 小时没动静)
+        if (hour >= 17 && hour <= 22 && lastInteraction != null
+                && lastInteraction.isAfter(now.minusHours(8))
+                && lastInteraction.isBefore(now.minusHours(2))) {
+            return ProactiveDecision.send("傍晚回访",
+                    "这会儿忙完了吗?想听听你今天过得怎么样。",
+                    "evening_checkin", 0.55, cost(now, lastInteraction, todayCount, responsive));
+        }
+
+        // 触发 4: 分享好消息后的跟进(48h 内,未跟进过)
         Message lastJoy = null;
         for (Message m : messageRepo.findUserMessagesSince(c.getId(), now.minusDays(2))) {
             if ("share_joy".equals(m.getIntent()) || "happy".equals(m.getEmotion())) {
@@ -142,16 +176,52 @@ public class ProactiveEngine {
             }
         }
 
-        // 触发 3: 长时间沉默
-        Relationship rel = relationshipRepo.findByUserIdAndCompanionId(userId, c.getId()).orElse(null);
-        if (rel != null && rel.getFamiliarity() > 0.35 && lastInteraction != null
-                && lastInteraction.isBefore(now.minusDays(3))) {
+        // 触发 5: 长时间沉默(2 天)
+        if (rel != null && rel.getFamiliarity() > 0.15 && lastInteraction != null
+                && lastInteraction.isBefore(now.minusDays(2))) {
             return ProactiveDecision.send("好久不见",
-                    "最近几天你都没怎么找我,我有点想你了。要是忙,就告诉我一声,我不吵你。",
+                    "最近两天你都没怎么找我,我有点想你了。要是忙,就告诉我一声,我不吵你。",
                     "silence", 0.5, cost(now, lastInteraction, todayCount, responsive));
         }
 
         return ProactiveDecision.nothing();
+    }
+
+    /** 用 LLM 按人格+时间生成主动消息,失败时回退到固定文案 */
+    private String draftMessage(Companion c, String trigger, String fallback) {
+        try {
+            Persona persona = personaService.getActive(c.getId());
+            String personaDesc = "";
+            if (persona != null && persona.getPersonality() != null && persona.getPersonality().getSummary() != null) {
+                personaDesc = persona.getPersonality().getSummary();
+            }
+            String system = "你是" + c.getName() + ",一个真实的人。" + personaDesc
+                    + "。现在是" + LocalDateTime.now().format(FMT) + "。你打算主动给用户发一条消息,"
+                    + "场景:" + triggerDesc(trigger) + "。请自然地说 2-3 句,像发微信,不要解释你是 AI,不要问号堆砌。";
+            var r = llm.chat(ChatRequest.builder()
+                    .messages(List.of(LlmMessage.system(system), LlmMessage.user("现在给用户发这条主动消息吧。")))
+                    .temperature(0.9)
+                    .metadata(Map.of("companionName", c.getName()))
+                    .build());
+            String content = r.getContent() == null ? "" : r.getContent().trim();
+            if (content.length() >= 5 && content.length() <= 120) {
+                return content;
+            }
+        } catch (Exception e) {
+            log.debug("主动消息 LLM 生成失败,回退模板: {}", e.getMessage());
+        }
+        return fallback;
+    }
+
+    private static String triggerDesc(String trigger) {
+        switch (trigger == null ? "" : trigger) {
+            case "late_work": return "用户最近常熬夜加班";
+            case "morning_greeting": return "新的一天开始了,想问候一下用户";
+            case "evening_checkin": return "用户今天聊过但有一阵没动静了";
+            case "follow_up_joy": return "用户前几天分享过好消息,想问问后续";
+            case "silence": return "用户两天没联系你了";
+            default: return "随口关心一下用户";
+        }
     }
 
     private double cost(LocalDateTime now, LocalDateTime lastInteraction, long todayCount, boolean responsive) {

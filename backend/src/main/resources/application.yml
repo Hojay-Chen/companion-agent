@@ -79,5 +79,5 @@ app:
   proactive:
     dnd-start-hour: 23                 # Do Not Disturb 起始(23:00)
     dnd-end-hour: 8                    # 结束(08:00)
-    min-interval-hours: 4              # 两次主动消息最小间隔
-    max-notifications-per-day: 3
+    min-interval-hours: 1              # 两次主动消息最小间隔(小时)
+    max-notifications-per-day: 5
