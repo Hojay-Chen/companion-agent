@@ -1,8 +1,11 @@
 package com.luxera.companion.agent;
 
+import com.luxera.companion.emotion.EmotionEngine;
+import com.luxera.companion.experience.ExperienceProcessor;
 import com.luxera.companion.memory.MemoryExtractor;
 import com.luxera.companion.relationship.RelationshipEngine;
 import com.luxera.companion.state.AgentStateService;
+import com.luxera.companion.thought.ThoughtEngine;
 import com.luxera.companion.usermodel.UserModelExtractor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -11,19 +14,30 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/** 对话后的异步后处理: 记忆/用户模型抽取 + 关系与状态演化(设计文档 47/101 节)。
- * 感知精炼已在回复生成前同步完成,这里不再重复。 */
+/**
+ * 对话后的异步后处理(V2.0): Experience 记录 + Thought/Emotion/OpenLoop 触发
+ * + 记忆/用户模型抽取 + 关系与状态演化。
+ * 感知精炼已在回复生成前同步完成,这里不再重复。
+ */
 @Slf4j
 @Component
 public class AgentPostProcessor {
 
+    private final ExperienceProcessor experienceProcessor;
+    private final ThoughtEngine thoughtEngine;
+    private final EmotionEngine emotionEngine;
     private final MemoryExtractor memoryExtractor;
     private final UserModelExtractor userModelExtractor;
     private final RelationshipEngine relationshipEngine;
     private final AgentStateService agentStateService;
 
-    public AgentPostProcessor(MemoryExtractor memoryExtractor, UserModelExtractor userModelExtractor,
-                              RelationshipEngine relationshipEngine, AgentStateService agentStateService) {
+    public AgentPostProcessor(ExperienceProcessor experienceProcessor, ThoughtEngine thoughtEngine,
+                              EmotionEngine emotionEngine, MemoryExtractor memoryExtractor,
+                              UserModelExtractor userModelExtractor, RelationshipEngine relationshipEngine,
+                              AgentStateService agentStateService) {
+        this.experienceProcessor = experienceProcessor;
+        this.thoughtEngine = thoughtEngine;
+        this.emotionEngine = emotionEngine;
         this.memoryExtractor = memoryExtractor;
         this.userModelExtractor = userModelExtractor;
         this.relationshipEngine = relationshipEngine;
@@ -35,6 +49,19 @@ public class AgentPostProcessor {
                               String userText, String reply, PerceptionEngine.Perception perception,
                               List<String> validationIssues) {
         try {
+            // 1. 经历层: 一次交流 → Experience(设计文档 V2.0 §11)
+            double importance = intentImportance(perception.intent());
+            double emotionalWeight = emotionWeight(perception.emotion());
+            experienceProcessor.recordConversationExchange(companionId, conversationId, userText, reply,
+                    importance, emotionalWeight, 0.6);
+
+            // 2. 想法/未完成事项(设计文档 V2.0 §6/§8)
+            thoughtEngine.maybeFromConversation(companionId, userText);
+
+            // 3. 情绪事件(设计文档 V2.0 §7)
+            emotionEngine.fromConversation(companionId, perception.emotion(), perception.intent(), userText);
+
+            // 4. 原有异步学习链路
             memoryExtractor.extractFromExchange(userId, companionId, conversationId, userText, reply);
             userModelExtractor.extractFromExchange(userId, companionId, conversationId, userText, reply);
             relationshipEngine.onMessage(userId, companionId, LocalDateTime.now(), perception.emotion(), perception.intent());
@@ -45,5 +72,24 @@ public class AgentPostProcessor {
         } catch (Exception e) {
             log.warn("对话后处理失败: {}", e.getMessage());
         }
+    }
+
+    private static double intentImportance(String intent) {
+        if (intent == null) return 0.4;
+        return switch (intent) {
+            case "share_upset", "share_joy", "correction", "planning" -> 0.7;
+            case "request_tool" -> 0.6;
+            case "question" -> 0.5;
+            default -> 0.4;
+        };
+    }
+
+    private static double emotionWeight(String emotion) {
+        if (emotion == null) return 0.4;
+        return switch (emotion) {
+            case "sad", "angry", "anxious", "lonely", "happy", "grateful" -> 0.8;
+            case "tired" -> 0.6;
+            default -> 0.4;
+        };
     }
 }

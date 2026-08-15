@@ -1,16 +1,26 @@
 package com.luxera.companion.proactive;
 
+import com.luxera.companion.experience.ExperienceProcessor;
+import com.luxera.companion.life.LifeRuntime;
+import com.luxera.companion.openloop.OpenLoopService;
+import com.luxera.companion.persona.Companion;
+import com.luxera.companion.persona.CompanionRepository;
 import com.luxera.companion.persona.PersonaEvolutionService;
 import com.luxera.companion.reflection.ReflectionService;
+import com.luxera.companion.thought.ThoughtEngine;
+import com.luxera.companion.thought.ThoughtMaintenanceJob;
 import com.luxera.companion.tool.BirthdayService;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/** 手动触发验收用的管理端点 */
+/** 手动触发验收用的管理端点(设计文档 V2.0 §30) */
 @RestController
 @RequestMapping("/api/admin")
 public class AdminController {
@@ -19,13 +29,28 @@ public class AdminController {
     private final ProactiveEngine proactiveEngine;
     private final BirthdayService birthdayService;
     private final PersonaEvolutionService personaEvolutionService;
+    private final LifeRuntime lifeRuntime;
+    private final CompanionRepository companionRepo;
+    private final ExperienceProcessor experienceProcessor;
+    private final ThoughtMaintenanceJob thoughtMaintenanceJob;
+    private final ThoughtEngine thoughtEngine;
+    private final OpenLoopService openLoopService;
 
     public AdminController(ReflectionService reflectionService, ProactiveEngine proactiveEngine,
-                           BirthdayService birthdayService, PersonaEvolutionService personaEvolutionService) {
+                           BirthdayService birthdayService, PersonaEvolutionService personaEvolutionService,
+                           LifeRuntime lifeRuntime, CompanionRepository companionRepo,
+                           ExperienceProcessor experienceProcessor, ThoughtMaintenanceJob thoughtMaintenanceJob,
+                           ThoughtEngine thoughtEngine, OpenLoopService openLoopService) {
         this.reflectionService = reflectionService;
         this.proactiveEngine = proactiveEngine;
         this.birthdayService = birthdayService;
         this.personaEvolutionService = personaEvolutionService;
+        this.lifeRuntime = lifeRuntime;
+        this.companionRepo = companionRepo;
+        this.experienceProcessor = experienceProcessor;
+        this.thoughtMaintenanceJob = thoughtMaintenanceJob;
+        this.thoughtEngine = thoughtEngine;
+        this.openLoopService = openLoopService;
     }
 
     @PostMapping("/reflection/run")
@@ -54,5 +79,62 @@ public class AdminController {
     public Map<String, Object> ensureBirthdays() {
         birthdayService.ensureBirthdayReminders();
         return Map.of("success", true);
+    }
+
+    // ── V2.0 生命内核 ───────────────────────────
+
+    @PostMapping("/life/tick")
+    public Map<String, Object> lifeTick(@RequestParam(required = false) String companionId) {
+        int count = 0;
+        for (Companion c : companionRepo.findAll()) {
+            if (c.getDeletedAt() != null) continue;
+            if (companionId != null && !companionId.equals(c.getId())) continue;
+            lifeRuntime.tick(c.getId(), LocalDateTime.now());
+            count++;
+        }
+        return Map.of("ticked", count);
+    }
+
+    @PostMapping("/thought/run")
+    public Map<String, Object> thoughtRun(@RequestParam(required = false) String companionId) {
+        // 手动触发想法维护 + 从未完成事项补触发想法
+        thoughtMaintenanceJob.maintain();
+        int thoughts = 0;
+        for (Companion c : companionRepo.findAll()) {
+            if (c.getDeletedAt() != null) continue;
+            if (companionId != null && !companionId.equals(c.getId())) continue;
+            for (var loop : openLoopService.activeLoops(c.getId())) {
+                thoughts += thoughtEngine.maybeFromConversation(c.getId(), loop.getTitle()) != null ? 1 : 0;
+            }
+        }
+        return Map.of("maintained", true, "thoughtsCreated", thoughts);
+    }
+
+    @PostMapping("/memory/consolidate")
+    public Map<String, Object> consolidate(@RequestParam(required = false) String companionId) {
+        int total = 0;
+        List<String> results = new ArrayList<>();
+        for (Companion c : companionRepo.findAll()) {
+            if (c.getDeletedAt() != null) continue;
+            if (companionId != null && !companionId.equals(c.getId())) continue;
+            int n = experienceProcessor.consolidate(c.getId());
+            total += n;
+            if (n > 0) results.add(c.getName() + ":" + n);
+        }
+        return Map.of("consolidated", total, "detail", results);
+    }
+
+    @PostMapping("/open-loops/extract")
+    public Map<String, Object> extractOpenLoops(@RequestParam String companionId,
+                                                @RequestParam String text) {
+        var loop = openLoopService.create(companionId, "USER_EVENT", "手动抽取",
+                text, 0.6, 0.5, null);
+        return Map.of("created", loop != null);
+    }
+
+    @PostMapping("/cognitive/tick")
+    public Map<String, Object> cognitiveTick() {
+        // 统一内核 tick(Phase4 后接入 CompanionCognitiveRuntime.tick)
+        return Map.of("ok", true, "note", "由 LifeTick/Thought/Emotion/OpenLoop Job 各自推进");
     }
 }

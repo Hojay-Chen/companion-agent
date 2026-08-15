@@ -58,6 +58,12 @@ public class AppProperties {
         private String weeklyReflectionCron = "0 0 5 * * MON";
         private String proactiveCron = "0 */15 * * * *";
         private String birthdayCron = "0 5 8 * * *";
+        // V2.0 生命内核
+        private String lifeTickCron = "0 */10 * * * *";
+        private String thoughtMaintenanceCron = "0 */30 * * * *";
+        private String emotionMaintenanceCron = "0 45 * * * *";
+        private String openLoopCron = "0 */15 * * * *";
+        private String memoryConsolidationCron = "0 0 4 * * *";
     }
 
     @Data

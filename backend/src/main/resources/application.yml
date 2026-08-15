@@ -74,6 +74,12 @@ app:
     weekly-reflection-cron: 0 0 5 * * MON
     proactive-cron: 0 */15 * * * *
     birthday-cron: 0 5 8 * * *
+    # V2.0 生命内核
+    life-tick-cron: 0 */10 * * * *       # 生活推进
+    thought-maintenance-cron: 0 */30 * * * *
+    emotion-maintenance-cron: 0 45 * * * *
+    open-loop-cron: 0 */15 * * * *
+    memory-consolidation-cron: 0 0 4 * * *
 
   # 主动消息打断控制
   proactive:
