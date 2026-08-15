@@ -206,10 +206,26 @@ public class ChatController {
             AppraisalService.AppraisalResult appraisal = appraisalService.appraise(
                     companionId, userId, last.getId(), decisionText, burstPerception);
 
-            // 3. 交互决策: Appraisal + Drives 竞争
+            // 3. Attention 预检(V4 因果顺序): 先决定"她有没有看到", 再决定"回不回"。
+            //    睡觉(dnd) / 上班静音 + 忙 + 消息不显著 → 她根本没注意 → 保持未读(DELIVERED), 不打扰
+            var state = agentStateService.get(companionId);
+            PhoneState phone = phoneStateService.current(companionId, now);
+            double salience = 0.3 + (appraisal != null ? appraisal.urgency() * 0.4 + appraisal.warmth() * 0.3 : 0);
+            AttentionService.Attention attention = attentionService.compute(
+                    schedule.activityFor(companionId, now), state, phone, salience);
+
+            if (attention.noticeProbability() < 0.3) {
+                send(emitter, "meta", Map.of("action", "IGNORE", "reason", "她没注意到消息(在忙/休息/勿扰)"));
+                send(emitter, "done", Map.of("ignored", true, "action", "IGNORE",
+                        "reason", "她没注意到消息(在忙/休息/勿扰)"));
+                emitter.complete();
+                return;
+            }
+
+            // 4. 交互决策: Appraisal + Drives 竞争(此时她已"看到"了)
             InteractionDecision decision = decide(userId, companionId, burstPerception, decisionText, now, appraisal);
 
-            // 4. 不回复是合法行为
+            // 5. 不回复是合法行为(琐碎/未读忽略)
             if (decision.action == InteractionAction.IGNORE || decision.action == InteractionAction.WAIT) {
                 send(emitter, "meta", Map.of("action", decision.action.name(), "reason", decision.reason));
                 send(emitter, "done", Map.of("ignored", true, "action", decision.action.name(), "reason", decision.reason));
@@ -217,7 +233,7 @@ public class ChatController {
                 return;
             }
 
-            // 5. DEFER(V4 §十一/§十二): 已读但不回 —— 状态已变, 下次重新评估
+            // 6. DEFER(V4 §十一/§十二): 已读但不回 —— 状态已变, 下次重新评估
             if (decision.action == InteractionAction.DEFER) {
                 for (Message um : userMsgs) {
                     conversationService.updateDeliveryStatus(um.getId(), "DEFERRED");
@@ -230,7 +246,7 @@ public class ChatController {
                 return;
             }
 
-            // 6. 正常回复路径(V4 P2: Attention 决定已读节奏): 手机静音/勿扰 → 消息可能不被注意到
+            // 7. 正常回复路径: Attention 决定的已读延迟(忙/疲劳 → 慢) → 标记 READ + 事件
             List<Message> recent = conversationService.recentMessages(conversationId, 40);
             String kind = decision.action == InteractionAction.SHORT_ACK ? "SHORT_ACK" : "NORMAL";
             send(emitter, "meta", Map.of(
@@ -240,22 +256,6 @@ public class ChatController {
                     "action", decision.action.name(),
                     "commitment", decision.commitment.name()));
 
-            var state = agentStateService.get(companionId);
-            var availability = availabilityService.current(companionId, now, state);
-            PhoneState phone = phoneStateService.current(companionId, now);
-            double salience = 0.3 + (appraisal != null ? appraisal.urgency() * 0.4 + appraisal.warmth() * 0.3 : 0);
-            AttentionService.Attention attention = attentionService.compute(
-                    schedule.activityFor(companionId, now), state, phone, salience);
-
-            // 若手机 dnd(睡觉/勿扰)且任务注意力高 → 消息未被注意到 → 保持 DELIVERED(未读), 本次不回
-            if (phone.isDoNotDisturb() && attention.noticeProbability() < 0.3) {
-                send(emitter, "done", Map.of("ignored", true, "action", "IGNORE",
-                        "reason", "她在休息/勿扰, 没注意到消息"));
-                emitter.complete();
-                return;
-            }
-
-            // Attention 决定的已读延迟(忙/疲劳 → 慢)
             long readDelay = attention.inspectDelayMs();
             if (readDelay > 0) {
                 Thread.sleep(readDelay);
@@ -266,10 +266,11 @@ public class ChatController {
             eventBus.publish(companionId, CompanionEventType.MESSAGE_READ,
                     Map.of("messageId", last.getId()));
 
-            // 7. typing + 延迟(真人节奏; 短应和不显示"正在输入")
+            // 8. typing + 延迟(真人节奏; 短应和不显示"正在输入")
             long latency = latencyEngine.computeDelayMs(decision, decisionText,
                     state != null ? state.getEnergy() : 0.6,
-                    state != null ? state.getStress() : 0.3, now, availability);
+                    state != null ? state.getStress() : 0.3, now,
+                    availabilityService.current(companionId, now, state));
             boolean showTyping = decision.commitment.level >= com.luxera.companion.interaction.ResponseCommitment.CASUAL.level;
             if (showTyping) {
                 send(emitter, "typing_start", Map.of("conversationId", conversationId));

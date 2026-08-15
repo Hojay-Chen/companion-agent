@@ -21,9 +21,9 @@ import java.util.regex.Pattern;
 public class AppraisalService {
 
     private static final Pattern APOLOGY = Pattern.compile("(对不起|抱歉|不好意思|我错了|是我不好|语气不好|不该那样)");
-    // 指责她: 明确指向"你/这"的才触发, 避免"我今天烦死了/生活没意思"这类自我倾诉被误判
+    // 指责她: 明确指向"你"的才触发, 避免"我今天烦死了/生活没意思"这类自我倾诉被误判
     private static final Pattern ACCUSATION = Pattern.compile(
-            "(你怎么这么|你真|太冷漠|敷衍|讨厌你|你.*不理我|你.*不在乎|你.*说话.*没意思|跟你.*聊天.*没意思|你说话真没意思|你烦死了|烦不烦)");
+            "(你怎么这么|你真|太冷漠|敷衍|讨厌你|你.*不理我|你.*不在乎|你.*说话.*没意思|跟你.*聊天.*没意思|你说话真没意思|你烦死了|烦不烦|你妈的|傻逼|你傻|你滚|滚蛋|废物|去死|贱人)");
     private static final Pattern AFFECTION = Pattern.compile("(想你|好想|舍不得|在乎|喜欢你|爱你|依赖)");
     // 自我负面情绪: "烦死/好烦"是说自己烦, 不是指责她
     private static final Pattern DISTRESS = Pattern.compile(

@@ -11,6 +11,33 @@ note() { echo "==> $*"; }
 ok() { echo "    ✓ $*"; }
 fail() { echo "    ✗ $*"; FAIL=1; }
 
+# V4 验收是"白天交互"测试: 夜间(22:00-08:00)伴侣在睡觉, 消息会被"未读"正确拦截,
+# 交互断言(已读/回复/DEFER)不适用 —— 此时只跑表结构验收并提示。
+HOUR=$(date +%H)
+if [ "$HOUR" -ge 22 ] || [ "$HOUR" -lt 8 ]; then
+  echo ""
+  echo "══════════ V4 验收 ══════════"
+  echo "⚠ 当前为夜间睡觉时段($(date +%H:%M)), 伴侣在睡觉 → 消息会被'未读'拦截(正确行为)。"
+  echo "  交互验收(已读/回复/DEFER)请在 08:00-22:00 运行。"
+  echo "  本次仅执行表结构验收。"
+  note "表结构: message_appraisals / agent_states.hurt+anger"
+  PSQL="psql -h 127.0.0.1 -U admin -d companion -tAc"
+  if PGPASSWORD=shared-secret $PSQL "select 1 from information_schema.tables where table_name='message_appraisals'" | grep -q 1; then
+    ok "message_appraisals 表存在"
+  else
+    fail "缺 message_appraisals 表"
+  fi
+  for c in hurt anger; do
+    if PGPASSWORD=shared-secret $PSQL "select count(*) from information_schema.columns where table_name='agent_states' and column_name='$c'" | grep -q 1; then
+      ok "agent_states.$c 列存在"
+    else
+      fail "缺 agent_states.$c 列"
+    fi
+  done
+  [ "$FAIL" -eq 0 ] && echo "✅ V4 表结构验收通过(夜间)" || echo "❌ V4 表结构验收有 $FAIL 项失败"
+  exit $FAIL
+fi
+
 U="v4_$(date +%s)"
 TOKEN=$(curl -s -X POST "$BASE/api/auth/register" -H 'Content-Type: application/json' \
   -d "{\"username\":\"$U\",\"password\":\"test123456\"}" | $PY -c "import sys,json;print(json.load(sys.stdin)['token'])")

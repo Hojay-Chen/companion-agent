@@ -1241,6 +1241,7 @@ V4 P3: ✅ Expression Loop(思维展开连发)                                  
 | 冲突后 hurt/anger 永久累积不愈合 | `decayAllNegative` 存在但从未调用 | `EmotionMaintenanceJob` 调用，每次 -0.08 |
 | Expression Loop 从不触发 | 纯靠 LLM 自然输出 `<split>`（低频） | 后端兜底：DEEP/ENGAGED+情绪强+长回复按标点拆两条（§37.3.3） |
 | 主动消息"4h内聊过+0.35"生硬 / 深夜+0.4 / 每日5条上限不真人 | cost 用固定加值而非时间曲线 | 改为 `cost=0.9·e^(-分钟/55)+0.15`；移除机械限流（§37.3.1） |
+| 深夜睡觉时发消息 → "已读不回"(DEFER) | **顺序 bug**：`decide()`(Drives→DEFER) 先于 Attention 预检；睡觉时 reply 降/avoid 升 → DEFER，走不到"未读"拦截 | **Attention 预检前置**：先判"她有没有看到"再判"回不回"——睡觉/静音+忙+消息不显著 → 保持 `DELIVERED`(未读)，不再 DEFER。夜间验证：3 条消息全 DELIVERED、DEFERRED=0 |
 
 ### 37.6 Playwright 实测通过（真实 UI）
 
