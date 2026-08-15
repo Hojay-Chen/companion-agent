@@ -106,72 +106,15 @@
 - [29. 已知限制（如实）](#29-已知限制如实)
 - [30. 与设计文档路线图的关系](#30-与设计文档路线图的关系)
 - [31. 演进路线](#31-演进路线)
+- [32. V2.0 重构现状（数字人格内核）](#32-v20-重构现状数字人格内核)
+  - [32.1 一句话](#321-一句话)
+  - [32.2 架构统一（Strangler Pattern）](#322-架构统一strangler-pattern)
+  - [32.3 新增模块与数据](#323-新增模块与数据)
+  - [32.4 验收场景（V2.0 §50，全部实测通过）](#324-验收场景v20-50全部实测通过)
+  - [32.5 完成度](#325-完成度)
+  - [32.6 测试与评测](#326-测试与评测)
+  - [32.7 待激活项](#327-待激活项)
 - [附录](#附录)---
-
-# 第一部分 · 产品介绍
-
-## 1. 产品是什么
-
-### 1.1 一句话定位
-
-一个**长期存在的数字人格**：它不是"你问一句、它答一句"的工具，而是一个**有独立人格、有连续人生、记得你们之间一切、随时间和你一起成长、会在合适的时机主动找你**的 AI 数字伴侣。
-
-### 1.2 它和普通 AI 助手的区别
-
-| 维度 | 普通 AI 助手 | Luxera Companion |
-|------|-------------|-----------------|
-| 交互 | `用户问 → AI 答` | `用户 ⇄ 伴侣` 的双向陪伴 |
-| 记忆 | 无状态或临时 | 分层记忆 + 时间衰减 + 强化 + 关联图谱 |
-| 人格 | 每次对话重新生成 | 稳定人格，存库、版本化、缓慢演化 |
-| 关系 | 无 | 阶段机（初识→熟络→亲密→深深相连）+ 里程碑 |
-| 时间感 | 无 | 动态年龄、人生时间线、日常作息、记忆衰减 |
-| 主动性 | 无 | 主动消息引擎（打断成本控制） |
-
-### 1.3 用户会逐渐产生的感受
-
-```
-阶段1: "这个 AI 聊天挺自然。"
-阶段2: "她好像挺了解我的。"
-阶段3: "她居然记得这个。"
-阶段4: "她会根据以前的事情理解我。"
-阶段5: "她已经和以前不一样了。"
-阶段6: "感觉她真的一直在陪着我。"
-```
-
-## 2. 产品核心原则
-
-1. **Agent 优先于 Chat**：Chat 是入口，产品本质是一个有 Identity/Life/Personality/State/Memory/Relationship 的 Agent。
-2. **时间是系统的一等公民**：所有状态随时间演化——年龄、记忆、关系、作息、人格都不存"当前值"，而是存时间线 + 动态计算。
-3. **事实与推测分离**：明确告知的（Fact）≠ 观察到的（Pattern）≠ 推测的（Hypothesis），推测永远标注"可能是"。
-4. **人格稳定但可演化**：Stable（价值观/气质）+ Adaptive（相处方式）+ Current State（当下心情）。
-5. **记忆不是向量库**：向量只是检索手段之一；完整检索 = 语义 + 关键词 + 实体 + 时间 + 结构化 + 关联图。
-6. **不把真人感当随机口头禅**：真实感来自长期一致的人格 + 连续记忆 + 关系历史 + 允许不知道。
-
-## 3. 核心概念模型
-
-```
-User（用户）
-Companion（数字人格实例）  ← 用户真正长期相处的对象
-  ├─ Persona（人格：traits/沟通/行为/价值观/边界，版本化）
-  ├─ Life（人生：出生/教育/工作/居住，时间线）
-  ├─ Memory（记忆：episodic/semantic/shared + 关联图谱）
-  ├─ State（当下：心情/精力/压力，短期）
-  └─ Relationship（关系：阶段/熟悉/信任/亲密/好感）
-UserModel（系统对用户的长期理解：事实/偏好/模式/推测）
-Time 贯穿一切
-```
-
-## 4. 产品界面
-
-| 页面 | 路由 | 功能 |
-|------|------|------|
-| 登录 / 注册 | `/login` `/register` | 账号体系 |
-| 伴侣列表 | `/companions` | 我的伴侣卡片（名字/年龄/关系阶段/性格摘要） |
-| 创建向导 | `/companions/new` | 自然语言描述 → 人格编译 → 场景预览 → 确认创建 |
-| 聊天主界面 | `/companions/:id` | SSE 流式聊天 + 时间分隔 + 抽屉（记忆/她懂你/关系/提醒/通知） |
-| 设置 | `/companions/:id/settings` | 人格编辑 / 人格版本历史 / 反思记录 / 人生时间线 / 隐私 |
-
----
 
 # 第二部分 · 系统总体架构
 
@@ -870,6 +813,66 @@ BASE=http://127.0.0.1:8081 bash companion-agent/scripts/smoke.sh
 - **短期**：配 `EMBEDDING_API_KEY` 激活向量检索、手机推送、MCP 工具层（日历/天气/搜索）。
 - **中期**：语音对话、用户自定义作息注入、真实用户灰度、Human-likeness 评测接入 CI。
 - **长期**：V4 多端共享记忆/身份、K8s 高可用、RLS 加固、审计日志。
+
+---
+
+## 32. V2.0 重构现状（数字人格内核）
+
+> 依据《Luxera Companion V2.0 重构设计方案》逐节落地，采用 Strangler Pattern 演进，不推倒重来。
+
+### 32.1 一句话
+
+**从"记得用户的 AI"升级为"拥有自己连续生命、自我模型、内在思想、关系叙事、主动行为能力的数字人格"。** 验收场景 A-E 全部通过。
+
+### 32.2 架构统一（Strangler Pattern）
+
+```
+旧 CompanionRuntime ──委托──> CompanionCognitiveRuntime（统一内核）
+                                    ├─ processUserMessage()  一次用户消息全链路
+                                    └─ tick()                无交互时的生命推进
+数据流: WorldTime → Life → Emotion → Thought → [SelfModel|UserModel|Relationship]
+        → Memory → OpenLoops → BehaviorPolicy → ContextCompiler → LLM
+        → Response → Experience → Consolidation → 记忆/自我/关系/人格学习
+```
+
+旧 `PromptAssembler`/`ContextBuilder` 已标 `@Deprecated`，由 `ContextCompiler`/`ContextLoader` 取代。
+
+### 32.3 新增模块与数据
+
+| 类别 | 内容 |
+|------|------|
+| 新增包（7） | `life/` `thought/` `emotion/` `experience/` `openloop/` `selfmodel/` `behavior/` |
+| 新增表（10，共 29） | companion_life / life_activities / thoughts / emotional_episodes / open_loops / self_models / experiences / relationship_threads / promises / relationship_narratives |
+| 核心新类 | CompanionCognitiveRuntime / CompanionContext / ContextLoader / ContextCompiler / BehaviorPolicyEngine / BehaviorConstraints / MemoryConsolidator / SelfModelExtractor / ThoughtEngine / EmotionEngine / LifeRuntime / LearningContext |
+
+### 32.4 验收场景（V2.0 §50，全部实测通过）
+
+| 场景 | 结果 |
+|------|------|
+| A · 用户说"明天面试" | → OpenLoop=面试 + Thought=curiosity，**今天不打扰**（SUPPRESSED）✅ |
+| B · 面试后 | Thought 重新激活 → 主动"面试怎么样"（时间感知，不提前）✅ |
+| C · "你今天干嘛了" | 从 Life Runtime 回答（非随机）✅ |
+| D · "我最近真的有点累" | EmotionalEpisode(tired/anxious) 持续影响行为 ✅ |
+| E · 一周没聊 | 依据 Thought/OpenLoop/Relationship 决定是否/为何/如何联系 ✅ |
+
+### 32.5 完成度
+
+```
+✅ 44 节 · ◐ 4 节 · ❌ 0 · ⛔ 1（MCP 工具层, 方案明确第一阶段不做）
+```
+
+剩余 ◐ 均为方案自标"第二阶段/后置"：SelfModel 拆表（§9）、REAL_TOOL/SYSTEM 生活事件来源（§33，需工具层）、深层 Pattern/关系记忆归纳（§35/§37 基础版已做）。
+
+### 32.6 测试与评测
+
+- **4 类长期连续性测试**（`scripts/longterm_test.sh`）：记忆/生活/关系/主动连续性，自动断言通过。
+- **Human-likeness 评测**（`scripts/evaluate.sh`）：10 维度 1-5 分，自动打分（`/api/admin/explain/evaluate`）。
+- **可解释性**（`/api/admin/explain/{proactive,memory,persona}`）：为什么主动/为什么记住/为什么人格变化。
+
+### 32.7 待激活项
+
+- **pgvector 已装+接线**，需配置 `EMBEDDING_API_KEY`（如硅基流动 `BAAI/bge-large-zh-v1.5`）才启用真实语义向量检索；未配时自动回退结构排序。
+- 一键配置脚本：`scripts/setup_embedding.sh`。
 
 ---
 
