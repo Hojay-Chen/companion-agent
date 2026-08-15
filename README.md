@@ -6,13 +6,13 @@
 
 | 项 | 值 |
 |----|----|
-| 后端 | Spring Boot 2.7.18 · JDK 17 · 模块化单体（180+ 个 Java 类，23 个业务模块） |
+| 后端 | Spring Boot 2.7.18 · JDK 17 · 模块化单体（199 个 Java 类，23 个业务模块） |
 | 前端 | React 19 · Vite 8 · TypeScript(strict) · Tailwind CSS 3 · Zustand |
 | 数据库 | PostgreSQL 16 · 34 张表（含 pgvector） |
 | 大模型 | 统一 LLM 网关 → DeepSeek(deepseek-chat)，无 key 自动降级 Mock；模型用途路由可配 |
 | 线上 | `https://companion.luxera.top`（nginx + systemd jar :8081） |
 | 代码 | GitHub `Hojay-Chen/companion-agent` |
-| 当前数据量 | 19 用户 / 19 伴侣 / 134 消息 / 104 记忆 / 61 反思记录 |
+| 当前数据量 | 54 用户 / 54 伴侣 / 449 消息 / 507 记忆 / 251 反思记录 |
 
 ## 📖 目录
 
@@ -79,7 +79,7 @@
   - [25.2 本地启动](#252-本地启动)
   - [25.3 LLM 配置](#253-llm-配置)
   - [25.4 生产部署](#254-生产部署)
-  - [25.5 冒烟测试](#255-冒烟测试)
+  - [25.5 测试脚本](#255-测试脚本)
 - [26. 非功能设计](#26-非功能设计)
   - [26.1 性能](#261-性能)
   - [26.2 安全](#262-安全)
@@ -250,29 +250,24 @@ http.csrf().disable()
 ## 12. 聊天对话（核心交互）
 
 ### 功能介绍
-流式打字机对话；支持多会话；每条消息带意图/情绪/话题；回复 2-4 句、有来有往、会引用记忆；对话窗口显示真实时间（今天/昨天/日期分隔 + HH:mm）。
+流式打字机对话；支持多会话；**V3 Interaction Runtime**：收到消息先决定"要不要回、投入多少、怎么回"，连发消息自动合并为一次回复，回复长度/问题/建议由预算决定而非固定模板，她也会有自己的回复节奏（延迟/打字指示）。每条消息带意图/情绪/话题；对话窗口显示真实时间（今天/昨天/日期分隔 + HH:mm）。
 
 ### 实现原理
-- **SSE 流式**：`ChatController.chat()` 返回 `SseEmitter`（300s），线程池执行；具名事件协议：
+- **SSE 流式（V3 具名事件协议）**：`ChatController.chat()` 返回 `SseEmitter`（300s），线程池执行：
   ```
-  event:meta    {intent, emotion, topic}
-  event:token   {delta}          ← LLM 每个增量
-  event:replace {content}        ← 自然度修正时整体替换
-  event:done    {messageId}
-  event:error   {message}
+  event:meta         {intent, emotion, topic, action, commitment}   ← 决策结果
+  event:typing_start {conversationId}    ← 仅 commitment≥CASUAL 才发
+  event:typing_stop  {}                  ← 真人节奏延迟后
+  event:token        {delta}             ← LLM 每个增量
+  event:replace      {content}           ← 自然度修正时整体替换
+  event:message      {messageId, content}← ResponsePlan 第二条(她连发)
+  event:boundary     {type:SOFT_END}     ← "我去洗澡了"→不续聊
+  event:done         {messageId, action} ← action 含 IGNORE/SHORT_ACK 等
+  event:error        {message}
   ```
-- **前端**：`streamPost`（fetch + ReadableStream，按 `\n\n` 分块解析 `event:`/`data:`）驱动气泡渲染。
-- **一次对话完整时序**（`CompanionRuntime.generate`）：
-  ```
-  1 保存 user 消息 + 工作记忆
-  2 启发式感知 → LLM 同步精炼感知
-  3 (request_tool) ReminderPlanner 建提醒
-  4 ContextBuilder 聚合 → PromptAssembler 组提示
-  5 LlmRouter.chatStream → SSE 逐 token
-  6 NaturalnessEngine 校验 → replace 修正
-  7 保存 companion 消息 + 工作记忆 → done
-  8 异步后处理（记忆抽取/用户模型/关系/状态）
-  ```
+- **连发合并**：前端在首个消息后启动自适应静默窗口（按用户近期发送间隔 1.5 倍，限 800~2200ms），把窗口内连发消息作为一批 `POST /chat {messages:[{content}...]}`；后端一次保存、一次回复。
+- **决策链**：批量入库（感知 + Session/Exchange 归属 + 聊天习惯学习）→ `InteractionPolicyEngine.decide`（REPLY_NOW / SHORT_ACK / IGNORE / WAIT / END_CONVERSATION，输入含意图/情绪/精力/压力/关系阶段/作息/可用状态）→ typing + 延迟（`ResponseLatencyEngine`，含 Availability 加成）→ 一次生成（带预算）→ `<split>` 拆段（ResponsePlan）→ boundary。
+- **前端**：`streamPost`（fetch + ReadableStream，按 `\n\n` 分块解析 `event:`/`data:`）驱动气泡渲染与打字指示器。
 
 ## 13. 感知引擎
 
@@ -306,7 +301,7 @@ String emotion = root.path("emotion").asText("");
 - `WorkingMemory`：`ConcurrentHashMap<companionId:conversationId, Entry>`，Entry 含 `recent(Deque)`、`currentTopic/Intent/Emotion`、`currentEntities`、`lastUpdated`。
 - **TTL 过期**：超过 `working-memory-ttl-minutes: 720` 自动失效。
 - `ChatController` 同步记录每条消息；`PerceptionRefiner` 写入精炼后的话题/情绪/实体。
-- `ContextBuilder` 读取 → `PromptAssembler` 渲染"当前会话状态"块。
+- `ContextLoader` 读取 → `ContextCompiler` 渲染"当前会话状态"块（V2 起替代旧 `PromptAssembler`）。
 - 内存实现（接口可替换 Redis，多实例共享）。
 
 ## 15. 记忆系统
@@ -317,7 +312,7 @@ String emotion = root.path("emotion").asText("");
 - **Semantic**：对用户的长期认知（"用户加班多，容易累"）
 - **Shared**：双方共同经历/默契（"你们都爱手冲咖啡"）
 
-用户可查看记忆、搜索、看"为什么你知道"（来源对话）、遗忘单条、清空、导出 JSON。记忆会**随时间和使用演化**（衰减/强化）。
+用户可查看记忆、搜索、看"为什么你知道"（来源对话）、遗忘单条、清空、导出 JSON。记忆会**随时间和使用演化**（衰减/强化）。**V3 P2 新增实体层**：她还会记住你常提的"人/地方/事"（`entities` 表），用于理解"那家公司/上次那个地方"这类长期指代。
 
 ### 实现原理
 
@@ -436,16 +431,18 @@ Schedule s = new Schedule(8 + h%3, 17 + (h/3)%3, 23 + (h/18)%2, 6 + (h/9)%2);
 
 **主动决策**（`ProactiveEngine`，每 15 分钟）：
 ```
-到期提醒先转通知（优先，不受打扰控制）
+到期提醒先转通知（系统事件, 不受打扰控制）
 每伴侣过滤：DND(23-8) / 作息=SLEEP / 最小间隔1h / 每日上限5
 decide() 按优先级评估触发，每个触发 expected_value × 作息因子
-  触发: late_work / morning_greeting / evening_checkin / follow_up_joy / silence
+  触发: open_loop(未了结事项, V3 P1 价值递减) / thought(想起你) / late_work / morning_greeting / evening_checkin / follow_up_joy / silence
 打断成本:
   cost = 0.15 + 深夜(0.4) + 22点后(0.1) + 4h内聊过(0.35) ± 响应率(0.1) + 今日上限(0.3)
 cost ≥ expected_value → DO_NOTHING
 通过 → draftMessage(): LLM 按"人格+当前作息+场景"生成（失败回退模板）
-     → 写 Notification + 注入最新会话(is_proactive=true)
+     → 只写入最新会话 message_kind=PROACTIVE（V3: 主动=Chat 消息, 不再写 Notification）
 ```
+
+> **V3 变化**：主动消息只进聊天框（`message_kind=PROACTIVE`），不再是 Notification —— 她"主动找你"是关系互动而非系统通知；去重/间隔 bookkeeping 改查 `messages(kind=PROACTIVE)`。提醒（Reminder）仍走 Notification（系统事件）。
 
 ## 21. 工具与提醒
 
@@ -528,7 +525,7 @@ public interface LlmGateway {
 | POST | `/api/companions/{cid}/conversations/first` | 首个会话（含问候） |
 | POST | `/api/companions/{cid}/conversations` | 新建会话 |
 | GET | `/api/companions/{cid}/conversations/{id}/messages` | 消息列表 |
-| POST | `/api/companions/{cid}/conversations/{id}/chat` | **SSE 流式聊天** |
+| POST | `/api/companions/{cid}/conversations/{id}/chat` | **SSE 流式聊天**（单条 `{content}` 或连发合并 `{messages:[{content}]}`；事件含 typing_start/typing_stop/boundary/message） |
 
 ### 24.4 记忆
 | 方法 | 路径 | 说明 |
@@ -537,6 +534,7 @@ public interface LlmGateway {
 | GET | `/api/companions/{cid}/memories/search?q=` | 检索 |
 | GET | `/api/companions/{cid}/memories/export` | 导出 JSON |
 | GET | `/api/companions/{cid}/memories/graph` | 记忆图谱 |
+| GET | `/api/companions/{cid}/memories/entities` | 用户常提实体（V3 P2） |
 | GET | `/api/companions/{cid}/memories/why?q=` | 为什么你知道（含来源） |
 | GET | `/api/companions/{cid}/memories/{id}/source` | 单条来源摘录 |
 | DELETE | `/api/companions/{cid}/memories/{id}` | 遗忘 |
@@ -619,11 +617,14 @@ sudo bash companion-agent/scripts/deploy.sh
 自动完成：前端产物 → `/var/www/companion` · nginx 配置 → `/etc/nginx/conf.d/` · `/etc/hosts` · systemd 服务 `luxera-companion-backend` · nginx 重载 · 健康检查。
 > ⚠️ `deploy.sh` 会重写 systemd 单元，**必须保留 `EnvironmentFile=/etc/companion/.env`**（内含 `DEEPSEEK_API_KEY`），否则降级 Mock。
 
-### 25.5 冒烟测试
+### 25.5 测试脚本
+
 ```bash
-BASE=http://127.0.0.1:8081 bash companion-agent/scripts/smoke.sh
+BASE=http://127.0.0.1:8081 bash scripts/smoke.sh      # V2 全链路冒烟（注册→建伴→SSE→记忆→关系→反思）
+BASE=http://127.0.0.1:8081 bash scripts/v3_check.sh   # V3 P0 验收（连发一次回/短陪伴/洗澡SOFT_END/自然重开/嗯=不回）
+BASE=http://127.0.0.1:8081 bash scripts/p1_check.sh   # V3 P1 验收（聊天习惯学习/连发率/表结构）
+BASE=http://127.0.0.1:8081 bash scripts/p2_check.sh   # V3 P2 验收（实体抽取/实体API/表结构）
 ```
-覆盖：注册 → 编译人格 → 创建 → 问候 → SSE 流式 → 记忆抽取 → 关系里程碑 → 生日提醒 → 反思 → 记忆搜索。
 
 ## 26. 非功能设计
 
@@ -668,7 +669,7 @@ BASE=http://127.0.0.1:8081 bash companion-agent/scripts/smoke.sh
 - **4 类长期连续性测试**（scripts/longterm_test.sh，自动断言）：记忆/生活/关系/主动连续性全通过。
 - **Human-likeness 评测**（scripts/evaluate.sh，自动打分）：10 维 1-5 分。
 - **验收场景 A-E**（V2.0 §50）：面试跟进、今天干嘛、累的情绪持续、一周沉默后自然联系，全部通过。
-- **真实模型验证**：回复 2-4 句多样、提醒时间正确、记忆图谱建链、记忆透明带来源、LLM 反思有洞察、人格演化在跑、主动消息按时段 LLM 生成、作息体现（周六回复"窝在沙发喝茶"）。
+- **真实模型验证**：回复长短随消息价值变化（V3 预算）、提醒时间正确、记忆图谱建链、记忆透明带来源、LLM 反思有洞察、人格演化在跑、主动消息按时段 LLM 生成、作息体现（周六回复"窝在沙发喝茶"）。
 - **已修 Bug**：
   - LLM 时间幻觉（提醒年份错）→ 注入当前日期 + 过去时间兜底
   - 部署脚本丢 EnvironmentFile 导致降级 Mock → 已修
@@ -839,9 +840,10 @@ boundary(SOFT_END 等) → done
 ### 33.7 完成度
 
 ```
-V3 P0: ✅ 回复决策 / 时机 / 预算 / 连发合并 / 主动进聊天框 / 会话模型 / 边界
-V3 P1: ✅ 见 §34
-V3 P2(再往后): Experience 深化 / Self Model / Relationship Narrative / Entity Layer / Memory 3.0
+V3 P0: ✅ 回复决策 / 时机 / 预算 / 连发合并 / 主动进聊天框 / 会话模型 / 边界   (§33)
+V3 P1: ✅ Availability / UserChatStyle / SelfDisclosure / FollowUp / ResponsePlan (§34)
+V3 P2: ✅ Entity Layer / Memory Disclosure                                     (§35)
+V3 P3(再往后): Relationship Narrative 深化 / Self Model 拆表 / memory_embeddings 分离 / Context L0-L3 分层
 ```
 
 ---
@@ -943,4 +945,4 @@ Reminder（工具→通知）与 Follow-up（关系→聊天内主动问）在 V
 - **设计依据**：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）
 - **代码**：GitHub `Hojay-Chen/companion-agent`
 - **运行**：`https://companion.luxera.top`（nginx + systemd jar :8081 + PostgreSQL :5432）
-- **规模**：后端 116 个 Java 类 · 前端 17 个源文件 · 数据库 19 张表
+- **规模**：后端 199 个 Java 类 · 前端 17 个源文件 · 数据库 34 张表
