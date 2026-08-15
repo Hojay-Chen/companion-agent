@@ -290,10 +290,14 @@ public class ChatController {
 
             // 9. ResponsePlan / Expression Loop(V4 P3): 她也可以连发
             //    深度倾诉时即使 LLM 没输出 <split>, 也按标点兜底拆成两条 —— "边想边说"的自然展开
+            //    V4.2: 阈值放宽(DEEP 或 情绪强), 让"边想边说"更容易出现
             String reply = outcome.reply();
             List<String> chunks = splitReply(reply);
-            if (chunks.size() == 1 && decision.commitment.level >= com.luxera.companion.interaction.ResponseCommitment.DEEP.level
-                    && reply.length() > 50 && appraisal != null && appraisal.emotionalImpact() >= 0.5) {
+            boolean deepTone = decision.commitment.level >= com.luxera.companion.interaction.ResponseCommitment.DEEP.level
+                    || (decision.commitment.level >= com.luxera.companion.interaction.ResponseCommitment.ENGAGED.level
+                        && appraisal != null && appraisal.emotionalImpact() >= 0.6);
+            if (chunks.size() == 1 && deepTone
+                    && reply.length() > 35 && appraisal != null && appraisal.emotionalImpact() >= 0.35) {
                 String mid = splitAtPunctuation(reply);
                 if (mid != null) {
                     chunks = List.of(mid, reply.substring(mid.length()).trim());
@@ -359,17 +363,31 @@ public class ChatController {
         return out;
     }
 
-    /** 在第二个句号/感叹号处拆分(Expression Loop 兜底): 前半是完整回应, 后半是补充 */
+    /**
+     * 在第二个句号/感叹号处拆分(Expression Loop 兜底): 前半是完整回应, 后半是补充。
+     * 找不到第二个句号时, 在第一个句号/感叹号后拆; 仍找不到(口语化长句)则在第一个逗号后拆。
+     */
     private static String splitAtPunctuation(String text) {
         int count = 0;
+        int firstSentenceEnd = -1;
         for (int i = 0; i < text.length() - 1; i++) {
             char c = text.charAt(i);
             if (c == '。' || c == '！' || c == '？' || c == '!') {
                 count++;
+                if (firstSentenceEnd < 0) firstSentenceEnd = i;
                 if (count >= 2 && i > 10 && i < text.length() - 3) {
                     return text.substring(0, i + 1).trim();
                 }
             }
+        }
+        // 只有一个句号 → 在其后拆(后半当补充)
+        if (firstSentenceEnd > 10 && firstSentenceEnd < text.length() - 3) {
+            return text.substring(0, firstSentenceEnd + 1).trim();
+        }
+        // 完全没有句号 → 第一个逗号后拆
+        int comma = text.indexOf('，');
+        if (comma > 10 && comma < text.length() - 3) {
+            return text.substring(0, comma + 1).trim();
         }
         return null;
     }
