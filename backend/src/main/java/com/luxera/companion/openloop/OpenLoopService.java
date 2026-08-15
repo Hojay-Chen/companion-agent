@@ -49,6 +49,11 @@ public class OpenLoopService {
         return repo.findByCompanionIdAndStatusInOrderByImportanceDesc(companionId, List.of("OPEN", "WAITING"));
     }
 
+    @Transactional(readOnly = true)
+    public java.util.Optional<OpenLoop> getById(String id) {
+        return id == null ? java.util.Optional.empty() : repo.findById(id);
+    }
+
     @Transactional
     public void resolve(String loopId) {
         repo.findById(loopId).ifPresent(l -> {

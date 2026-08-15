@@ -145,10 +145,11 @@ public class ProactiveEngine {
         double factor = schedule.proactiveFactor(c.getId(), now);
 
         // 触发 0: OpenLoop 驱动(未完成事项, 最真实) — "面试怎么样了"
+        // 只在预期解决时间临近/已过(±3h)才问, 提前不打扰
         OpenLoop bestLoop = openLoopService.activeLoops(c.getId()).stream()
                 .filter(l -> l.getExpectedResolutionAt() != null)
-                .filter(l -> !l.getExpectedResolutionAt().isBefore(now.minusHours(4)))
-                .filter(l -> l.getExpectedResolutionAt().isBefore(now.plusHours(18)))
+                .filter(l -> !l.getExpectedResolutionAt().isBefore(now.minusHours(3)))
+                .filter(l -> l.getExpectedResolutionAt().isBefore(now.plusHours(2)))
                 .max(Comparator.comparingDouble(OpenLoop::getImportance))
                 .orElse(null);
         if (bestLoop != null && !loopFollowedUp(c.getId(), bestLoop.getTitle())) {
@@ -163,20 +164,25 @@ public class ProactiveEngine {
 
         // 触发 0.5: Thought 驱动(她"想起了你")
         Thought bestThought = thoughtService.activeThoughts(c.getId()).stream()
-                .filter(t -> t.getStrength() >= 0.5)
+                .filter(t -> t.getStrength() >= 0.35)
                 .filter(t -> List.of("CURIOSITY", "WORRY", "EXPECTATION", "UNFINISHED").contains(t.getType()))
                 .filter(t -> !"SUPPRESSED".equals(t.getStatus()))
                 .max(Comparator.comparingDouble(Thought::getStrength))
                 .orElse(null);
         if (bestThought != null) {
-            double value = (0.35 + bestThought.getStrength() * 0.4) * factor;
-            double cst = cost(now, lastInteraction, todayCount, responsive);
-            if (value > cst) {
-                thoughtService.act(bestThought.getId());
-                return ProactiveDecision.send("心里想着", bestThought.getContent(), "thought", value, cst);
-            } else {
-                // 被成本压制的想法 → SUPPRESSED, 保留次日再激活(形成自然连续性)
+            // 若想法关联的未完成事项还没到预期时间(提前问=打扰) → 今天不打扰, SUPPRESSED 保留
+            if (isPremature(bestThought, now)) {
                 thoughtService.suppress(bestThought.getId());
+            } else {
+                double value = (0.35 + bestThought.getStrength() * 0.4) * factor;
+                double cst = cost(now, lastInteraction, todayCount, responsive);
+                if (value > cst) {
+                    thoughtService.act(bestThought.getId());
+                    return ProactiveDecision.send("心里想着", bestThought.getContent(), "thought", value, cst);
+                } else {
+                    // 被成本压制的想法 → SUPPRESSED, 保留次日再激活(形成自然连续性)
+                    thoughtService.suppress(bestThought.getId());
+                }
             }
         }
 
@@ -307,6 +313,15 @@ public class ProactiveEngine {
         if (last == null) return false;
         String content = last.getContent();
         return content != null && title != null && content.contains(title);
+    }
+
+    /** 想法关联的未完成事项是否还没到预期时间(提前问=打扰) */
+    private boolean isPremature(Thought t, LocalDateTime now) {
+        if (!"OPEN_LOOP".equals(t.getTriggerType()) || t.getTriggerRef() == null) return false;
+        return openLoopService.getById(t.getTriggerRef())
+                .map(l -> l.getExpectedResolutionAt() != null
+                        && l.getExpectedResolutionAt().isAfter(now.plusHours(2)))
+                .orElse(false);
     }
 
     private void injectMessage(String companionId, String content) {

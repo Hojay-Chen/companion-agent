@@ -35,15 +35,25 @@ public class ThoughtEngine {
         if (m.find()) {
             // 用户提到有"待办/待结果"的事 → CURIOSITY + 转 OpenLoop
             String title = extractTitle(userText);
+            java.time.LocalDateTime expected = expectedResolution(userText);
             OpenLoop loop = openLoopService.create(companionId, "USER_EVENT", title,
-                    userText, 0.7, 0.6, null);
+                    userText, 0.8, 0.7, expected);
             Thought t = thoughtService.create(companionId,
                     "不知道他" + title + "怎么样了",
                     "CURIOSITY", "OPEN_LOOP", loop != null ? loop.getId() : null,
-                    0.6, 0.5, 0.7, 0.8, 0.7);
+                    0.85, 0.6, 0.85, 0.95, 0.8);
             return t;
         }
         return null;
+    }
+
+    /** 推断预期解决时间: "明天"→明晚18点, "后天"→后晚18点, 否则当晚会 */
+    private static java.time.LocalDateTime expectedResolution(String text) {
+        java.time.LocalDate today = java.time.LocalDate.now();
+        java.time.LocalDateTime base = java.time.LocalDateTime.now().plusHours(6);
+        if (text.contains("明天")) return today.plusDays(1).atTime(18, 0);
+        if (text.contains("后天")) return today.plusDays(2).atTime(18, 0);
+        return base;
     }
 
     /** 从一条记忆关联触发想法(如"他之前好像挺喜欢这里") */

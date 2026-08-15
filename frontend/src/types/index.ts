@@ -253,8 +253,7 @@ export interface ReflectionRecord {
 export interface MemorySourceMessage {
   sender: string
   content: string
-  createdAt: string
-}
+  createdAt: string}
 
 export interface MemoryLink {
   id: string
@@ -271,4 +270,62 @@ export interface PersonaVersion {
   changeSource?: string
   changeReason?: string
   createdAt: string
+}
+
+export interface CompanionLife {
+  currentActivity?: string
+  currentLocation?: string
+  dayPhase?: string
+  todaySummary?: string
+  todayActivities: LifeActivity[]
+}
+
+export interface LifeActivity {
+  id: string
+  type: string
+  title: string
+  description?: string
+  plannedStart?: string
+  plannedEnd?: string
+  actualStart?: string
+  actualEnd?: string
+  status: string
+  source?: string
+}
+
+export interface SelfModel {
+  narrative?: string
+  facts?: string[]
+  preferences?: string[]
+  concerns?: string[]
+  plans?: string[]
+  version?: number
+}
+
+export interface RelationshipNarrative {
+  currentSummary?: string
+  importantChapters?: unknown[]
+  emotionalArc?: string[]
+  sharedIdentity?: string
+  version?: number
+}
+
+export interface RelationshipThread {
+  id: string
+  topic: string
+  summary?: string
+  status: string
+  importance: number
+  lastActivityAt: string
+}
+
+export interface OpenLoop {
+  id: string
+  ownerType?: string
+  title: string
+  description?: string
+  status: string
+  importance: number
+  expectedResolutionAt?: string
+  lastReferencedAt?: string
 }

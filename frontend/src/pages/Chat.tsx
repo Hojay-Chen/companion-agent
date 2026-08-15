@@ -8,6 +8,7 @@ import {
   Send,
   Settings,
   Sparkles,
+  Sun,
 } from 'lucide-react'
 import { api, streamPost } from '@/api/client'
 import CompanionAvatar from '@/components/CompanionAvatar'
@@ -16,15 +17,20 @@ import Drawer from '@/components/Drawer'
 import type {
   AgentState,
   Companion,
+  CompanionLife,
   Conversation,
   Memory,
   MemoryLink,
   MemorySourceMessage,
   Message,
   Notification,
+  OpenLoop,
   Relationship,
   RelationshipEvent,
+  RelationshipNarrative,
+  RelationshipThread,
   Reminder,
+  SelfModel,
   SharedExperience,
   UserFact,
   UserHypothesis,
@@ -33,7 +39,7 @@ import type {
 } from '@/types'
 import { format } from 'date-fns'
 
-type DrawerTab = 'memories' | 'usermodel' | 'relationship' | 'reminders' | 'notifications' | null
+type DrawerTab = 'recent' | 'memories' | 'usermodel' | 'relationship' | 'reminders' | 'notifications' | null
 
 const STAGE_ZH: Record<string, string> = {
   new: '初识',
@@ -235,6 +241,13 @@ export default function Chat() {
             )}
           </button>
           <button
+            onClick={() => setDrawer('recent')}
+            className="mt-1 flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-cocoa-400 transition hover:bg-cocoa-850"
+          >
+            <Sun size={15} />
+            她最近
+          </button>
+          <button
             onClick={() => setDrawer('memories')}
             className="mt-1 flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-cocoa-400 transition hover:bg-cocoa-850"
           >
@@ -316,6 +329,7 @@ export default function Chat() {
         onClose={() => setDrawer(null)}
         title={drawerTitle(drawer, companion)}
       >
+        {drawer === 'recent' && <RecentPanel companionId={companionId} />}
         {drawer === 'memories' && <MemoriesPanel companionId={companionId} />}
         {drawer === 'usermodel' && <UserModelPanel companionId={companionId} />}
         {drawer === 'relationship' && <RelationshipPanel companionId={companionId} />}
@@ -328,6 +342,8 @@ export default function Chat() {
 
 function drawerTitle(drawer: DrawerTab, companion: Companion) {
   switch (drawer) {
+    case 'recent':
+      return `${companion.name}最近`
     case 'memories':
       return `${companion.name}的记忆`
     case 'usermodel':
@@ -525,6 +541,113 @@ function TimeDivider({ label }: { label: string }) {
   return (
     <div className="my-1 flex items-center justify-center">
       <span className="rounded-full bg-cocoa-900 px-3 py-1 text-[11px] text-cocoa-500">{label}</span>
+    </div>
+  )
+}
+
+// ── 她最近(设计文档 V2.0 §31: 用户视角, 不暴露数值面板) ──
+function RecentPanel({ companionId }: { companionId: string }) {
+  const [life, setLife] = useState<CompanionLife | null>(null)
+  const [selfModel, setSelfModel] = useState<SelfModel | null>(null)
+  const [narrative, setNarrative] = useState<RelationshipNarrative | null>(null)
+  const [threads, setThreads] = useState<RelationshipThread[]>([])
+  const [loops, setLoops] = useState<OpenLoop[]>([])
+
+  useEffect(() => {
+    ;(async () => {
+      setLife(await api.get<CompanionLife>(`/api/companions/${companionId}/life`))
+      setSelfModel(await api.get<SelfModel>(`/api/companions/${companionId}/self`))
+      setNarrative(await api.get<RelationshipNarrative>(`/api/companions/${companionId}/relationship/narrative`))
+      setThreads(await api.get<RelationshipThread[]>(`/api/companions/${companionId}/relationship/threads`))
+      setLoops(await api.get<OpenLoop[]>(`/api/companions/${companionId}/open-loops`))
+    })()
+  }, [companionId])
+
+  return (
+    <div className="space-y-5">
+      {/* 今日生活 */}
+      <section>
+        <h4 className="text-sm font-medium text-cocoa-100">她今天在干嘛</h4>
+        {life?.todaySummary && (
+          <p className="mt-1 text-xs leading-relaxed text-cocoa-400">{life.todaySummary}</p>
+        )}
+        <div className="mt-2 space-y-1.5">
+          {life?.todayActivities
+            .filter((a) => a.type !== 'SLEEP')
+            .map((a) => (
+              <div key={a.id} className="flex items-center gap-2 text-xs">
+                <span className={`marker-dot ${a.status === 'ACTIVE' ? 'bg-ember-soft' : 'bg-cocoa-600'}`} />
+                <span className="w-10 text-cocoa-500">
+                  {a.plannedStart ? format(new Date(a.plannedStart), 'HH:mm') : ''}
+                </span>
+                <span className={a.status === 'ACTIVE' ? 'text-cocoa-100' : 'text-cocoa-400'}>{a.title}</span>
+                {a.status === 'ACTIVE' && <span className="ml-auto text-[10px] text-ember-soft">进行中</span>}
+              </div>
+            ))}
+        </div>
+      </section>
+
+      {/* 自我叙事 */}
+      {selfModel?.narrative && (
+        <section>
+          <h4 className="text-sm font-medium text-cocoa-100">她最近觉得自己</h4>
+          <p className="mt-1.5 rounded-xl bg-cocoa-850 p-3 text-sm leading-relaxed text-cocoa-200">
+            {selfModel.narrative}
+          </p>
+          {(selfModel.concerns?.length || 0) > 0 && (
+            <p className="mt-1.5 text-xs text-cocoa-500">
+              最近有点担心:{selfModel.concerns!.join('、')}
+            </p>
+          )}
+        </section>
+      )}
+
+      {/* 关系故事 */}
+      {narrative?.currentSummary && (
+        <section>
+          <h4 className="text-sm font-medium text-cocoa-100">你们之间的故事</h4>
+          <p className="mt-1.5 rounded-xl bg-cocoa-850 p-3 text-sm leading-relaxed text-cocoa-200">
+            {narrative.currentSummary}
+          </p>
+          {narrative.sharedIdentity && (
+            <p className="mt-1.5 text-xs text-ember-soft">共同的:{narrative.sharedIdentity}</p>
+          )}
+        </section>
+      )}
+
+      {/* 关系线索 */}
+      {threads.length > 0 && (
+        <section>
+          <h4 className="text-sm font-medium text-cocoa-100">正在发生的事</h4>
+          <div className="mt-1.5 space-y-1.5">
+            {threads.map((t) => (
+              <div key={t.id} className="rounded-lg bg-cocoa-850 px-3 py-2 text-xs text-cocoa-300">
+                <span className="text-ember-soft">· </span>
+                {t.topic}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* 未了结的事 */}
+      {loops.length > 0 && (
+        <section>
+          <h4 className="text-sm font-medium text-cocoa-100">她记着这些没办完的事</h4>
+          <div className="mt-1.5 space-y-1.5">
+            {loops.map((l) => (
+              <div key={l.id} className="rounded-lg bg-cocoa-850 px-3 py-2 text-xs text-cocoa-300">
+                {l.title}
+                {l.expectedResolutionAt && (
+                  <span className="ml-2 text-cocoa-500">
+                    · {format(new Date(l.expectedResolutionAt), 'M月d日 HH:mm')}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   )
 }
