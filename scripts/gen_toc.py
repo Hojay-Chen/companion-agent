@@ -38,7 +38,7 @@ toc = "\n".join(toc_lines)
 # 若已存在 TOC 块("## 📖 目录" 到其后的 "---"), 整体替换; 否则插到第一个 H2 之前
 toc_block = re.compile(r"^## 📖 目录\n.*?(?=^---\n)", re.MULTILINE | re.DOTALL)
 if toc_block.search(content):
-    content = toc_block.sub(toc.rstrip("\n"), content, count=1)
+    content = toc_block.sub(toc.rstrip("\n") + "\n", content, count=1)
 else:
     idx = content.find("\n## ")
     if idx == -1:
