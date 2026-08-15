@@ -2,13 +2,13 @@
 
 > **不是 Chatbot**：拥有稳定人格、连续人生、持续记忆，随时间与用户建立关系，并在合适的时候主动找你。
 >
-> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime 方案。当前完成 **V2.0(44/44) + V3 P0**。
+> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime 方案。当前完成 **V2.0(44/44) + V3 P0 + V3 P1**。
 
 | 项 | 值 |
 |----|----|
-| 后端 | Spring Boot 2.7.18 · JDK 17 · 模块化单体（180+ 个 Java 类，22 个业务模块） |
+| 后端 | Spring Boot 2.7.18 · JDK 17 · 模块化单体（180+ 个 Java 类，23 个业务模块） |
 | 前端 | React 19 · Vite 8 · TypeScript(strict) · Tailwind CSS 3 · Zustand |
-| 数据库 | PostgreSQL 16 · 32 张表（含 pgvector） |
+| 数据库 | PostgreSQL 16 · 33 张表（含 pgvector） |
 | 大模型 | 统一 LLM 网关 → DeepSeek(deepseek-chat)，无 key 自动降级 Mock；模型用途路由可配 |
 | 线上 | `https://companion.luxera.top`（nginx + systemd jar :8081） |
 | 代码 | GitHub `Hojay-Chen/companion-agent` |
@@ -17,7 +17,7 @@
 ## 📖 目录
 
 - [8. 实体关系总览](#8-实体关系总览)
-- [9. 数据表详细设计（29 张表）](#9-数据表详细设计29-张表)
+- [9. 数据表详细设计（33 张表）](#9-数据表详细设计33-张表)
   - [9.1 用户与伴侣](#91-用户与伴侣)
   - [9.2 对话](#92-对话)
   - [9.3 记忆](#93-记忆)
@@ -106,6 +106,13 @@
   - [33.5 验收行为（实测通过，`scripts/v3_check.sh`）](#335-验收行为实测通过scriptsv3_checksh)
   - [33.6 对原方案的两处修正（工程落地）](#336-对原方案的两处修正工程落地)
   - [33.7 完成度](#337-完成度)
+- [34. V3.1 P1 — 她更像一个"有自己生活的人"（完成）](#34-v31-p1--她更像一个有自己生活的人完成)
+  - [34.1 CompanionAvailability（她不是永远在线）](#341-companionavailability她不是永远在线)
+  - [34.2 UserChatStyle（学习你的聊天习惯，但不模仿你）](#342-userchatstyle学习你的聊天习惯但不模仿你)
+  - [34.3 SelfDisclosure 增强（双向关系）](#343-selfdisclosure-增强双向关系)
+  - [34.4 FollowUp 增强（关系型跟进）](#344-followup-增强关系型跟进)
+  - [34.5 ResponsePlan（她也可以连发，低频）](#345-responseplan她也可以连发低频)
+  - [34.6 验收（`scripts/p1_check.sh` 全过）](#346-验收scriptsp1_checksh-全过)
 - [附录](#附录)
 ---
 
@@ -128,9 +135,9 @@ users 1─* companions 1─* conversations 1─* messages
 
 > 所有核心表强制携带 `user_id + companion_id`（多租户隔离，查询强制过滤）。
 
-## 9. 数据表详细设计（32 张表）
+## 9. 数据表详细设计（33 张表）
 
-> 原有 19 表 + V2.0 新增 10 表 + V3 新增 3 表（`interaction_sessions` / `conversation_exchanges` / `conversation_boundaries`）。
+> 原有 19 表 + V2.0 新增 10 表 + V3 新增 4 表（`interaction_sessions` / `conversation_exchanges` / `conversation_boundaries` / `user_chat_styles`）。
 
 ### 9.1 用户与伴侣
 
@@ -166,6 +173,7 @@ users 1─* companions 1─* conversations 1─* messages
 | `user_preferences` | id, user_id, companion_id, category, preference, value(JSON), confidence, source_type, source_id, observed_at, status |
 | `user_patterns` | id, user_id, companion_id, pattern, description, confidence, evidence_count, evidence(JSON), first_observed_at, last_observed_at, status |
 | `user_hypotheses` | id, user_id, companion_id, hypothesis, description, confidence, evidence(JSON), status, created_at, updated_at |
+| `user_chat_styles`(V3 P1) | id, companion_id, user_id, sample_count, avg_message_length, avg_gap_ms, burst_rate, emoji_rate, laugh_rate, question_rate, active_hour_start/end, hour_distribution(JSON), last_active_at |
 
 ### 9.5 关系 / 状态 / 反思 / 主动 / 工具
 
@@ -826,9 +834,66 @@ boundary(SOFT_END 等) → done
 
 ```
 V3 P0: ✅ 回复决策 / 时机 / 预算 / 连发合并 / 主动进聊天框 / 会话模型 / 边界
-V3 P1(下一轮): OpenLoop FollowUp / CompanionAvailability / UserChatStyle / SelfDisclosure 增强 / ResponsePlan(多段消息)
+V3 P1: ✅ 见 §34
 V3 P2(再往后): Experience 深化 / Self Model / Relationship Narrative / Entity Layer / Memory 3.0
 ```
+
+---
+
+## 34. V3.1 P1 — 她更像一个"有自己生活的人"（完成）
+
+> P1 解决的是"她为什么不像一个有自己生活的人"：她也会忙/累/睡，她记得你聊天的方式，她也会分享自己、也会在合适的时候连发两条。
+
+### 34.1 CompanionAvailability（她不是永远在线）
+
+| 状态 | 触发 | 行为 |
+|------|------|------|
+| `SLEEPING` | 作息睡觉时段 | 琐碎消息直接忽略（合法不回） |
+| `BUSY` | 上班时段 | 回复更慢更短、最多一个问题 |
+| `RESTING` | 精力 < 0.25 | 回复更慢更短 |
+| `DISTRACTED` | 精力 < 0.4 | 回复短、不追问 |
+| `SOCIALIZING` / `TRAVELING` | 晚间/休闲+社交电量高 | 回得慢一点 |
+
+实现：`state/CompanionAvailability` + `AvailabilityService`（由作息+精力/压力/社交电量**实时派生**，不建表）。影响 `ResponseLatencyEngine`（忙/累回得更慢）与 `InteractionPolicyEngine`（睡觉时琐碎忽略、忙时预算降档）。**Busy ≠ 不回复**，只影响节奏。
+
+### 34.2 UserChatStyle（学习你的聊天习惯，但不模仿你）
+
+新增 `user_chat_styles` 表，每条用户消息入库时增量统计：
+
+- 平均消息长度 / 平均发送间隔 / **连发率**（间隔<2s）/ emoji 使用率 / "哈哈"频率 / 提问频率 / 活跃时段
+
+注入 ContextCompiler【他聊天的习惯】："他习惯发 X 字左右的消息,经常一次发好几条…你不需要模仿他的习惯,用自己的方式和他相处,但别在他发短句时回一大段。"——**匹配节奏，保留她自己的性格**。
+
+### 34.3 SelfDisclosure 增强（双向关系）
+
+- 新关系（`new`/`familiar`）：克制，不自我暴露、不追问。
+- 亲密关系：Prompt 明确"你可以自然地分享一点自己正在经历的事(像朋友聊天, 不是汇报)"。
+- 结合原有 `BehaviorPolicyEngine.shareSelf`（关系亲密才分享）。
+
+### 34.4 FollowUp 增强（关系型跟进）
+
+OpenLoop 跟进时机升级为**价值递减**算法（`openLoopValue`）：
+- 到点前：越接近价值越高；
+- 刚过点：价值最高；
+- 错过但 < 2 天未跟进：仍值得问一次（价值随时间衰减），不因错过窗口而永久丢失。
+
+Reminder（工具→通知）与 Follow-up（关系→聊天内主动问）在 V3 已彻底分开。
+
+### 34.5 ResponsePlan（她也可以连发，低频）
+
+- Prompt 允许 LLM 用 `<split>` 把回复拆成两条消息（"先一句短的,隔一会再补一句"），并强调"只在真正自然时用,不要滥用"。
+- 后端：按 `<split>` 拆段，第一条走正常 token 流 + 写库；后续段延迟 ~0.9-1.8s 逐条写库，发 `message` SSE 事件。
+- 前端：收到 `message` 事件 → 重载消息（新气泡像"隔了一下又补一句"）。
+- 这是低频特性，由 LLM 在自然情境触发，不刻意模拟微信。
+
+### 34.6 验收（`scripts/p1_check.sh` 全过）
+
+| 检查 | 结果 |
+|------|------|
+| 聊天后 `user_chat_styles` 记录样本数 ≥3 | ✅ |
+| 快速连发 → `burst_rate` 上升 | ✅ |
+| P1 表/列结构 | ✅ |
+| V3 P0 回归（洗澡→SOFT_END） | ✅ |
 
 ---
 

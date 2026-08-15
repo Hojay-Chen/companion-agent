@@ -13,6 +13,13 @@ public class ResponseLatencyEngine {
 
     public long computeDelayMs(InteractionDecision decision, String userText,
                                double energy, double stress, LocalDateTime now) {
+        return computeDelayMs(decision, userText, energy, stress, now, null);
+    }
+
+    /** V3 P1: 加入"她此刻可用状态" —— 忙/休息/走神会回得更慢, 更真实 */
+    public long computeDelayMs(InteractionDecision decision, String userText,
+                               double energy, double stress, LocalDateTime now,
+                               com.luxera.companion.state.CompanionAvailability availability) {
         long base = switch (decision.commitment) {
             case ACK -> rand(400, 1500);
             case CASUAL -> rand(1000, 4000);
@@ -22,6 +29,17 @@ public class ResponseLatencyEngine {
         // Agent 忙/累 → 更慢
         if (energy < 0.4) base += rand(800, 2500);
         if (stress > 0.6) base += rand(500, 1500);
+        // V3 P1: 可用状态影响节奏(她也有自己的生活)
+        if (availability != null) {
+            switch (availability) {
+                case BUSY -> base += rand(2000, 5000);
+                case RESTING -> base += rand(1000, 3000);
+                case DISTRACTED -> base += rand(800, 2000);
+                case SLEEPING -> base += rand(5000, 12000);
+                case SOCIALIZING, TRAVELING -> base += rand(1500, 4000);
+                default -> { }
+            }
+        }
         // 长消息 → 略慢
         if (userText != null && userText.length() > 40) base += rand(300, 1200);
         // 深夜 → 略慢

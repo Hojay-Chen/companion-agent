@@ -9,7 +9,9 @@ import com.luxera.companion.persona.Persona;
 import com.luxera.companion.relationship.Relationship;
 import com.luxera.companion.selfmodel.SelfModel;
 import com.luxera.companion.state.AgentState;
+import com.luxera.companion.state.CompanionAvailability;
 import com.luxera.companion.thought.Thought;
+import com.luxera.companion.usermodel.UserChatStyle;
 import com.luxera.companion.usermodel.UserModelService;
 
 import java.time.LocalDateTime;
@@ -24,11 +26,13 @@ public class CompanionContext {
     public final Persona persona;
     public final com.luxera.companion.life.CompanionLife life;
     public final AgentState state;
+    public final CompanionAvailability availability;
     public final List<EmotionalEpisode> emotionalEpisodes;
     public final List<Thought> activeThoughts;
     public final List<OpenLoop> openLoops;
     public final SelfModel selfModel;
     public final UserModelService.UserModelSummary userModel;
+    public final UserChatStyle userChatStyle;
     public final Relationship relationship;
     public final List<Memory> memories;
     public final List<Message> recentMessages;
@@ -40,9 +44,11 @@ public class CompanionContext {
 
     public CompanionContext(Companion companion, Persona persona,
                             com.luxera.companion.life.CompanionLife life, AgentState state,
+                            CompanionAvailability availability,
                             List<EmotionalEpisode> emotionalEpisodes, List<Thought> activeThoughts,
                             List<OpenLoop> openLoops, SelfModel selfModel,
-                            UserModelService.UserModelSummary userModel, Relationship relationship,
+                            UserModelService.UserModelSummary userModel, UserChatStyle userChatStyle,
+                            Relationship relationship,
                             List<Memory> memories, List<Message> recentMessages,
                             WorkingMemory.WorkingContext workingMemory,
                             PerceptionEngine.Perception perception, String scheduleDesc,
@@ -51,11 +57,13 @@ public class CompanionContext {
         this.persona = persona;
         this.life = life;
         this.state = state;
+        this.availability = availability;
         this.emotionalEpisodes = emotionalEpisodes;
         this.activeThoughts = activeThoughts;
         this.openLoops = openLoops;
         this.selfModel = selfModel;
         this.userModel = userModel;
+        this.userChatStyle = userChatStyle;
         this.relationship = relationship;
         this.memories = memories;
         this.recentMessages = recentMessages;
@@ -66,3 +74,4 @@ public class CompanionContext {
         this.now = now;
     }
 }
+

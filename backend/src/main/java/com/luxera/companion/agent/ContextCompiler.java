@@ -43,12 +43,16 @@ public class ContextCompiler {
                     .append(" · ").append(ctx.life.getCurrentLocation() == null ? "" : ctx.life.getCurrentLocation()).append("。\n\n");
         }
 
-        // 3. State + Emotional Episode
+        // 3. State + Emotional Episode + Availability
         if (ctx.state != null) {
             sb.append("【你此刻的状态】心情").append(ctx.state.getMood())
                     .append(",精力").append(pct(ctx.state.getEnergy()))
-                    .append(",压力").append(pct(ctx.state.getStress())).append("。\n");
+                    .append(",压力").append(pct(ctx.state.getStress())).append("。");
         }
+        if (ctx.availability != null) {
+            sb.append("你现在").append(availabilityZh(ctx.availability)).append("。");
+        }
+        sb.append("\n");
         if (ctx.emotionalEpisodes != null && !ctx.emotionalEpisodes.isEmpty()) {
             EmotionalEpisode ep = ctx.emotionalEpisodes.get(0);
             sb.append("最近心里:").append(ep.getThought() == null ? ep.getEmotion() : ep.getThought()).append("。\n");
@@ -100,6 +104,11 @@ public class ContextCompiler {
             }
         }
 
+        // 8.5 User Chat Style(V3 P1: 匹配节奏, 不模仿)
+        if (ctx.userChatStyle != null && ctx.userChatStyle.getSampleCount() >= 2) {
+            sb.append("【他聊天的习惯】").append(chatStyleDesc(ctx.userChatStyle)).append("\n\n");
+        }
+
         // 9. Memories(含 Imperfection 提示: 低置信/久远记忆允许"记不清")
         if (ctx.memories != null && !ctx.memories.isEmpty()) {
             sb.append("【你的记忆】自然地引用,不要生硬复述:\n");
@@ -146,9 +155,12 @@ public class ContextCompiler {
                     .append(budget.maxCharacters).append(" 字,宁可短不要长;");
             sb.append("问题最多 ").append(budget.questionBudget).append(" 个;");
             sb.append("建议最多 ").append(budget.adviceBudget).append(" 条。");
-            if (!budget.allowSelfDisclose) {
+            if (budget.allowSelfDisclose) {
+                sb.append("你可以自然地分享一点自己正在经历的事(像朋友聊天, 不是汇报)。");
+            } else {
                 sb.append("本回合不需要分享你自己的事。");
             }
+            sb.append("如果合适且自然,你可以用 <split> 把回复拆成两条消息先后发(先一句短的,隔一会再补一句)。只在真正自然时用,不要滥用,通常一条就够。");
             sb.append("\n");
         }
         return sb.toString();
@@ -197,5 +209,33 @@ public class ContextCompiler {
 
     private static String pct(double v) {
         return (int) (Math.max(0, Math.min(1, v)) * 100) + "%";
+    }
+
+    /** V3 P1: 她现在正忙/在休息(影响回复节奏的 Prompt 提示) */
+    private static String availabilityZh(com.luxera.companion.state.CompanionAvailability a) {
+        return switch (a) {
+            case AVAILABLE -> "正闲着,有时间陪你";
+            case BUSY -> "正忙着,可能回得慢一点";
+            case DISTRACTED -> "有点走神,回得简短";
+            case RESTING -> "正歇着,有点没精神";
+            case SLEEPING -> "在睡觉(尽量不打扰)";
+            case SOCIALIZING -> "和朋友在一起,回得慢一点";
+            case TRAVELING -> "在外面/路上,回得慢一点";
+        };
+    }
+
+    /** V3 P1: 用户聊天习惯的中文描述(不模仿, 只匹配节奏) */
+    private static String chatStyleDesc(com.luxera.companion.usermodel.UserChatStyle s) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("他习惯发").append(Math.round(s.getAvgMessageLength())).append("字左右的消息");
+        if (s.getBurstRate() > 0.3) sb.append(",经常一次发好几条");
+        else if (s.getBurstRate() < 0.1) sb.append(",习惯一条条慢慢说");
+        if (s.getEmojiRate() > 0.3) sb.append(",爱用表情");
+        else if (s.getEmojiRate() < 0.05) sb.append(",很少用表情");
+        if (s.getLaughRate() > 0.2) sb.append(",常'哈哈'");
+        if (s.getQuestionRate() > 0.3) sb.append(",爱提问");
+        else if (s.getQuestionRate() < 0.05) sb.append(",很少提问");
+        sb.append("。你不需要模仿他的习惯,用自己的方式和他相处,但别在他发短句时回一大段。");
+        return sb.toString();
     }
 }

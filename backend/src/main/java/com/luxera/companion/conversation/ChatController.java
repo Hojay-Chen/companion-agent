@@ -11,7 +11,11 @@ import com.luxera.companion.interaction.InteractionPolicyEngine;
 import com.luxera.companion.interaction.ResponseLatencyEngine;
 import com.luxera.companion.persona.CompanionService;
 import com.luxera.companion.relationship.RelationshipService;
+import com.luxera.companion.state.AgentState;
 import com.luxera.companion.state.AgentStateService;
+import com.luxera.companion.state.AvailabilityService;
+import com.luxera.companion.state.CompanionAvailability;
+import com.luxera.companion.usermodel.UserChatStyleService;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.task.TaskExecutor;
@@ -38,6 +42,9 @@ import java.util.concurrent.locks.ReentrantLock;
 @RequestMapping("/api/companions/{companionId}/conversations")
 public class ChatController {
 
+    /** ResponsePlan 多段分隔符(设计文档 V3 §十九): 她也可以连发, 低频) */
+    private static final String SPLIT = "<split>";
+
     private final ConversationService conversationService;
     private final CompanionService companionService;
     private final CompanionRuntime runtime;
@@ -47,7 +54,9 @@ public class ChatController {
     private final InteractionPolicyEngine interactionPolicy;
     private final ResponseLatencyEngine latencyEngine;
     private final AgentStateService agentStateService;
+    private final AvailabilityService availabilityService;
     private final RelationshipService relationshipService;
+    private final UserChatStyleService userChatStyleService;
     private final CompanionSchedule schedule;
     private final CurrentUser currentUser;
     private final TaskExecutor taskExecutor;
@@ -58,7 +67,8 @@ public class ChatController {
                           CompanionRuntime runtime, PerceptionEngine perceptionEngine, WorkingMemory workingMemory,
                           SessionManager sessionManager, InteractionPolicyEngine interactionPolicy,
                           ResponseLatencyEngine latencyEngine, AgentStateService agentStateService,
-                          RelationshipService relationshipService, CompanionSchedule schedule,
+                          AvailabilityService availabilityService, RelationshipService relationshipService,
+                          UserChatStyleService userChatStyleService, CompanionSchedule schedule,
                           CurrentUser currentUser, TaskExecutor taskExecutor) {
         this.conversationService = conversationService;
         this.companionService = companionService;
@@ -69,7 +79,9 @@ public class ChatController {
         this.interactionPolicy = interactionPolicy;
         this.latencyEngine = latencyEngine;
         this.agentStateService = agentStateService;
+        this.availabilityService = availabilityService;
         this.relationshipService = relationshipService;
+        this.userChatStyleService = userChatStyleService;
         this.schedule = schedule;
         this.currentUser = currentUser;
         this.taskExecutor = taskExecutor;
@@ -155,7 +167,7 @@ public class ChatController {
             LocalDateTime now = LocalDateTime.now();
             String decisionText = String.join("。", contents);
 
-            // 1. 批量入库: 每条用户消息 → 感知 + 会话归属 + 工作记忆
+            // 1. 批量入库: 每条用户消息 → 感知 + 会话归属 + 工作记忆 + 聊天习惯学习
             Message last = null;
             for (String content : contents) {
                 PerceptionEngine.Perception perception = perceptionEngine.perceive(content);
@@ -163,6 +175,8 @@ public class ChatController {
                 sessionManager.assign(m, userId, companionId, now);
                 workingMemory.record(companionId, conversationId,
                         new WorkingMemory.RecentLine("user", content, m.getCreatedAt()), perception);
+                // V3 P1: 学习用户的聊天习惯
+                userChatStyleService.record(companionId, userId, content, m.getCreatedAt());
                 last = m;
             }
 
@@ -189,9 +203,10 @@ public class ChatController {
 
             // 4. typing + 延迟(真人节奏; 短应和不显示"正在输入", 见设计 §十五)
             var state = agentStateService.get(companionId);
+            var availability = availabilityService.current(companionId, now, state);
             long latency = latencyEngine.computeDelayMs(decision, decisionText,
                     state != null ? state.getEnergy() : 0.6,
-                    state != null ? state.getStress() : 0.3, now);
+                    state != null ? state.getStress() : 0.3, now, availability);
             boolean showTyping = decision.commitment.level >= com.luxera.companion.interaction.ResponseCommitment.CASUAL.level;
             if (showTyping) {
                 send(emitter, "typing_start", Map.of("conversationId", conversationId));
@@ -208,16 +223,35 @@ public class ChatController {
                     last.getId(), decisionText, recent,
                     delta -> send(emitter, "token", Map.of("delta", delta)), decision);
 
+            // 6. ResponsePlan: 她也可以连发(低频, 用 <split> 分隔)
             String reply = outcome.reply();
-            if (!reply.equals(outcome.rawReply().trim())) {
-                send(emitter, "replace", Map.of("content", reply));
+            List<String> chunks = splitReply(reply);
+            String first = chunks.get(0).trim();
+            if (!first.equals(outcome.rawReply().trim())) {
+                send(emitter, "replace", Map.of("content", first));
             }
-            Message assistant = conversationService.addMessage(conversationId, "companion", reply, null, false,
+            Message assistant = conversationService.addMessage(conversationId, "companion", first, null, false,
                     kind, last.getSessionId(), last.getExchangeId());
             workingMemory.record(companionId, conversationId,
-                    new WorkingMemory.RecentLine("companion", reply, assistant.getCreatedAt()), null);
+                    new WorkingMemory.RecentLine("companion", first, assistant.getCreatedAt()), null);
 
-            // 6. 对方要走 → 记录边界, 不主动续聊
+            // 后续段: 延迟后逐条写库 + 通知前端(像是隔了一下又补一句)
+            for (int i = 1; i < chunks.size(); i++) {
+                String seg = chunks.get(i).trim();
+                if (seg.isEmpty()) continue;
+                try {
+                    Thread.sleep(900 + (long) (Math.random() * 900));
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+                Message m = conversationService.addMessage(conversationId, "companion", seg, null, false,
+                        kind, last.getSessionId(), last.getExchangeId());
+                workingMemory.record(companionId, conversationId,
+                        new WorkingMemory.RecentLine("companion", seg, m.getCreatedAt()), null);
+                send(emitter, "message", Map.of("messageId", m.getId(), "content", seg));
+            }
+
+            // 7. 对方要走 → 记录边界, 不主动续聊
             if (decision.action == InteractionAction.END_CONVERSATION) {
                 sessionManager.boundary(userId, companionId, conversationId, "SOFT_END", decision.reason);
                 send(emitter, "boundary", Map.of("type", "SOFT_END"));
@@ -237,21 +271,35 @@ public class ChatController {
         }
     }
 
+    /** 按 <split> 拆段(去空段), 无标记时返回单段 */
+    private static List<String> splitReply(String reply) {
+        List<String> out = new ArrayList<>();
+        if (reply == null || reply.isBlank()) {
+            out.add(reply == null ? "" : reply);
+            return out;
+        }
+        for (String seg : reply.split(SPLIT)) {
+            if (!seg.isBlank()) out.add(seg);
+        }
+        return out;
+    }
+
     /** 计算交互决策 */
     private InteractionDecision decide(String userId, String companionId,
                                        PerceptionEngine.Perception perception, String text, LocalDateTime now) {
-        var state = agentStateService.get(companionId);
+        AgentState state = agentStateService.get(companionId);
         var rel = relationshipService.find(userId, companionId);
         boolean intimate = rel != null && List.of("close", "deeply_connected").contains(rel.getRelationshipStage());
         var activity = schedule.activityFor(companionId, now);
         boolean busy = activity == CompanionSchedule.Activity.WORK_BUSY
                 || activity == CompanionSchedule.Activity.WORK_AFTERNOON;
+        CompanionAvailability availability = availabilityService.current(companionId, now, state);
         return interactionPolicy.decide(new InteractionPolicyEngine.InteractionInput(
                 text, perception.intent(), perception.emotion(),
                 state != null ? state.getEnergy() : 0.6,
                 state != null ? state.getStress() : 0.3,
                 rel != null ? rel.getRelationshipStage() : "new",
-                intimate, busy));
+                intimate, busy, availability));
     }
 
     private void send(SseEmitter emitter, String event, Object data) {

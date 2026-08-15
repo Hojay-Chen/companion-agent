@@ -182,6 +182,9 @@ export default function Chat() {
             setTyping(true)
           } else if (event === 'typing_stop') {
             setTyping(false)
+          } else if (event === 'message') {
+            // V3 P1 ResponsePlan: 她隔一下又补了一句 → 重载消息(新气泡)
+            loadMessages(activeConvId)
           } else if (event === 'error') {
             setError(String(d.message ?? '生成失败'))
           }

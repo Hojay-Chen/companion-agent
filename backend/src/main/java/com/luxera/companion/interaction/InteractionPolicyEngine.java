@@ -25,10 +25,10 @@ public class InteractionPolicyEngine {
     private static final Pattern ADVICE_ASK = Pattern.compile(
             "(怎么办|该怎么做|怎么处理|帮我想想|给点建议|你觉得我该)");
 
-    /** 决策入口: 基础规则 → 状态调节(精力/压力) */
+    /** 决策入口: 基础规则 → 状态调节(精力/压力/可用状态) */
     public InteractionDecision decide(InteractionInput in) {
         InteractionDecision base = decideBase(in);
-        return tuned(base, in.energy, in.stress, in.relationshipStage);
+        return tuned(base, in.energy, in.stress, in.relationshipStage, in.availability);
     }
 
     private InteractionDecision decideBase(InteractionInput in) {
@@ -113,10 +113,11 @@ public class InteractionPolicyEngine {
 
     /**
      * 状态调节(设计文档 §六/十三): 低精力 → 投入降档、回复更短; 高压力 → 更短、不问问题;
-     * 新关系 → 不主动自我暴露、少追问。这是"行为结果", 不是随机。
+     * 新关系 → 不主动自我暴露、少追问; 忙/休息/睡觉 → 更克制。这是"行为结果", 不是随机。
      */
     private static InteractionDecision tuned(InteractionDecision d, double energy, double stress,
-                                             String relationshipStage) {
+                                             String relationshipStage,
+                                             com.luxera.companion.state.CompanionAvailability availability) {
         ResponseBudget b = d.budget;
         ResponseCommitment c = d.commitment;
         boolean adjusted = false;
@@ -133,6 +134,32 @@ public class InteractionPolicyEngine {
                     0, 0, b.emotionalIntensity, b.allowSelfDisclose);
             adjusted = true;
         }
+        // 她正忙/休息/走神/睡觉 → 更短更克制; 睡觉时琐碎消息直接忽略
+        if (availability != null) {
+            switch (availability) {
+                case SLEEPING -> {
+                    return new InteractionDecision(d.action == InteractionAction.END_CONVERSATION
+                                    ? d.action : InteractionAction.IGNORE,
+                            ResponseCommitment.ACK, d.delayMs, false, false, false,
+                            "她在睡觉, 不打扰", 0.9,
+                            ResponseBudget.forCommitment(ResponseCommitment.ACK, b.allowSelfDisclose));
+                }
+                case BUSY, RESTING -> {
+                    c = downgrade(c);
+                    b = new ResponseBudget(
+                            Math.max(8, (int) (b.maxCharacters * 0.6)),
+                            Math.max(1, b.maxSentences - 1),
+                            Math.min(b.questionBudget, 1), 0, b.emotionalIntensity, b.allowSelfDisclose);
+                    adjusted = true;
+                }
+                case DISTRACTED -> {
+                    b = new ResponseBudget(b.maxCharacters, Math.max(1, b.maxSentences - 1),
+                            0, 0, b.emotionalIntensity, b.allowSelfDisclose);
+                    adjusted = true;
+                }
+                default -> { }
+            }
+        }
         // 新关系: 克制, 不自我暴露、不追问(即使规则原本允许)
         boolean newRel = relationshipStage == null
                 || "new".equals(relationshipStage) || "familiar".equals(relationshipStage);
@@ -146,7 +173,8 @@ public class InteractionPolicyEngine {
         return new InteractionDecision(d.action, c, d.delayMs, d.continueConversation,
                 d.askQuestion && b.questionBudget > 0,
                 d.selfDisclose && b.allowSelfDisclose,
-                d.reason + "(状态: 精力" + pct(energy) + " 压力" + pct(stress) + ")", d.confidence, b);
+                d.reason + "(状态: 精力" + pct(energy) + " 压力" + pct(stress)
+                        + (availability != null ? " " + availability.name() : "") + ")", d.confidence, b);
     }
 
     private static ResponseCommitment downgrade(ResponseCommitment c) {
@@ -165,8 +193,15 @@ public class InteractionPolicyEngine {
         return new ResponseBudget(chars, sentences, q, adv, intensity, intimate);
     }
 
-    /** 决策输入 */
+    /** 决策输入(带可用状态; 8 参便捷构造器用于旧调用) */
     public record InteractionInput(String userText, String intent, String emotion,
                                    double energy, double stress, String relationshipStage,
-                                   boolean intimate, boolean busy) {}
+                                   boolean intimate, boolean busy,
+                                   com.luxera.companion.state.CompanionAvailability availability) {
+        public InteractionInput(String userText, String intent, String emotion,
+                                double energy, double stress, String relationshipStage,
+                                boolean intimate, boolean busy) {
+            this(userText, intent, emotion, energy, stress, relationshipStage, intimate, busy, null);
+        }
+    }
 }

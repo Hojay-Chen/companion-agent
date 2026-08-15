@@ -148,17 +148,15 @@ public class ProactiveEngine {
         double relBonus = relationshipBonus(rel);
 
         // 触发 0: OpenLoop 驱动(未完成事项, 最真实) — "面试怎么样了"
-        // 只在预期解决时间临近/已过(±3h)才问, 提前不打扰
+        // V3 P1 增强: 到点后问(±2h 窗口内价值最高), 错过但仍未跟进的在 2 天内仍值得问一次(价值随时间递减)
         OpenLoop bestLoop = openLoopService.activeLoops(c.getId()).stream()
                 .filter(l -> l.getExpectedResolutionAt() != null)
-                .filter(l -> !l.getExpectedResolutionAt().isBefore(now.minusHours(3)))
                 .filter(l -> l.getExpectedResolutionAt().isBefore(now.plusHours(2)))
-                .max(Comparator.comparingDouble(OpenLoop::getImportance))
+                .filter(l -> !l.getExpectedResolutionAt().isBefore(now.minusDays(2)))
+                .max(Comparator.comparingDouble(l -> openLoopValue(now, l)))
                 .orElse(null);
         if (bestLoop != null && !loopFollowedUp(c.getId(), bestLoop.getTitle())) {
-            double timeliness = bestLoop.getExpectedResolutionAt() != null
-                    && bestLoop.getExpectedResolutionAt().isBefore(now) ? 0.12 : 0.06;
-            double value = 0.68 * factor + relBonus + timeliness;
+            double value = (0.5 + openLoopValue(now, bestLoop)) * factor + relBonus;
             double cst = cost(now, lastInteraction, todayCount, responsive);
             if (value > cst) {
                 return ProactiveDecision.send("未了结的事",
@@ -322,6 +320,25 @@ public class ProactiveEngine {
         if (last == null) return false;
         String content = last.getContent();
         return content != null && title != null && content.contains(title);
+    }
+
+    /** OpenLoop 跟进价值: 到点附近最高, 错过越久越低(但 2 天内仍值得问一次) */
+    private static double openLoopValue(LocalDateTime now, OpenLoop l) {
+        LocalDateTime expected = l.getExpectedResolutionAt();
+        if (expected == null) return 0;
+        if (expected.isAfter(now)) {
+            // 还没到点: 越接近越高
+            long minsLeft = java.time.Duration.between(now, expected).toMinutes();
+            return l.getImportance() * 0.5 + clamp01(1 - minsLeft / 120.0) * 0.4;
+        }
+        // 已过点: 刚过时最高, 24h 后衰减到基础值
+        long minsAfter = java.time.Duration.between(expected, now).toMinutes();
+        double decay = Math.max(0, 1 - minsAfter / (24 * 60.0));
+        return l.getImportance() * 0.5 + decay * 0.5;
+    }
+
+    private static double clamp01(double v) {
+        return Math.max(0, Math.min(1, v));
     }
 
     /** 想法关联的未完成事项是否还没到预期时间(提前问=打扰) */
