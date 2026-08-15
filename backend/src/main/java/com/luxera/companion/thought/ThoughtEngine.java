@@ -16,7 +16,9 @@ import java.util.regex.Pattern;
 public class ThoughtEngine {
 
     private static final Pattern RESOLUTION_PATTERN = Pattern.compile(
-            "今天|明天|后天|下周|到时候|等(?:消息|结果|通知)|(?:面试|考试|开会|体检|复查|见(?:面|客户)|交(?:稿|方案))",
+            "(?:明天|后天|下周|今晚|过几天)[^。！？!?]{0,10}(?:面试|考试|开会|体检|复查|交(?:稿|方案|差)|见(?:客户|面)|搬(?:家|office)|出(?:差|国))"
+                    + "|等(?:消息|结果|通知)"
+                    + "|(?:面试|考试)(?:结果|出来|怎么样)",
             Pattern.CASE_INSENSITIVE);
 
     private final ThoughtService thoughtService;
