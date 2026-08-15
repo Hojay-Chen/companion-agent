@@ -120,6 +120,7 @@
   - [35.4 一个踩坑记录](#354-一个踩坑记录)
 - [36. V4.0 Continuous Human Runtime（P0/P1 核心完成）](#36-v40-continuous-human-runtimep0p1-核心完成)
   - [36.1 一句话](#361-一句话)
+  - [36.1.1 V4 完整架构](#3611-v4-完整架构)
   - [36.2 Message Lifecycle（消息状态可见）](#362-message-lifecycle消息状态可见)
   - [36.3 持久 Event Stream（`GET /events`）](#363-持久-event-streamget-events)
   - [36.4 Appraisal（消息先改变内部状态）](#364-appraisal消息先改变内部状态)
@@ -128,6 +129,7 @@
   - [36.7 验收（`scripts/v4_check.sh` 全过）](#367-验收scriptsv4_checksh-全过)
   - [36.8 对原方案的两处工程修正](#368-对原方案的两处工程修正)
   - [36.9 完成度](#369-完成度)
+  - [36.9.1 端到端消息流转（开会场景，验证 V4 因果链）](#3691-端到端消息流转开会场景验证-v4-因果链)
 - [37. V4.1 P2/P3 — 完整 Human Behavior + Natural Expression（完成）](#37-v41-p2p3--完整-human-behavior--natural-expression完成)
   - [37.1 Phone Runtime（她也有手机，手机不是总响的）](#371-phone-runtime她也有手机手机不是总响的)
   - [37.2 Attention 动态场（忙 ≠ 永远不看手机）](#372-attention-动态场忙--永远不看手机)
@@ -136,7 +138,7 @@
   - [37.3.2 Appraisal 正则误判修复（V4.2）](#3732-appraisal-正则误判修复v42)
   - [37.3.3 Expression Loop 触发放宽（V4.2）](#3733-expression-loop-触发放宽v42)
   - [37.4 Expression Loop（她的思想真的在展开）](#374-expression-loop她的思想真的在展开)
-  - [37.5 Playwright 实测发现的 3 个 Bug（已修复）](#375-playwright-实测发现的-3-个-bug已修复)
+  - [37.5 Playwright 实测 + 用户评审发现的 Bug（已修复）](#375-playwright-实测--用户评审发现的-bug已修复)
   - [37.6 Playwright 实测通过（真实 UI）](#376-playwright-实测通过真实-ui)
 - [附录](#附录)
 ---
@@ -979,14 +981,68 @@ V4: 她一直在生活(工作/休息/想他/看手机) → 用户消息到达 �
 
 **关键变化**：LLM 不再负责"这个人现在该干嘛"。它只把已经形成的想法/态度/表达意图变成自然语言。
 
+### 36.1.1 V4 完整架构
+
+```
+                         Companion Runtime（持续生命运行时）
+                                     │
+             ┌───────────────────────┼───────────────────────┐
+             ▼                       ▼                       ▼
+       Life Runtime            Phone Runtime           Environment
+             │                       │                       │
+       Activity/Energy/Schedule  Notification/Device         Time
+             │                       │
+             ▼                       ▼
+             └──────►  Attention Runtime ◄──────┘
+                         │
+                         ▼
+                    Perception Runtime
+                         │
+                         ▼
+                    Appraisal Runtime
+                         │
+                  ┌──────┼──────┐
+                  ▼      ▼      ▼
+               Emotion  Drives  (Thought/Memory/Relationship)
+                  │      │      │
+                  └──────┼──────┘
+                         ▼
+                    Behavior Runtime
+                         │
+                ┌────────┼────────┐
+                ▼        ▼        ▼
+            Continue  Inspect  Communicate
+                                │
+                          ┌─────┴─────┐
+                          │           │
+                        Reply      Initiate
+                                │
+                                ▼
+                         Expression Runtime
+                                │
+                                ▼
+                               LLM
+                                │
+                                ▼
+                          Message Runtime
+                                │
+                                ▼
+                       Event Stream / SSE
+                                │
+                                ▼
+                              User
+```
+
+**确定性世界（时间/活动/手机/注意力）不交给 LLM**；LLM 只负责 Appraisal/Thought/Intention/Expression/Reflection。
+
 ### 36.2 Message Lifecycle（消息状态可见）
 
 | 状态 | 含义 | 前端显示 |
 |------|------|----------|
 | `DELIVERED` | 手机收到了, 但她可能没看 | 已发送 ✓ |
-| `READ` | 她看到了(已读延迟 0.6-1.5s) | 已读 ✓✓ |
+| `READ` | 她看到了(已读延迟由 Attention 决定: 忙/疲劳→慢) | 已读 ✓✓ |
 | `DEFERRED` | 看到了但不回(开会/生气/回避) | 已读 ✓✓, 无回复 |
-| `IGNORED` | 未读忽略(琐碎/睡觉) | 已发送 ✓ |
+| `IGNORED` | 未读忽略(琐碎/睡觉/dnd 未注意) | 已发送 ✓ |
 
 **真实感核心**：已读 ≠ 会回复。她可能"已读不回"很久，直到你下一句话改变她的状态。
 
@@ -1005,9 +1061,24 @@ event:ping                                        ← 心跳(25s)
 
 ### 36.4 Appraisal（消息先改变内部状态）
 
-新增 `message_appraisals` 表 + `AppraisalService`：消息被读到后先判断"这对我意味着什么"。
-- 关键词 + 感知维度：`对不起`→warmth↑/hurt↓、`你怎么这么烦`→hurt/anger↑、`我好想你`→warmth↑、`我很难受`→urgency↑
-- 更新 `AgentState`（新增 `hurt`/`anger` 字段）+ 微调 Relationship（负面→trust 微降）
+新增 `message_appraisals` 表 + `AppraisalService`：消息被读到后先判断"这对我意味着什么"，**先改变内部状态，再决定行为**。
+
+**六个识别维度**（关键词正则分组，零额外 LLM 调用，复用 `PerceptionRefiner` 感知）：
+
+| 分组 | 识别什么 | 例句 → 影响 |
+|------|---------|------------|
+| `APOLOGY` | 道歉 | "对不起" → warmth↑ / hurt↓ / anger↓ |
+| `ACCUSATION` | 指责她（必须明确指向"你"） | "你怎么这么烦" → hurt/anger↑ / 关系↓ |
+| `AFFECTION` | 表达感情 | "我好想你" → warmth↑ / 关系↑ |
+| `DISTRESS` | 自己情绪痛苦 | "我很难受/撑不下去/好烦" → 情绪冲击↑ / urgency↑ |
+| `URGENT` | 紧急求助 | "怎么办/救命" → urgency 0.9 |
+| `SHARE_JOY` | 分享喜悦 | "我升职了" → warmth↑ / 关系↑ |
+
+产出维度落库：`emotional_impact / relationship_impact / urgency / warmth / hurt / anger / personal_relevance`。
+
+随后：
+- 更新 `AgentState`（`hurt`/`anger` 累积，`emotional_closeness` 受 warmth 影响）
+- 微调 Relationship（负面 → trust 微降；温暖 → trust/intimacy 微升）
 - **零额外 LLM 调用**（复用 `PerceptionRefiner` 的精炼感知）
 
 ### 36.5 Drives + Behavior 竞争
@@ -1055,6 +1126,31 @@ V4 P2: ✅ Phone Runtime / Attention 动态场 / 负面情绪衰减 / Re-engagem
 V4 P3: ✅ Expression Loop(思维展开连发)                                     (§37)
 后续: Wakeup Scheduler(advance) / Redis 事件总线(多实例)
 ```
+
+### 36.9.1 端到端消息流转（开会场景，验证 V4 因果链）
+
+```
+14:00 她正在开会(Phone=silent, Attention 高)
+       你发:"你怎么不理我"
+       → 消息 DELIVERED(未读, 她根本没看到)      [Phone/Attention]
+       → 前端显示: 已发送 ✓
+
+14:35 会议开久了 Attention 下降, 她瞥了一眼手机
+       → 消息 READ                            [Attention]
+       → 前端显示: 已读 ✓✓
+       → Appraisal: 被这句话刺到 → hurt↑        [Appraisal]
+       → Drives: avoid > reply → DEFER(已读不回) [Drives]
+
+15:20 会议结束, 但她的 hurt 还在 → 继续不理(不自动回复)
+
+16:40 你发:"刚刚是我语气不好,对不起"
+       → Appraisal: warmth↑ / hurt↓ / anger↓     [Appraisal 状态延续]
+       → Drives: reply > avoid → REPLY_NOW
+       → 她回:"……行吧。"
+       → 隔 2 分钟 Expression Loop 补一句:"刚才确实有点生气。"  [Expression Loop]
+```
+
+这就是"已读≠会回复""状态延续"而不是"会议结束就自动回"的真实感来源。
 
 ---
 
@@ -1132,17 +1228,19 @@ V4 P3: ✅ Expression Loop(思维展开连发)                                  
 
 ### 37.4 Expression Loop（她的思想真的在展开）
 
-- 深度倾诉(DEEP + emotionalImpact≥0.5 + 回复>50字)时，即使 LLM 没输出 `<split>`，后端也在第二个句号处**兜底拆成两条**独立消息（先回应，隔 1s 补一句）
+- 深度/情绪强时（阈值见 §37.3.3），即使 LLM 没输出 `<split>`，后端也在标点处**兜底拆成两条**独立消息（先回应，隔 1s 补一句）
 - 前端每条独立气泡，配合 typing 三点动画（新增 `typing-dot`）
 - 效果：她"边想边说"，而不是一次给一段完整话
 
-### 37.5 Playwright 实测发现的 3 个 Bug（已修复）
+### 37.5 Playwright 实测 + 用户评审发现的 Bug（已修复）
 
 | 现象 | 根因 | 修复 |
 |------|------|------|
 | 深度倾诉"生活没意思" → 她已读不回(DEFER) | ACCUSATION 正则含"没意思"，把"生活没意义"误判成"指责她" | 收窄为正则 `你.*说话.*没意思` 等明确指向；"没意义/没意思"移入 DISTRESS |
+| "我今天烦死了" → 被当指责已读不回 | ACCUSATION 含"烦死"（自己烦≠骂她） | `烦死/好烦/烦透了/烦` 移入 DISTRESS；指责只认 `你烦死了/烦不烦`（§37.3.2） |
 | 冲突后 hurt/anger 永久累积不愈合 | `decayAllNegative` 存在但从未调用 | `EmotionMaintenanceJob` 调用，每次 -0.08 |
-| Expression Loop 从不触发 | 纯靠 LLM 自然输出 `<split>`（低频） | 后端兜底：DEEP+情绪强+长回复按标点拆两条 |
+| Expression Loop 从不触发 | 纯靠 LLM 自然输出 `<split>`（低频） | 后端兜底：DEEP/ENGAGED+情绪强+长回复按标点拆两条（§37.3.3） |
+| 主动消息"4h内聊过+0.35"生硬 / 深夜+0.4 / 每日5条上限不真人 | cost 用固定加值而非时间曲线 | 改为 `cost=0.9·e^(-分钟/55)+0.15`；移除机械限流（§37.3.1） |
 
 ### 37.6 Playwright 实测通过（真实 UI）
 
