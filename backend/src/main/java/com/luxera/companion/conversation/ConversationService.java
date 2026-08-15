@@ -86,6 +86,15 @@ public class ConversationService {
         return asc;
     }
 
+    /** V4 Message Lifecycle: 更新消息投递状态(DELIVERED/READ/DEFERRED/IGNORED) */
+    @Transactional
+    public void updateDeliveryStatus(String messageId, String status) {
+        msgRepo.findById(messageId).ifPresent(m -> {
+            m.setDeliveryStatus(status);
+            msgRepo.save(m);
+        });
+    }
+
     @Transactional
     public Message addMessage(String conversationId, String senderType, String content,
                               PerceptionEngine.Perception perception, boolean proactive) {

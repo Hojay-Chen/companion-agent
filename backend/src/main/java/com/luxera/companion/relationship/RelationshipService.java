@@ -24,4 +24,18 @@ public class RelationshipService {
     public Relationship find(String userId, String companionId) {
         return repo.findByUserIdAndCompanionId(userId, companionId).orElse(null);
     }
+
+    /** V4 Appraisal: 微调信任/亲密度(不越过边界) */
+    @Transactional
+    public void updateMetrics(String userId, String companionId, double trustDelta, double intimacyDelta) {
+        repo.findByUserIdAndCompanionId(userId, companionId).ifPresent(r -> {
+            r.setTrust(clamp(r.getTrust() + trustDelta));
+            r.setIntimacy(clamp(r.getIntimacy() + intimacyDelta));
+            repo.save(r);
+        });
+    }
+
+    private static double clamp(double v) {
+        return Math.max(0, Math.min(1, v));
+    }
 }

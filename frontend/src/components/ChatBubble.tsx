@@ -3,11 +3,14 @@ export default function ChatBubble({
   content,
   streaming = false,
   time,
+  status,
 }: {
   sender: 'user' | 'companion' | 'system'
   content: string
   streaming?: boolean
   time?: string
+  /** V4: 自己消息状态(已发送/已读) */
+  status?: string
 }) {
   const isUser = sender === 'user'
   const isSystem = sender === 'system'
@@ -30,7 +33,12 @@ export default function ChatBubble({
         {content}
         {streaming && <span className="marker-dot ml-1 animate-pulseSoft bg-ember-soft" />}
       </div>
-      {time && <span className={`mt-1 px-1 text-[10px] text-cocoa-500`}>{time}</span>}
+      {(time || status) && (
+        <span className="mt-1 px-1 text-[10px] text-cocoa-500">
+          {time}
+          {isUser && status && <span className={status === '已读' ? 'text-ember-soft' : ''}> · {status}</span>}
+        </span>
+      )}
     </div>
   )
 }

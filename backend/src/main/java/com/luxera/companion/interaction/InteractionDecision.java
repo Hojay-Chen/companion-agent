@@ -34,6 +34,7 @@ public class InteractionDecision {
     }
 
     public boolean shouldSend() {
-        return action != InteractionAction.IGNORE && action != InteractionAction.WAIT;
+        return action != InteractionAction.IGNORE && action != InteractionAction.WAIT
+                && action != InteractionAction.DEFER;
     }
 }

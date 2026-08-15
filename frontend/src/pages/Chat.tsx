@@ -10,7 +10,7 @@ import {
   Sparkles,
   Sun,
 } from 'lucide-react'
-import { api, streamPost } from '@/api/client'
+import { api, openEventStream, streamPost } from '@/api/client'
 import CompanionAvatar from '@/components/CompanionAvatar'
 import ChatBubble from '@/components/ChatBubble'
 import Drawer from '@/components/Drawer'
@@ -77,6 +77,10 @@ export default function Chat() {
   const sendGapsRef = useRef<number[]>([])
   const lastSendRef = useRef(0)
 
+  // ── V4 消息状态(read receipts) ──
+  const [readMap, setReadMap] = useState<Record<string, boolean>>({})
+  const [userMsgStatus, setUserMsgStatus] = useState<Record<string, string>>({})
+
   // ── 数据加载 ─────────────────────────────
   const loadCompanion = useCallback(async () => {
     const c = await api.get<Companion>(`/api/companions/${companionId}`)
@@ -133,6 +137,47 @@ export default function Chat() {
     const t = setInterval(loadUnread, 30000)
     return () => clearInterval(t)
   }, [loadUnread])
+
+  // V4: 持久事件流 —— 已读/打字/主动消息实时推送
+  useEffect(() => {
+    if (!companionId) return
+    let close: (() => void) | null = null
+    let cancelled = false
+
+    const onEvent = (event: string, data: unknown) => {
+      if (cancelled) return
+      const d = data as Record<string, unknown>
+      if (event === 'message_read') {
+        const mid = String(d.messageId ?? '')
+        if (mid) {
+          setReadMap((m) => ({ ...m, [mid]: true }))
+          setUserMsgStatus((m) => ({ ...m, [mid]: 'READ' }))
+        }
+      } else if (event === 'user_message_status') {
+        const mid = String(d.messageId ?? '')
+        const status = String(d.status ?? 'DELIVERED')
+        if (mid) setUserMsgStatus((m) => ({ ...m, [mid]: status }))
+      } else if (event === 'companion_typing') {
+        setTyping(Boolean(d.typing))
+      } else if (event === 'companion_message') {
+        // 她主动发来的消息(主动/deferred 后续段) → 重载会话
+        loadMessages(activeConvId)
+        refreshConversations()
+      } else if (event === 'ping') {
+        // 心跳, 忽略
+      }
+    }
+
+    openEventStream(companionId, onEvent).then((c) => {
+      if (cancelled) c()
+      else close = c
+    })
+    return () => {
+      cancelled = true
+      if (close) close()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companionId, activeConvId])
 
   // 切换会话/卸载时清理连发聚合状态
   useEffect(() => {
@@ -367,10 +412,12 @@ export default function Chat() {
               const prev = messages[i - 1]
               const label = dateLabel(m.createdAt)
               const showDivider = !prev || dateLabel(prev.createdAt) !== label
+              const isUser = m.senderType === 'user'
+              const status = isUser ? userStatus(m, readMap, userMsgStatus) : undefined
               return (
                 <Fragment key={m.id}>
                   {showDivider && <TimeDivider label={label} />}
-                  <ChatBubble sender={m.senderType} content={m.content} time={formatTime(m.createdAt)} />
+                  <ChatBubble sender={m.senderType} content={m.content} time={formatTime(m.createdAt)} status={status} />
                 </Fragment>
               )
             })}
@@ -627,6 +674,18 @@ function dateLabel(iso: string): string {
 
 function formatTime(iso: string): string {
   return format(new Date(iso), 'HH:mm')
+}
+
+/** V4: 自己消息的状态(已发送 ✓ / 已读 ✓✓); 临时气泡默认已发送 */
+function userStatus(
+  m: Message,
+  readMap: Record<string, boolean>,
+  statusMap: Record<string, string>,
+): string {
+  if (readMap[m.id]) return '已读'
+  const st = statusMap[m.id] || m.deliveryStatus
+  if (st === 'READ' || st === 'DEFERRED' || st === 'RESPONDED') return '已读'
+  return '已发送'
 }
 
 function timeAgo(iso: string): string {

@@ -44,6 +44,14 @@ public class AgentState {
     @Column(name = "emotional_closeness", nullable = false)
     private double emotionalCloseness = 0.3;
 
+    /** V4 Appraisal: 受伤程度(0-1, 随状态衰减) */
+    @Column(nullable = false)
+    private double hurt = 0;
+
+    /** V4 Appraisal: 生气程度(0-1, 随状态衰减) */
+    @Column(nullable = false)
+    private double anger = 0;
+
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;

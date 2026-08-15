@@ -1,13 +1,18 @@
 package com.luxera.companion.interaction;
 
+import com.luxera.companion.appraisal.AppraisalService;
+import com.luxera.companion.behavior.Drives;
+import com.luxera.companion.behavior.DrivesService;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.regex.Pattern;
 
 /**
- * 交互策略引擎(设计文档 V3 §三~十一): 收到消息后先决定"要不要回复、投入多少、问不问、给不给建议"。
- * 不是随机 Ignore —— 由消息意义+关系+状态+时间共同决定。
+ * 交互策略引擎(V3 §三~十一 + V4 §十五~十七):
+ * V3 是规则树; V4 引入 Appraisal + Drives 竞争 —— 消息先 Appraisal(改变内部状态),
+ * 再由行为倾向(desire_to_reply vs desire_to_avoid)评分竞争决定行为。
+ * 保留明确情境规则(离开/回来/求助/低落), 默认路径用 Drives 竞争(避免纯 if/else 堆叠)。
  */
 @Component
 public class InteractionPolicyEngine {
@@ -25,9 +30,47 @@ public class InteractionPolicyEngine {
     private static final Pattern ADVICE_ASK = Pattern.compile(
             "(怎么办|该怎么做|怎么处理|帮我想想|给点建议|你觉得我该)");
 
-    /** 决策入口: 基础规则 → 状态调节(精力/压力/可用状态) */
+    private final DrivesService drivesService;
+
+    public InteractionPolicyEngine(DrivesService drivesService) {
+        this.drivesService = drivesService;
+    }
+
+    /** 决策入口(V4): Appraisal → Drives 竞争 → 明确规则 → 状态调节 */
     public InteractionDecision decide(InteractionInput in) {
+        // 0. Drives 竞争(基于 Appraisal + 状态 + 可用状态)
+        Drives drives = null;
+        if (in.appraisal != null) {
+            drives = drivesService.compute(in.appraisal, in.energy, in.stress, in.closeness,
+                    in.familiarity, in.intimacy, in.availability, in.userText,
+                    in.userText == null ? 0 : in.userText.length());
+        }
+
+        // 1. 明确情境规则
         InteractionDecision base = decideBase(in);
+
+        // 2. 若回避欲显著高于回复欲 → DEFER(已读不回), 即使规则倾向回复
+        if (drives != null && base.action == InteractionAction.REPLY_NOW) {
+            double gap = drives.desireToAvoid() - drives.desireToReply();
+            if (gap > 0.15) {
+                return new InteractionDecision(InteractionAction.DEFER, ResponseCommitment.ACK,
+                        0, false, false, false,
+                        "看到了但这次不想回(回避" + round(drives.desireToAvoid())
+                                + ">回复" + round(drives.desireToReply()) + ")", 0.8,
+                        ResponseBudget.forCommitment(ResponseCommitment.ACK, in.intimate));
+            }
+            // 琐碎且回复欲低 → 未读忽略
+            boolean trivial = TRIVIAL_ACK.matcher(in.userText == null ? "" : in.userText.trim()).find()
+                    || (in.userText != null && in.userText.trim().length() <= 2);
+            if (trivial && drives.desireToReply() < 0.35) {
+                return new InteractionDecision(InteractionAction.IGNORE, ResponseCommitment.ACK,
+                        0, false, false, false,
+                        "琐碎且回复欲低, 未读忽略", 0.7,
+                        ResponseBudget.forCommitment(ResponseCommitment.ACK, in.intimate));
+            }
+        }
+
+        // 3. 状态调节
         return tuned(base, in.energy, in.stress, in.relationshipStage, in.availability);
     }
 
@@ -111,10 +154,7 @@ public class InteractionPolicyEngine {
         return emotion != null && List.of("sad", "tired", "anxious", "lonely", "angry").contains(emotion);
     }
 
-    /**
-     * 状态调节(设计文档 §六/十三): 低精力 → 投入降档、回复更短; 高压力 → 更短、不问问题;
-     * 新关系 → 不主动自我暴露、少追问; 忙/休息/睡觉 → 更克制。这是"行为结果", 不是随机。
-     */
+    /** 状态调节(§六/十三): 低精力/高压力/忙 → 更短更克制; 睡觉 → 忽略 */
     private static InteractionDecision tuned(InteractionDecision d, double energy, double stress,
                                              String relationshipStage,
                                              com.luxera.companion.state.CompanionAvailability availability) {
@@ -134,7 +174,6 @@ public class InteractionPolicyEngine {
                     0, 0, b.emotionalIntensity, b.allowSelfDisclose);
             adjusted = true;
         }
-        // 她正忙/休息/走神/睡觉 → 更短更克制; 睡觉时琐碎消息直接忽略
         if (availability != null) {
             switch (availability) {
                 case SLEEPING -> {
@@ -160,7 +199,6 @@ public class InteractionPolicyEngine {
                 default -> { }
             }
         }
-        // 新关系: 克制, 不自我暴露、不追问(即使规则原本允许)
         boolean newRel = relationshipStage == null
                 || "new".equals(relationshipStage) || "familiar".equals(relationshipStage);
         if (newRel && (b.allowSelfDisclose || d.askQuestion)) {
@@ -189,19 +227,27 @@ public class InteractionPolicyEngine {
         return (int) (Math.round(Math.max(0, Math.min(1, v)) * 100)) + "%";
     }
 
+    private static String round(double v) {
+        return String.format("%.2f", v);
+    }
+
     private static ResponseBudget budget(int chars, int sentences, int q, int adv, double intensity, boolean intimate) {
         return new ResponseBudget(chars, sentences, q, adv, intensity, intimate);
     }
 
-    /** 决策输入(带可用状态; 8 参便捷构造器用于旧调用) */
+    /** 决策输入(V4: 含 Appraisal 维度与关系标量) */
     public record InteractionInput(String userText, String intent, String emotion,
                                    double energy, double stress, String relationshipStage,
                                    boolean intimate, boolean busy,
-                                   com.luxera.companion.state.CompanionAvailability availability) {
+                                   com.luxera.companion.state.CompanionAvailability availability,
+                                   AppraisalService.AppraisalResult appraisal,
+                                   double closeness, double familiarity, double intimacy) {
+        /** V3 兼容: 无 Appraisal/关系标量 */
         public InteractionInput(String userText, String intent, String emotion,
                                 double energy, double stress, String relationshipStage,
                                 boolean intimate, boolean busy) {
-            this(userText, intent, emotion, energy, stress, relationshipStage, intimate, busy, null);
+            this(userText, intent, emotion, energy, stress, relationshipStage, intimate, busy,
+                    null, null, 0.3, 0, 0);
         }
     }
 }

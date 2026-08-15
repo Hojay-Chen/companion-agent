@@ -62,6 +62,40 @@ public class AgentStateService {
         repo.save(s);
     }
 
+    /** V4 Appraisal: 消息改变内部状态(hurt/anger 累积, warmth 增进亲密度/平复情绪) */
+    @Transactional
+    public void applyAppraisal(String companionId, double hurt, double anger, double warmth) {
+        AgentState s = getOrCreate(companionId);
+        if (hurt > 0) {
+            s.setHurt(clamp(s.getHurt() + hurt));
+            s.setMood("有点受伤");
+        }
+        if (anger > 0) {
+            s.setAnger(clamp(s.getAnger() + anger));
+            s.setStress(clamp(s.getStress() + anger * 0.3));
+            s.setMood("有点生气");
+        }
+        if (warmth > 0) {
+            s.setHurt(clamp(s.getHurt() - warmth * 0.5));
+            s.setAnger(clamp(s.getAnger() - warmth * 0.5));
+            s.setEmotionalCloseness(clamp(s.getEmotionalCloseness() + warmth * 0.02));
+            if (s.getHurt() < 0.2 && s.getAnger() < 0.2) {
+                s.setMood("平静的");
+            }
+        }
+        repo.save(s);
+    }
+
+    /** V4: hurt/anger 随时间衰减(状态愈合) */
+    @Transactional
+    public void decayNegative(String companionId, double rate) {
+        repo.findByCompanionId(companionId).ifPresent(s -> {
+            s.setHurt(clamp(s.getHurt() - rate));
+            s.setAnger(clamp(s.getAnger() - rate));
+            repo.save(s);
+        });
+    }
+
     private static String moodFor(String emotion) {
         switch (emotion == null ? "" : emotion) {
             case "sad": return "有点心疼";

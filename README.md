@@ -2,13 +2,13 @@
 
 > **不是 Chatbot**：拥有稳定人格、连续人生、持续记忆，随时间与用户建立关系，并在合适的时候主动找你。
 >
-> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime 方案。当前完成 **V2.0(44/44) + V3 P0 + V3 P1 + V3 P2**。
+> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime + V4 Continuous Human Runtime。当前完成 **V2.0(44/44) + V3 P0/P1/P2 + V4 P0/P1**。
 
 | 项 | 值 |
 |----|----|
-| 后端 | Spring Boot 2.7.18 · JDK 17 · 模块化单体（199 个 Java 类，23 个业务模块） |
+| 后端 | Spring Boot 2.7.18 · JDK 17 · 模块化单体（200+ 个 Java 类，24 个业务模块） |
 | 前端 | React 19 · Vite 8 · TypeScript(strict) · Tailwind CSS 3 · Zustand |
-| 数据库 | PostgreSQL 16 · 34 张表（含 pgvector） |
+| 数据库 | PostgreSQL 16 · 35 张表（含 pgvector） |
 | 大模型 | 统一 LLM 网关 → DeepSeek(deepseek-chat)，无 key 自动降级 Mock；模型用途路由可配 |
 | 线上 | `https://companion.luxera.top`（nginx + systemd jar :8081） |
 | 代码 | GitHub `Hojay-Chen/companion-agent` |
@@ -17,7 +17,7 @@
 ## 📖 目录
 
 - [8. 实体关系总览](#8-实体关系总览)
-- [9. 数据表详细设计（34 张表）](#9-数据表详细设计34-张表)
+- [9. 数据表详细设计（35 张表）](#9-数据表详细设计35-张表)
   - [9.1 用户与伴侣](#91-用户与伴侣)
   - [9.2 对话](#92-对话)
   - [9.3 记忆](#93-记忆)
@@ -118,6 +118,16 @@
   - [35.2 Memory Disclosure（设计 §五十八：记得≠每次说出来）](#352-memory-disclosure设计-五十八记得每次说出来)
   - [35.3 验收（`scripts/p2_check.sh` 全过）](#353-验收scriptsp2_checksh-全过)
   - [35.4 一个踩坑记录](#354-一个踩坑记录)
+- [36. V4.0 Continuous Human Runtime（P0/P1 核心完成）](#36-v40-continuous-human-runtimep0p1-核心完成)
+  - [36.1 一句话](#361-一句话)
+  - [36.2 Message Lifecycle（消息状态可见）](#362-message-lifecycle消息状态可见)
+  - [36.3 持久 Event Stream（`GET /events`）](#363-持久-event-streamget-events)
+  - [36.4 Appraisal（消息先改变内部状态）](#364-appraisal消息先改变内部状态)
+  - [36.5 Drives + Behavior 竞争](#365-drives--behavior-竞争)
+  - [36.6 DEFER（看到了但不回）](#366-defer看到了但不回)
+  - [36.7 验收（`scripts/v4_check.sh` 全过）](#367-验收scriptsv4_checksh-全过)
+  - [36.8 对原方案的两处工程修正](#368-对原方案的两处工程修正)
+  - [36.9 完成度](#369-完成度)
 - [附录](#附录)
 ---
 
@@ -140,9 +150,9 @@ users 1─* companions 1─* conversations 1─* messages
 
 > 所有核心表强制携带 `user_id + companion_id`（多租户隔离，查询强制过滤）。
 
-## 9. 数据表详细设计（34 张表）
+## 9. 数据表详细设计（35 张表）
 
-> 原有 19 表 + V2.0 新增 10 表 + V3 新增 5 表（`interaction_sessions` / `conversation_exchanges` / `conversation_boundaries` / `user_chat_styles` / `entities`）。
+> 原有 19 表 + V2.0 新增 10 表 + V3 新增 5 表 + V4 新增 1 表（`message_appraisals`）。
 
 ### 9.1 用户与伴侣
 
@@ -162,6 +172,7 @@ users 1─* companions 1─* conversations 1─* messages
 | `interaction_sessions`(V3) | id, conversation_id, companion_id, user_id, started_at, ended_at, message_count |
 | `conversation_exchanges`(V3) | id, session_id, conversation_id, companion_id, user_id, started_at, ended_at, status(OPEN/CLOSED), message_count |
 | `conversation_boundaries`(V3) | id, conversation_id, companion_id, user_id, type(SOFT_END/HARD_END/PAUSE/BUSY/SLEEP/DISTRACTED/RETURN_LATER), reason, occurred_at |
+| `message_appraisals`(V4) | id, message_id, companion_id, emotional_impact, relationship_impact, urgency, warmth, hurt, anger, personal_relevance, context |
 
 ### 9.3 记忆
 
@@ -526,6 +537,7 @@ public interface LlmGateway {
 | POST | `/api/companions/{cid}/conversations` | 新建会话 |
 | GET | `/api/companions/{cid}/conversations/{id}/messages` | 消息列表 |
 | POST | `/api/companions/{cid}/conversations/{id}/chat` | **SSE 流式聊天**（单条 `{content}` 或连发合并 `{messages:[{content}]}`；事件含 typing_start/typing_stop/boundary/message） |
+| GET | `/api/companions/{cid}/events` | **V4 持久事件流**（长连接，实时推已读/打字/主动消息/心跳，25s ping） |
 
 ### 24.4 记忆
 | 方法 | 路径 | 说明 |
@@ -624,6 +636,7 @@ BASE=http://127.0.0.1:8081 bash scripts/smoke.sh      # V2 全链路冒烟（注
 BASE=http://127.0.0.1:8081 bash scripts/v3_check.sh   # V3 P0 验收（连发一次回/短陪伴/洗澡SOFT_END/自然重开/嗯=不回）
 BASE=http://127.0.0.1:8081 bash scripts/p1_check.sh   # V3 P1 验收（聊天习惯学习/连发率/表结构）
 BASE=http://127.0.0.1:8081 bash scripts/p2_check.sh   # V3 P2 验收（实体抽取/实体API/表结构）
+BASE=http://127.0.0.1:8081 bash scripts/v4_check.sh   # V4 验收（message_read/Appraisal/DEFER/表结构）
 ```
 
 ## 26. 非功能设计
@@ -940,9 +953,102 @@ Reminder（工具→通知）与 Follow-up（关系→聊天内主动问）在 V
 
 ---
 
+## 36. V4.0 Continuous Human Runtime（P0/P1 核心完成）
+
+> **V4 不做"让 AI 回复得像真人"，而是"让 AI 的行为由一个持续存在的人类式生活状态产生"。**
+> 用户消息只是进入她生活世界的外部事件之一；聊天是她内部状态、关系和当下生活共同作用后产生的行为。
+
+### 36.1 一句话
+
+```
+V3: 用户消息 → Interaction Runtime → 决定回不回 → LLM → 回复
+V4: 她一直在生活(工作/休息/想他/看手机) → 用户消息到达 → 手机收到 → 注意/查看
+    → Appraisal(这句话对我意味着什么, 改变内部状态) → Drives(想不想回) → 行为
+```
+
+**关键变化**：LLM 不再负责"这个人现在该干嘛"。它只把已经形成的想法/态度/表达意图变成自然语言。
+
+### 36.2 Message Lifecycle（消息状态可见）
+
+| 状态 | 含义 | 前端显示 |
+|------|------|----------|
+| `DELIVERED` | 手机收到了, 但她可能没看 | 已发送 ✓ |
+| `READ` | 她看到了(已读延迟 0.6-1.5s) | 已读 ✓✓ |
+| `DEFERRED` | 看到了但不回(开会/生气/回避) | 已读 ✓✓, 无回复 |
+| `IGNORED` | 未读忽略(琐碎/睡觉) | 已发送 ✓ |
+
+**真实感核心**：已读 ≠ 会回复。她可能"已读不回"很久，直到你下一句话改变她的状态。
+
+### 36.3 持久 Event Stream（`GET /events`）
+
+前端长连接 `GET /api/companions/{cid}/events`，实时接收所有事件：
+```
+event:user_message_status  {messageId, status}   ← 你已发送
+event:message_read         {messageId}           ← 她已读
+event:companion_typing     {typing:true/false}   ← 她开始/停止输入
+event:companion_message    {messageId, content}  ← 她主动发来的消息(实时)
+event:companion_state      {availability}        ← 她此刻状态
+event:ping                                        ← 心跳(25s)
+```
+后端 `CompanionEventBus`（内存）+ `EventStreamController`。主动消息经此实时推给前端，无需刷新。
+
+### 36.4 Appraisal（消息先改变内部状态）
+
+新增 `message_appraisals` 表 + `AppraisalService`：消息被读到后先判断"这对我意味着什么"。
+- 关键词 + 感知维度：`对不起`→warmth↑/hurt↓、`你怎么这么烦`→hurt/anger↑、`我好想你`→warmth↑、`我很难受`→urgency↑
+- 更新 `AgentState`（新增 `hurt`/`anger` 字段）+ 微调 Relationship（负面→trust 微降）
+- **零额外 LLM 调用**（复用 `PerceptionRefiner` 的精炼感知）
+
+### 36.5 Drives + Behavior 竞争
+
+新增 `Drives` + `DrivesService`：`desire_to_reply / desire_to_avoid / desire_to_share / desire_to_reconnect / desire_to_rest`，由 Appraisal + 状态 + 关系 + 可用状态实时计算。
+
+`InteractionPolicyEngine` 升级为评分竞争：
+```
+REPLY 倾向 = reply_drive × 消息价值 + warmth×关系 + urgency
+AVOID 倾向 = avoid_drive × 冲突 + anger/hurt 加权
+AVOID - REPLY > 0.15 → DEFER(已读不回)     ← V4 核心行为
+琐碎且回复欲低        → IGNORE(未读忽略)
+其余                 → REPLY_NOW / SHORT_ACK / END_CONVERSATION
+```
+
+### 36.6 DEFER（看到了但不回）
+
+- 消息标记 `READ` + 发布 `message_read` → 本次不回复（`done.action=DEFER`）
+- **状态已 Appraisal 落盘**：她的 hurt/anger/warmth 已改变 → 你下一句话（如"对不起"）自然带出"……行吧"
+- 不需要"会议结束自动回复"——那是刻意的；状态延续才是真实的
+
+### 36.7 验收（`scripts/v4_check.sh` 全过）
+
+| 检查 | 结果 |
+|------|------|
+| 发"我好难过" → `/events` 收到 `message_read` + 正常回复 | ✅ |
+| `message_appraisals` 表记录 | ✅ |
+| 用户消息 `delivery_status=READ` 落库 | ✅ |
+| 发"你怎么这么烦" → `DEFER`(已读不回) | ✅ |
+| 发"对不起" → 正常回复(状态延续) | ✅ |
+| 表结构(`agent_states.hurt/anger`) | ✅ |
+| V3 P0 回归(洗澡→SOFT_END) | ✅ |
+
+### 36.8 对原方案的两处工程修正
+
+1. **POST /chat 保持 SSE 打字机响应**，`/events` 只推"非打字机"事件（已读/打字/主动消息）。避免双写冗余，老验收脚本兼容，前端打字机体验不变。
+2. **Appraisal 零额外 LLM 调用**：基于现有感知 + 关键词规则，而不是设计里每消息一次 LLM Appraisal——成本可控，效果等价。
+
+### 36.9 完成度
+
+```
+V4 P0: ✅ 持久 Event Stream / Message Lifecycle / read receipts
+V4 P1: ✅ Appraisal / Drives / DEFER / 已读不回
+V4 P2(下一轮): Phone Runtime(静音/勿扰/手机位置) / Attention 动态场
+V4 P3(再往后): Expression Loop(思维展开连发) / Wakeup Scheduler / Redis 事件总线
+```
+
+---
+
 ## 附录
 
 - **设计依据**：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）
 - **代码**：GitHub `Hojay-Chen/companion-agent`
 - **运行**：`https://companion.luxera.top`（nginx + systemd jar :8081 + PostgreSQL :5432）
-- **规模**：后端 199 个 Java 类 · 前端 17 个源文件 · 数据库 34 张表
+- **规模**：后端 200+ 个 Java 类 · 前端 17 个源文件 · 数据库 35 张表

@@ -57,13 +57,15 @@ public class ProactiveEngine {
     private final CompanionSchedule schedule;
     private final OpenLoopService openLoopService;
     private final ThoughtService thoughtService;
+    private final com.luxera.companion.event.CompanionEventBus eventBus;
 
     public ProactiveEngine(AppProperties props, CompanionRepository companionRepo, PersonaService personaService,
                            RelationshipRepository relationshipRepo, MessageRepository messageRepo,
                            ConversationRepository conversationRepo, ConversationService conversationService,
                            NotificationService notificationService,
                            ReminderRepository reminderRepo, LlmRouter llm, CompanionSchedule schedule,
-                           OpenLoopService openLoopService, ThoughtService thoughtService) {
+                           OpenLoopService openLoopService, ThoughtService thoughtService,
+                           com.luxera.companion.event.CompanionEventBus eventBus) {
         this.props = props;
         this.companionRepo = companionRepo;
         this.personaService = personaService;
@@ -77,6 +79,7 @@ public class ProactiveEngine {
         this.schedule = schedule;
         this.openLoopService = openLoopService;
         this.thoughtService = thoughtService;
+        this.eventBus = eventBus;
     }
 
     @Scheduled(cron = "${app.scheduler.proactive-cron}")
@@ -364,8 +367,11 @@ public class ProactiveEngine {
         var convs = conversationRepo.findByCompanionIdOrderByLastMessageAtDesc(companionId);
         if (convs.isEmpty()) return;
         // V3: 主动消息进入聊天框, 标记 message_kind=PROACTIVE(仍是 Chat Message, 不是 Notification)
-        conversationService.addMessage(convs.get(0).getId(), "companion", content, null, true,
+        Message m = conversationService.addMessage(convs.get(0).getId(), "companion", content, null, true,
                 "PROACTIVE", null, null);
+        // V4: 主动消息经持久事件流实时推给前端
+        eventBus.publish(companionId, com.luxera.companion.event.CompanionEventType.COMPANION_MESSAGE,
+                Map.of("messageId", m.getId(), "content", content, "senderType", "companion", "proactive", true));
     }
 
     private static boolean inDnd(int hour, int start, int end) {

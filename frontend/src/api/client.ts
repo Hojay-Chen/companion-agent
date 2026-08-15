@@ -101,3 +101,62 @@ function emitBlock(block: string, onEvent: (event: string, data: unknown) => voi
     onEvent(event, data)
   }
 }
+
+/** V4: 持久事件流(GET /events), 断线自动重连 + 指数退避 */
+export async function openEventStream(
+  companionId: string,
+  onEvent: (event: string, data: unknown) => void,
+): Promise<() => void> {
+  let closed = false
+  let controller: AbortController | null = null
+  let retryMs = 1000
+
+  async function connect() {
+    if (closed) return
+    controller = new AbortController()
+    const headers: Record<string, string> = {}
+    const token = getToken()
+    if (token) headers['Authorization'] = `Bearer ${token}`
+
+    try {
+      const res = await fetch(`/api/companions/${companionId}/events`, {
+        method: 'GET',
+        headers,
+        cache: 'no-store',
+        signal: controller.signal,
+      })
+      if (!res.ok || !res.body) throw new Error(`事件流连接失败 (${res.status})`)
+      retryMs = 1000 // 连接成功 → 重置退避
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let idx: number
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const block = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 2)
+          emitBlock(block, onEvent)
+        }
+      }
+    } catch (err) {
+      if (closed) return
+      // 心跳事件也会触发 onEvent('ping'), 不影响
+    }
+    // 断线重连(指数退避, 上限 30s)
+    if (!closed) {
+      setTimeout(connect, retryMs)
+      retryMs = Math.min(retryMs * 2, 30000)
+    }
+  }
+
+  connect()
+
+  return () => {
+    closed = true
+    if (controller) controller.abort()
+  }
+}

@@ -4,12 +4,16 @@ import com.luxera.companion.agent.CompanionRuntime;
 import com.luxera.companion.agent.CompanionSchedule;
 import com.luxera.companion.agent.PerceptionEngine;
 import com.luxera.companion.agent.WorkingMemory;
+import com.luxera.companion.appraisal.AppraisalService;
 import com.luxera.companion.config.CurrentUser;
+import com.luxera.companion.event.CompanionEventBus;
+import com.luxera.companion.event.CompanionEventType;
 import com.luxera.companion.interaction.InteractionAction;
 import com.luxera.companion.interaction.InteractionDecision;
 import com.luxera.companion.interaction.InteractionPolicyEngine;
 import com.luxera.companion.interaction.ResponseLatencyEngine;
 import com.luxera.companion.persona.CompanionService;
+import com.luxera.companion.relationship.Relationship;
 import com.luxera.companion.relationship.RelationshipService;
 import com.luxera.companion.state.AgentState;
 import com.luxera.companion.state.AgentStateService;
@@ -57,6 +61,8 @@ public class ChatController {
     private final AvailabilityService availabilityService;
     private final RelationshipService relationshipService;
     private final UserChatStyleService userChatStyleService;
+    private final AppraisalService appraisalService;
+    private final CompanionEventBus eventBus;
     private final CompanionSchedule schedule;
     private final CurrentUser currentUser;
     private final TaskExecutor taskExecutor;
@@ -68,7 +74,8 @@ public class ChatController {
                           SessionManager sessionManager, InteractionPolicyEngine interactionPolicy,
                           ResponseLatencyEngine latencyEngine, AgentStateService agentStateService,
                           AvailabilityService availabilityService, RelationshipService relationshipService,
-                          UserChatStyleService userChatStyleService, CompanionSchedule schedule,
+                          UserChatStyleService userChatStyleService, AppraisalService appraisalService,
+                          CompanionEventBus eventBus, CompanionSchedule schedule,
                           CurrentUser currentUser, TaskExecutor taskExecutor) {
         this.conversationService = conversationService;
         this.companionService = companionService;
@@ -82,6 +89,8 @@ public class ChatController {
         this.availabilityService = availabilityService;
         this.relationshipService = relationshipService;
         this.userChatStyleService = userChatStyleService;
+        this.appraisalService = appraisalService;
+        this.eventBus = eventBus;
         this.schedule = schedule;
         this.currentUser = currentUser;
         this.taskExecutor = taskExecutor;
@@ -167,24 +176,32 @@ public class ChatController {
             LocalDateTime now = LocalDateTime.now();
             String decisionText = String.join("。", contents);
 
-            // 1. 批量入库: 每条用户消息 → 感知 + 会话归属 + 工作记忆 + 聊天习惯学习
+            // 1. 批量入库(V4 Message Lifecycle: DELIVERED) + 感知 + 会话归属 + 工作记忆 + 聊天习惯学习
             Message last = null;
+            List<Message> userMsgs = new ArrayList<>();
             for (String content : contents) {
                 PerceptionEngine.Perception perception = perceptionEngine.perceive(content);
                 Message m = conversationService.addMessage(conversationId, "user", content, perception, false);
                 sessionManager.assign(m, userId, companionId, now);
                 workingMemory.record(companionId, conversationId,
                         new WorkingMemory.RecentLine("user", content, m.getCreatedAt()), perception);
-                // V3 P1: 学习用户的聊天习惯
                 userChatStyleService.record(companionId, userId, content, m.getCreatedAt());
+                // 事件流: 用户消息已送达(未读)
+                eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
+                        Map.of("messageId", m.getId(), "status", "DELIVERED"));
+                userMsgs.add(m);
                 last = m;
             }
 
-            // 2. 交互决策: 基于整个 burst 的合并文本(最后一条决定当前感受)
+            // 2. Appraisal(V4 §十): 消息先改变内部状态, 再决定行为
             PerceptionEngine.Perception burstPerception = perceptionEngine.perceive(decisionText);
-            InteractionDecision decision = decide(userId, companionId, burstPerception, decisionText, now);
+            AppraisalService.AppraisalResult appraisal = appraisalService.appraise(
+                    companionId, userId, last.getId(), decisionText, burstPerception);
 
-            // 3. 不回复是合法行为(WAIT = 等/不打断, 与 IGNORE 一样本次不出消息)
+            // 3. 交互决策: Appraisal + Drives 竞争
+            InteractionDecision decision = decide(userId, companionId, burstPerception, decisionText, now, appraisal);
+
+            // 4. 不回复是合法行为
             if (decision.action == InteractionAction.IGNORE || decision.action == InteractionAction.WAIT) {
                 send(emitter, "meta", Map.of("action", decision.action.name(), "reason", decision.reason));
                 send(emitter, "done", Map.of("ignored", true, "action", decision.action.name(), "reason", decision.reason));
@@ -192,6 +209,20 @@ public class ChatController {
                 return;
             }
 
+            // 5. DEFER(V4 §十一/§十二): 已读但不回 —— 状态已变, 下次重新评估
+            if (decision.action == InteractionAction.DEFER) {
+                for (Message um : userMsgs) {
+                    conversationService.updateDeliveryStatus(um.getId(), "READ");
+                }
+                eventBus.publish(companionId, CompanionEventType.MESSAGE_READ,
+                        Map.of("messageId", last.getId()));
+                send(emitter, "meta", Map.of("action", "DEFER", "reason", decision.reason));
+                send(emitter, "done", Map.of("deferred", true, "action", "DEFER", "reason", decision.reason));
+                emitter.complete();
+                return;
+            }
+
+            // 6. 正常回复路径: 已读延迟(availability 加成) → 标记 READ + 事件
             List<Message> recent = conversationService.recentMessages(conversationId, 40);
             String kind = decision.action == InteractionAction.SHORT_ACK ? "SHORT_ACK" : "NORMAL";
             send(emitter, "meta", Map.of(
@@ -201,29 +232,41 @@ public class ChatController {
                     "action", decision.action.name(),
                     "commitment", decision.commitment.name()));
 
-            // 4. typing + 延迟(真人节奏; 短应和不显示"正在输入", 见设计 §十五)
             var state = agentStateService.get(companionId);
             var availability = availabilityService.current(companionId, now, state);
+            long readDelay = (long) (600 + Math.random() * 900);
+            if (readDelay > 0) {
+                Thread.sleep(readDelay);
+            }
+            for (Message um : userMsgs) {
+                conversationService.updateDeliveryStatus(um.getId(), "READ");
+            }
+            eventBus.publish(companionId, CompanionEventType.MESSAGE_READ,
+                    Map.of("messageId", last.getId()));
+
+            // 7. typing + 延迟(真人节奏; 短应和不显示"正在输入")
             long latency = latencyEngine.computeDelayMs(decision, decisionText,
                     state != null ? state.getEnergy() : 0.6,
                     state != null ? state.getStress() : 0.3, now, availability);
             boolean showTyping = decision.commitment.level >= com.luxera.companion.interaction.ResponseCommitment.CASUAL.level;
             if (showTyping) {
                 send(emitter, "typing_start", Map.of("conversationId", conversationId));
+                eventBus.publish(companionId, CompanionEventType.COMPANION_TYPING, Map.of("typing", true));
             }
             if (latency > 0) {
                 Thread.sleep(latency);
             }
             if (showTyping) {
                 send(emitter, "typing_stop", Map.of());
+                eventBus.publish(companionId, CompanionEventType.COMPANION_TYPING, Map.of("typing", false));
             }
 
-            // 5. 生成一次(带预算)
+            // 8. 生成一次(带预算)
             CompanionRuntime.ChatOutcome outcome = runtime.generate(userId, companionId, conversationId,
                     last.getId(), decisionText, recent,
                     delta -> send(emitter, "token", Map.of("delta", delta)), decision);
 
-            // 6. ResponsePlan: 她也可以连发(低频, 用 <split> 分隔)
+            // 9. ResponsePlan: 她也可以连发(低频, 用 <split> 分隔)
             String reply = outcome.reply();
             List<String> chunks = splitReply(reply);
             String first = chunks.get(0).trim();
@@ -249,9 +292,11 @@ public class ChatController {
                 workingMemory.record(companionId, conversationId,
                         new WorkingMemory.RecentLine("companion", seg, m.getCreatedAt()), null);
                 send(emitter, "message", Map.of("messageId", m.getId(), "content", seg));
+                eventBus.publish(companionId, CompanionEventType.COMPANION_MESSAGE,
+                        Map.of("messageId", m.getId(), "content", seg, "senderType", "companion"));
             }
 
-            // 7. 对方要走 → 记录边界, 不主动续聊
+            // 10. 对方要走 → 记录边界, 不主动续聊
             if (decision.action == InteractionAction.END_CONVERSATION) {
                 sessionManager.boundary(userId, companionId, conversationId, "SOFT_END", decision.reason);
                 send(emitter, "boundary", Map.of("type", "SOFT_END"));
@@ -284,11 +329,12 @@ public class ChatController {
         return out;
     }
 
-    /** 计算交互决策 */
+    /** 计算交互决策(V4: Appraisal + Drives 竞争) */
     private InteractionDecision decide(String userId, String companionId,
-                                       PerceptionEngine.Perception perception, String text, LocalDateTime now) {
+                                       PerceptionEngine.Perception perception, String text, LocalDateTime now,
+                                       AppraisalService.AppraisalResult appraisal) {
         AgentState state = agentStateService.get(companionId);
-        var rel = relationshipService.find(userId, companionId);
+        Relationship rel = relationshipService.find(userId, companionId);
         boolean intimate = rel != null && List.of("close", "deeply_connected").contains(rel.getRelationshipStage());
         var activity = schedule.activityFor(companionId, now);
         boolean busy = activity == CompanionSchedule.Activity.WORK_BUSY
@@ -299,7 +345,10 @@ public class ChatController {
                 state != null ? state.getEnergy() : 0.6,
                 state != null ? state.getStress() : 0.3,
                 rel != null ? rel.getRelationshipStage() : "new",
-                intimate, busy, availability));
+                intimate, busy, availability, appraisal,
+                state != null ? state.getEmotionalCloseness() : 0.3,
+                rel != null ? rel.getFamiliarity() : 0,
+                rel != null ? rel.getIntimacy() : 0));
     }
 
     private void send(SseEmitter emitter, String event, Object data) {

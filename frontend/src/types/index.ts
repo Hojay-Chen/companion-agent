@@ -130,6 +130,8 @@ export interface Message {
   exchangeId?: string | null
   /** NORMAL/SHORT_ACK/PROACTIVE/FOLLOW_UP/SYSTEM/TOOL_RESULT */
   messageKind?: string | null
+  /** V4: DELIVERED/READ/RESPONDED/DEFERRED/IGNORED */
+  deliveryStatus?: string | null
   createdAt: string
 }
 
