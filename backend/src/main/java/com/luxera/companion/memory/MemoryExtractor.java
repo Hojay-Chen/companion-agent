@@ -37,11 +37,15 @@ public class MemoryExtractor {
     private final LlmRouter llm;
     private final MemoryService memoryService;
     private final MemoryAssociationService associationService;
+    private final PgVectorEmbeddingProvider vectorProvider;
 
-    public MemoryExtractor(LlmRouter llm, MemoryService memoryService, MemoryAssociationService associationService) {
+    public MemoryExtractor(LlmRouter llm, MemoryService memoryService,
+                           MemoryAssociationService associationService,
+                           PgVectorEmbeddingProvider vectorProvider) {
         this.llm = llm;
         this.memoryService = memoryService;
         this.associationService = associationService;
+        this.vectorProvider = vectorProvider;
     }
 
     @Async
@@ -79,6 +83,14 @@ public class MemoryExtractor {
                 for (Memory m : memories) {
                     if (m.getId() != null) {
                         associationService.linkNewMemory(userId, companionId, m, 100);
+                    }
+                }
+                // Phase 5: 若配置了 embedding key → 写向量(失败静默, 走回退)
+                if (vectorProvider.available()) {
+                    for (Memory m : memories) {
+                        if (m.getId() != null && m.getContent() != null) {
+                            vectorProvider.updateEmbedding(m.getId(), vectorProvider.embed(m.getContent()));
+                        }
                     }
                 }
                 log.info("记忆抽取完成: {} 条 (conversation={})", memories.size(), conversationId);

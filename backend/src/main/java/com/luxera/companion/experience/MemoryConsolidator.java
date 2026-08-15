@@ -54,6 +54,10 @@ public class MemoryConsolidator {
                     m.setOccurredAt(e.getOccurredAt() != null ? e.getOccurredAt() : LocalDateTime.now());
                     m.setSourceType("experience");
                     m.setSourceId(e.getId());
+                    m.setConsolidationSource(e.getId());
+                    if (e.getRelationshipWeight() >= 0.9 && e.getImportance() >= 0.8) {
+                        m.setNarrativeRole("INSIDE_JOKE");
+                    }
                     memoryService.save(m);
                     e.setStatus("CONSOLIDATED");
                     consolidated++;

@@ -20,6 +20,7 @@ public class AppProperties {
     private Agent agent = new Agent();
     private Scheduler scheduler = new Scheduler();
     private Proactive proactive = new Proactive();
+    private Embedding embedding = new Embedding();
 
     @Data
     public static class Jwt {
@@ -50,6 +51,14 @@ public class AppProperties {
         private int recentMessages = 20;
         private double memoryMinStrength = 0.02;
         private int workingMemoryTtlMinutes = 720;
+    }
+
+    @Data
+    public static class Embedding {
+        private String baseUrl = "https://api.siliconflow.cn/v1";
+        private String apiKey = "";
+        private String model = "BAAI/bge-large-zh-v1.5";
+        private int dimension = 1024;
     }
 
     @Data

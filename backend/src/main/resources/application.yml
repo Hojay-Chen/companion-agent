@@ -59,6 +59,13 @@ app:
     timeout-seconds: ${LLM_TIMEOUT_SECONDS:120}
     mock-fallback: ${LLM_MOCK_FALLBACK:true}
 
+  # 记忆向量(PostgreSQL + pgvector; 未配 key 时自动回退结构化排序)
+  embedding:
+    base-url: ${EMBEDDING_BASE_URL:https://api.siliconflow.cn/v1}
+    api-key: ${EMBEDDING_API_KEY:}
+    model: ${EMBEDDING_MODEL:BAAI/bge-large-zh-v1.5}
+    dimension: ${EMBEDDING_DIMENSION:1024}
+
   # Agent 运行时
   agent:
     intent-extraction: ${INTENT_EXTRACTION:llm}   # heuristic | llm (LLM 感知精炼)
