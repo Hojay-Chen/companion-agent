@@ -14,10 +14,14 @@ import com.luxera.companion.interaction.InteractionDecision;
 import com.luxera.companion.interaction.InteractionPolicyEngine;
 import com.luxera.companion.interaction.ResponseLatencyEngine;
 import com.luxera.companion.persona.CompanionService;
-import com.luxera.companion.phone.PhoneState;
-import com.luxera.companion.phone.PhoneStateService;
 import com.luxera.companion.relationship.Relationship;
 import com.luxera.companion.relationship.RelationshipService;
+import com.luxera.companion.runtime.agent.expression.ExpressionAgent;
+import com.luxera.companion.runtime.agent.expression.ExpressionContext;
+import com.luxera.companion.runtime.agent.expression.ExpressionResult;
+import com.luxera.companion.runtime.pipeline.MessageDeliveryService;
+import com.luxera.companion.runtime.pipeline.MessageLifecycle;
+import com.luxera.companion.runtime.pipeline.V5MessagePipeline;
 import com.luxera.companion.state.AgentState;
 import com.luxera.companion.state.AgentStateService;
 import com.luxera.companion.state.AvailabilityService;
@@ -64,13 +68,14 @@ public class ChatController {
     private final AvailabilityService availabilityService;
     private final RelationshipService relationshipService;
     private final UserChatStyleService userChatStyleService;
-    private final AppraisalService appraisalService;
-    private final PhoneStateService phoneStateService;
-    private final AttentionService attentionService;
     private final CompanionEventBus eventBus;
     private final CompanionSchedule schedule;
     private final CurrentUser currentUser;
     private final TaskExecutor taskExecutor;
+    /** V5: 消息流水线 / 表达规划 / 消息生命周期 */
+    private final V5MessagePipeline messagePipeline;
+    private final ExpressionAgent expressionAgent;
+    private final MessageDeliveryService deliveryService;
     /** 每会话一个锁, 串行化同会话的消息处理(消息归并 + 生成) */
     private final java.util.concurrent.ConcurrentHashMap<String, ReentrantLock> conversationLocks = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -79,10 +84,11 @@ public class ChatController {
                           SessionManager sessionManager, InteractionPolicyEngine interactionPolicy,
                           ResponseLatencyEngine latencyEngine, AgentStateService agentStateService,
                           AvailabilityService availabilityService, RelationshipService relationshipService,
-                          UserChatStyleService userChatStyleService, AppraisalService appraisalService,
-                          PhoneStateService phoneStateService, AttentionService attentionService,
-                          CompanionEventBus eventBus, CompanionSchedule schedule,
-                          CurrentUser currentUser, TaskExecutor taskExecutor) {
+                          UserChatStyleService userChatStyleService,
+                                                    CompanionEventBus eventBus, CompanionSchedule schedule,
+                          CurrentUser currentUser, TaskExecutor taskExecutor,
+                          V5MessagePipeline messagePipeline, ExpressionAgent expressionAgent,
+                          MessageDeliveryService deliveryService) {
         this.conversationService = conversationService;
         this.companionService = companionService;
         this.runtime = runtime;
@@ -95,13 +101,13 @@ public class ChatController {
         this.availabilityService = availabilityService;
         this.relationshipService = relationshipService;
         this.userChatStyleService = userChatStyleService;
-        this.appraisalService = appraisalService;
-        this.phoneStateService = phoneStateService;
-        this.attentionService = attentionService;
         this.eventBus = eventBus;
         this.schedule = schedule;
         this.currentUser = currentUser;
         this.taskExecutor = taskExecutor;
+        this.messagePipeline = messagePipeline;
+        this.expressionAgent = expressionAgent;
+        this.deliveryService = deliveryService;
     }
 
     @GetMapping
@@ -201,52 +207,39 @@ public class ChatController {
                 last = m;
             }
 
-            // 2. Appraisal(V4 §十): 消息先改变内部状态, 再决定行为
+            // 2. V5 消息流水线: Emotion → Attention → Brain(V5 §9/§10/§13: 消息先改变状态, 再决定行为)
             PerceptionEngine.Perception burstPerception = perceptionEngine.perceive(decisionText);
-            AppraisalService.AppraisalResult appraisal = appraisalService.appraise(
-                    companionId, userId, last.getId(), decisionText, burstPerception);
+            V5MessagePipeline.PipelineResult pipelineResult = messagePipeline.process(
+                    userId, companionId, conversationId, userMsgs, decisionText, burstPerception, now);
 
-            // 3. Attention 预检(V4 因果顺序): 先决定"她有没有看到", 再决定"回不回"。
-            //    睡觉(dnd) / 上班静音 + 忙 + 消息不显著 → 她根本没注意 → 保持未读(DELIVERED), 不打扰
-            var state = agentStateService.get(companionId);
-            PhoneState phone = phoneStateService.current(companionId, now);
-            double salience = 0.3 + (appraisal != null ? appraisal.urgency() * 0.4 + appraisal.warmth() * 0.3 : 0);
-            AttentionService.Attention attention = attentionService.compute(
-                    schedule.activityFor(companionId, now), state, phone, salience);
-
-            if (attention.noticeProbability() < 0.3) {
-                send(emitter, "meta", Map.of("action", "IGNORE", "reason", "她没注意到消息(在忙/休息/勿扰)"));
+            // 3. 她根本没看到(静音/勿扰/在忙/分心)→ 保持未读(DELIVERED), 不打扰
+            if (pipelineResult.isIgnored()) {
+                send(emitter, "meta", Map.of("action", "IGNORE", "reason", pipelineResult.reason()));
                 send(emitter, "done", Map.of("ignored", true, "action", "IGNORE",
-                        "reason", "她没注意到消息(在忙/休息/勿扰)"));
+                        "reason", pipelineResult.reason()));
                 emitter.complete();
                 return;
             }
 
-            // 4. 交互决策: Appraisal + Drives 竞争(此时她已"看到"了)
-            InteractionDecision decision = decide(userId, companionId, burstPerception, decisionText, now, appraisal);
-
-            // 5. 不回复是合法行为(琐碎/未读忽略)
-            if (decision.action == InteractionAction.IGNORE || decision.action == InteractionAction.WAIT) {
-                send(emitter, "meta", Map.of("action", decision.action.name(), "reason", decision.reason));
-                send(emitter, "done", Map.of("ignored", true, "action", decision.action.name(), "reason", decision.reason));
+            // 4. DEFER(V5 §79/§80): 看到了但不回 —— 状态已变(已读未回), 排程复查
+            if (pipelineResult.isDeferred()) {
+                send(emitter, "meta", Map.of("action", "DEFER", "reason", pipelineResult.reason()));
+                send(emitter, "done", Map.of("deferred", true, "action", "DEFER", "reason", pipelineResult.reason()));
                 emitter.complete();
                 return;
             }
 
-            // 6. DEFER(V4 §十一/§十二): 已读但不回 —— 状态已变, 下次重新评估
-            if (decision.action == InteractionAction.DEFER) {
-                for (Message um : userMsgs) {
-                    conversationService.updateDeliveryStatus(um.getId(), "DEFERRED");
-                }
-                eventBus.publish(companionId, CompanionEventType.MESSAGE_READ,
-                        Map.of("messageId", last.getId()));
-                send(emitter, "meta", Map.of("action", "DEFER", "reason", decision.reason));
-                send(emitter, "done", Map.of("deferred", true, "action", "DEFER", "reason", decision.reason));
-                emitter.complete();
-                return;
+            // 5. 回复路径: 决策来自 Brain(规则回退), 表达来自 ExpressionAgent
+            InteractionDecision decision = pipelineResult.brainDecision() != null
+                    ? pipelineResult.brainDecision().baseline()
+                    : null;
+            if (decision == null) {
+                decision = decide(userId, companionId, burstPerception, decisionText, now, null);
             }
+            AttentionService.Attention attention = pipelineResult.attention();
+            var state = agentStateService.get(companionId);
 
-            // 7. 正常回复路径: Attention 决定的已读延迟(忙/疲劳 → 慢) → 标记 READ + 事件
+            // 6. 正常回复路径: 已读延迟(忙/疲劳 → 慢) → 标记 READ + 事件
             List<Message> recent = conversationService.recentMessages(conversationId, 40);
             String kind = decision.action == InteractionAction.SHORT_ACK ? "SHORT_ACK" : "NORMAL";
             send(emitter, "meta", Map.of(
@@ -256,15 +249,17 @@ public class ChatController {
                     "action", decision.action.name(),
                     "commitment", decision.commitment.name()));
 
-            long readDelay = attention.inspectDelayMs();
+            // V5 Expression: 决定"怎么说" + 分段计划(先有表达策略, 再生成文本)
+            ExpressionResult expression = expressionAgent.execute(buildExpressionContext(
+                    userId, companionId, decisionText, pipelineResult, decision, recent, now));
+
+            long readDelay = attention != null ? attention.inspectDelayMs() : 0;
             if (readDelay > 0) {
                 Thread.sleep(readDelay);
             }
             for (Message um : userMsgs) {
-                conversationService.updateDeliveryStatus(um.getId(), "READ");
+                deliveryService.read(companionId, um.getId());
             }
-            eventBus.publish(companionId, CompanionEventType.MESSAGE_READ,
-                    Map.of("messageId", last.getId()));
 
             // 8. typing + 延迟(真人节奏; 短应和不显示"正在输入")
             long latency = latencyEngine.computeDelayMs(decision, decisionText,
@@ -284,21 +279,27 @@ public class ChatController {
                 eventBus.publish(companionId, CompanionEventType.COMPANION_TYPING, Map.of("typing", false));
             }
 
-            // 8. 生成一次(带预算)
+            // 8. 生成一次(带预算 + V5 表达策略)
+            String expressionHint = describeExpression(expression);
             CompanionRuntime.ChatOutcome outcome = runtime.generate(userId, companionId, conversationId,
                     last.getId(), decisionText, recent,
-                    delta -> send(emitter, "token", Map.of("delta", delta)), decision);
+                    delta -> send(emitter, "token", Map.of("delta", delta)), decision, expressionHint);
 
-            // 9. ResponsePlan / Expression Loop(V4 P3): 她也可以连发
-            //    深度倾诉时即使 LLM 没输出 <split>, 也按标点兜底拆成两条 —— "边想边说"的自然展开
-            //    V4.2: 阈值放宽(DEEP 或 情绪强), 让"边想边说"更容易出现
+            // 9. Expression Loop(V5 §35): 先有表达计划(边想边说), 而不是把完整回答拆句
+            //    ExpressionAgent 规划段数; LLM 输出 <split> 优先; 深度情绪时按标点兜底展开
             String reply = outcome.reply();
             List<String> chunks = splitReply(reply);
+            int planSegments = expression != null && expression.segments() != null && !expression.segments().isEmpty()
+                    ? expression.segments().size() : 1;
+            double emotionalImpact = pipelineResult.emotion() != null
+                    ? Math.abs(pipelineResult.emotion().delta().hurt())
+                    + Math.abs(pipelineResult.emotion().delta().anger())
+                    + Math.abs(pipelineResult.emotion().delta().sadness()) : 0;
             boolean deepTone = decision.commitment.level >= com.luxera.companion.interaction.ResponseCommitment.DEEP.level
                     || (decision.commitment.level >= com.luxera.companion.interaction.ResponseCommitment.ENGAGED.level
-                        && appraisal != null && appraisal.emotionalImpact() >= 0.6);
-            if (chunks.size() == 1 && deepTone
-                    && reply.length() > 35 && appraisal != null && appraisal.emotionalImpact() >= 0.35) {
+                        && emotionalImpact >= 0.6);
+            if (chunks.size() == 1 && (deepTone || planSegments > 1)
+                    && reply.length() > 35 && (emotionalImpact >= 0.35 || planSegments > 1)) {
                 String mid = splitAtPunctuation(reply);
                 if (mid != null) {
                     chunks = List.of(mid, reply.substring(mid.length()).trim());
@@ -421,6 +422,67 @@ public class ChatController {
         } catch (IOException e) {
             throw new RuntimeException("SSE 发送失败", e);
         }
+    }
+
+    // ── V5 Expression 辅助 ──────────────────────────────
+
+    /** 构建 ExpressionContext(Brain 已决定"要不要说/想表达什么") */
+    private ExpressionContext buildExpressionContext(String userId, String companionId, String decisionText,
+                                                     V5MessagePipeline.PipelineResult pipelineResult,
+                                                     InteractionDecision decision,
+                                                     List<Message> recent, LocalDateTime now) {
+        AgentState state = agentStateService.get(companionId);
+        Relationship rel = relationshipService.find(userId, companionId);
+        var persona = companionService.getPersona(companionId);
+        String personality = persona != null && persona.getPersonality() != null
+                ? persona.getPersonality().getSummary() : null;
+        var companion = companionService.requireOwned(userId, companionId);
+        double emotionalImpact = pipelineResult.emotion() != null
+                ? Math.abs(pipelineResult.emotion().delta().hurt())
+                + Math.abs(pipelineResult.emotion().delta().anger())
+                + Math.abs(pipelineResult.emotion().delta().sadness()) : 0;
+        String emotionSummary = state != null ? state.getMood() : "平静";
+        return new ExpressionContext(
+                companionId, userId, decisionText,
+                pipelineResult.brainDecision() != null ? pipelineResult.brainDecision().expressionGoal() : "respond",
+                emotionSummary, personality,
+                rel != null ? rel.getRelationshipStage() : "new",
+                state != null ? state.getEmotionalCloseness() : 0.3,
+                schedule.describe(companionId, companion.getName(), now),
+                recentLines(recent),
+                state != null ? state.getEnergy() : 0.6,
+                emotionalImpact,
+                decision);
+    }
+
+    /** 把表达策略转成给生成阶段的提示(自然地说, 不要说破) */
+    private static String describeExpression(ExpressionResult expression) {
+        if (expression == null || expression.strategy() == null) return null;
+        ExpressionResult.ExpressionStrategy s = expression.strategy();
+        StringBuilder sb = new StringBuilder();
+        sb.append("语气 ").append(s.tone())
+                .append(", 直接程度 ").append(pct(s.directness()))
+                .append(", 温度 ").append(pct(s.warmth()))
+                .append(", 俏皮 ").append(pct(s.playfulness()))
+                .append(", 流露脆弱 ").append(pct(s.vulnerability()));
+        if (expression.segments() != null && expression.segments().size() > 1) {
+            sb.append("。你想分成 ").append(expression.segments().size())
+                    .append(" 条说, 边想边说(先一句, 停一下, 再补一句)");
+        }
+        return sb.toString();
+    }
+
+    private static List<String> recentLines(List<Message> recent) {
+        List<String> lines = new ArrayList<>();
+        for (Message m : recent) {
+            String prefix = "user".equals(m.getSenderType()) ? "用户: " : "我: ";
+            lines.add(prefix + m.getContent());
+        }
+        return lines;
+    }
+
+    private static String pct(double v) {
+        return (int) (Math.max(0, Math.min(1, v)) * 100) + "%";
     }
 
     @Data

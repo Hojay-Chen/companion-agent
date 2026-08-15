@@ -1,0 +1,354 @@
+package com.luxera.companion.runtime.pipeline;
+
+import com.luxera.companion.agent.CompanionSchedule;
+import com.luxera.companion.agent.PerceptionEngine;
+import com.luxera.companion.appraisal.AppraisalService;
+import com.luxera.companion.attention.AttentionService;
+import com.luxera.companion.behavior.Drives;
+import com.luxera.companion.behavior.DrivesService;
+import com.luxera.companion.conversation.ConversationService;
+import com.luxera.companion.conversation.Message;
+import com.luxera.companion.event.CompanionEventBus;
+import com.luxera.companion.event.CompanionEventType;
+import com.luxera.companion.interaction.InteractionAction;
+import com.luxera.companion.interaction.InteractionDecision;
+import com.luxera.companion.interaction.InteractionPolicyEngine;
+import com.luxera.companion.memory.Memory;
+import com.luxera.companion.memory.MemoryService;
+import com.luxera.companion.persona.Companion;
+import com.luxera.companion.persona.CompanionService;
+import com.luxera.companion.persona.Persona;
+import com.luxera.companion.phone.PhoneState;
+import com.luxera.companion.phone.PhoneStateService;
+import com.luxera.companion.relationship.Relationship;
+import com.luxera.companion.relationship.RelationshipService;
+import com.luxera.companion.runtime.AgentTraceService;
+import com.luxera.companion.runtime.ScheduledActionService;
+import com.luxera.companion.runtime.agent.brain.BrainAgent;
+import com.luxera.companion.runtime.agent.brain.BrainContext;
+import com.luxera.companion.runtime.agent.brain.BrainDecision;
+import com.luxera.companion.runtime.agent.emotion.EmotionAgent;
+import com.luxera.companion.runtime.agent.emotion.EmotionAppraisalResult;
+import com.luxera.companion.runtime.agent.emotion.EmotionContext;
+import com.luxera.companion.runtime.agent.memory.MemoryAgent;
+import com.luxera.companion.runtime.agent.memory.MemoryRecallContext;
+import com.luxera.companion.runtime.agent.memory.MemoryRecallResult;
+import com.luxera.companion.state.AgentState;
+import com.luxera.companion.state.AgentStateService;
+import com.luxera.companion.state.AvailabilityService;
+import com.luxera.companion.state.CompanionAvailability;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * V5 消息流水线(P1): 用户消息 → WorldEvent → Emotion → Attention → Brain → (DEFER | REPLY)。
+ * 这是 V5 最重要的流程。消息不再"直接进入 Brain"。
+ *
+ * 流水线:
+ * 1. EmotionAgent 评估(状态经 Reducer 更新)
+ * 2. Phone/Attention: 通知是否出现 → 是否注意到 → 是否打开手机(确定性 Runtime 规则)
+ * 3. BrainAgent 决策: REPLY / SHORT_ACK / END_CONVERSATION / READ_NO_REPLY / IGNORE
+ * 4. READ_NO_REPLY → 标记已读+DEFERRED + 创建 PendingMessageState + 排程复查
+ * 5. 其余 → 进入回复路径(由调用方执行 Expression + 发送)
+ */
+@Slf4j
+@Service
+public class V5MessagePipeline {
+
+    /** 注意概率阈值(低于 → 她根本没看到) */
+    private static final double NOTICE_THRESHOLD = 0.3;
+    /** 打开手机概率阈值(Runtime 决定她会不会真去拿手机) */
+    private static final double CHECK_THRESHOLD = 0.45;
+
+    private final EmotionAgent emotionAgent;
+    private final BrainAgent brainAgent;
+    private final MemoryAgent memoryAgent;
+    private final AppraisalService appraisalService;
+    private final AttentionService attentionService;
+    private final PhoneStateService phoneStateService;
+    private final AgentStateService agentStateService;
+    private final AvailabilityService availabilityService;
+    private final RelationshipService relationshipService;
+    private final CompanionService companionService;
+    private final CompanionSchedule schedule;
+    private final InteractionPolicyEngine interactionPolicy;
+    private final DrivesService drivesService;
+    private final MemoryService memoryService;
+    private final MessageDeliveryService deliveryService;
+    private final PendingMessageService pendingMessageService;
+    private final ScheduledActionService scheduledActionService;
+    private final CompanionEventBus eventBus;
+    private final AgentTraceService traceService;
+    private final ConversationService conversationService;
+
+    public V5MessagePipeline(EmotionAgent emotionAgent, BrainAgent brainAgent, MemoryAgent memoryAgent,
+                             AppraisalService appraisalService, AttentionService attentionService,
+                             PhoneStateService phoneStateService, AgentStateService agentStateService,
+                             AvailabilityService availabilityService, RelationshipService relationshipService,
+                             CompanionService companionService, CompanionSchedule schedule,
+                             InteractionPolicyEngine interactionPolicy, DrivesService drivesService,
+                             MemoryService memoryService, MessageDeliveryService deliveryService,
+                             PendingMessageService pendingMessageService, ScheduledActionService scheduledActionService,
+                             CompanionEventBus eventBus, AgentTraceService traceService,
+                             ConversationService conversationService) {
+        this.emotionAgent = emotionAgent;
+        this.brainAgent = brainAgent;
+        this.memoryAgent = memoryAgent;
+        this.appraisalService = appraisalService;
+        this.attentionService = attentionService;
+        this.phoneStateService = phoneStateService;
+        this.agentStateService = agentStateService;
+        this.availabilityService = availabilityService;
+        this.relationshipService = relationshipService;
+        this.companionService = companionService;
+        this.schedule = schedule;
+        this.interactionPolicy = interactionPolicy;
+        this.drivesService = drivesService;
+        this.memoryService = memoryService;
+        this.deliveryService = deliveryService;
+        this.pendingMessageService = pendingMessageService;
+        this.scheduledActionService = scheduledActionService;
+        this.eventBus = eventBus;
+        this.traceService = traceService;
+        this.conversationService = conversationService;
+    }
+
+    /**
+     * 处理一批用户消息, 返回结果。
+     * @param userMessages 已入库的用户消息(连发归并)
+     * @param decisionText 合并后的文本
+     * @param perception 合并文本的感知
+     */
+    @Transactional
+    public PipelineResult process(String userId, String companionId, String conversationId,
+                                  List<Message> userMessages, String decisionText,
+                                  PerceptionEngine.Perception perception, LocalDateTime now) {
+        Message last = userMessages.get(userMessages.size() - 1);
+        AgentState state = agentStateService.get(companionId);
+        PhoneState phone = phoneStateService.current(companionId, now);
+        Relationship rel = relationshipService.find(userId, companionId);
+        Companion companion = companionService.requireOwned(userId, companionId);
+        Persona persona = companionService.getPersona(companionId);
+        String personality = persona != null && persona.getPersonality() != null
+                ? persona.getPersonality().getSummary() : null;
+        String relationshipStage = rel != null ? rel.getRelationshipStage() : "new";
+        double closeness = state != null ? state.getEmotionalCloseness() : 0.3;
+
+        // 0. 记录世界事件
+        eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
+                Map.of("messageId", last.getId(), "status", MessageLifecycle.DELIVERED));
+
+        // 1. EmotionAgent: 消息先改变内部状态
+        List<String> recent = summarizeRecent(conversationService.recentMessages(conversationId, 10));
+        CompanionAvailability availabilityNow = availabilityService.current(companionId, now, state);
+        EmotionAppraisalResult emotion = emotionAgent.execute(new EmotionContext(
+                companionId, userId, last.getId(), decisionText, recent,
+                relationshipStage, closeness, rel != null ? rel.getTrust() : 0,
+                state, schedule.describe(companionId, companion.getName(), now),
+                availabilityNow.name(), 0.6, 0.4, personality,
+                retrieveMemories(userId, companionId, decisionText),
+                perception != null ? perception.intent() : null,
+                perception != null ? perception.emotion() : null));
+
+        // 2. 通知 + 注意力(Runtime 确定性): 她有没有看到?
+        double salience = 0.3 + emotion.delta().warmth() * 0.3
+                + (emotion.delta().hurt() + emotion.delta().anger()) * 0.3;
+        AttentionService.Attention attention = attentionService.compute(
+                schedule.activityFor(companionId, now), state, phone, salience);
+        double notificationFactor = phoneNotificationFactor(phone);
+        boolean notified = notificationFactor > 0;
+        boolean noticed = notified && attention.noticeProbability() >= NOTICE_THRESHOLD;
+
+        if (!noticed) {
+            // 她根本没看到(静音/勿扰/手机不在身边/在忙)—— 保持 DELIVERED, 不打扰
+            return new PipelineResult(PipelineResult.Outcome.IGNORE_NOT_NOTICED, null, emotion,
+                    null, last, "她没注意到消息(" + (notified ? "在忙/分心" : "静音/勿扰/手机不在身边") + ")", attention);
+        }
+        deliveryService.noticed(companionId, last.getId());
+        eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
+                Map.of("messageId", last.getId(), "status", MessageLifecycle.NOTICED));
+
+        // 3. Runtime 决定她是否打开手机查看
+        boolean checked = attention.inspectProbability() >= CHECK_THRESHOLD;
+        if (checked) {
+            deliveryService.checked(companionId, last.getId());
+        }
+
+        // 4. 记忆二段召回: 相关记忆激活(给 Brain 参考)
+        List<Memory> memoryCandidates = retrieveMemories(userId, companionId, decisionText);
+        MemoryRecallResult recall = memoryAgent.execute(new MemoryRecallContext(
+                companionId, userId, decisionText, memoryCandidates, personality,
+                relationshipStage, emotion.delta().isEmpty() ? state != null ? state.getMood() : "平静" : "有情绪变化"));
+        List<Memory> activatedMemories = applyActivation(memoryCandidates, recall);
+
+        // 5. Brain 基线决策(规则, 作为回退 + 预算来源)
+        AppraisalService.AppraisalResult appraisalForDrives = AppraisalService.AppraisalResult.fromValues(
+                emotion.delta().hurt(), emotion.delta().anger(), emotion.delta().warmth(),
+                emotion.appraisal() != null ? emotion.appraisal().expectationViolation() : 0,
+                emotion.delta().warmth() > 0 ? 0.2 : (emotion.delta().hurt() + emotion.delta().anger()) > 0.3 ? -0.2 : 0,
+                Math.abs(emotion.delta().hurt()) + Math.abs(emotion.delta().anger()) + Math.abs(emotion.delta().sadness()));
+        CompanionAvailability availability = availabilityService.current(companionId, now, state);
+        boolean intimate = rel != null && List.of("close", "deeply_connected").contains(rel.getRelationshipStage());
+        boolean busy = schedule.activityFor(companionId, now) == CompanionSchedule.Activity.WORK_BUSY
+                || schedule.activityFor(companionId, now) == CompanionSchedule.Activity.WORK_AFTERNOON;
+
+        InteractionDecision baseline = interactionPolicy.decide(new InteractionPolicyEngine.InteractionInput(
+                decisionText, perception != null ? perception.intent() : null,
+                perception != null ? perception.emotion() : null,
+                state != null ? state.getEnergy() : 0.6,
+                state != null ? state.getStress() : 0.3,
+                relationshipStage, intimate, busy, availability, appraisalForDrives,
+                closeness, rel != null ? rel.getFamiliarity() : 0, rel != null ? rel.getIntimacy() : 0));
+
+        Drives drives = drivesService.compute(appraisalForDrives,
+                state != null ? state.getEnergy() : 0.6,
+                state != null ? state.getStress() : 0.3,
+                closeness, rel != null ? rel.getFamiliarity() : 0, rel != null ? rel.getIntimacy() : 0,
+                availability, decisionText, decisionText.length());
+
+        // 6. Brain 最终决策
+        BrainDecision brainDecision = brainAgent.execute(new BrainContext(
+                companionId, userId, last.getId(), decisionText, recent,
+                schedule.describe(companionId, companion.getName(), now),
+                availability.name(), state != null ? state.getEnergy() : 0.6,
+                state != null ? state.getStress() : 0.3,
+                state != null ? state.getSocialEnergy() : 0.6,
+                state != null ? state.getHurt() : 0,
+                state != null ? state.getAnger() : 0,
+                state != null ? state.getSadness() : 0,
+                state != null ? state.getAnxiety() : 0,
+                state != null ? state.getWarmth() : 0,
+                state != null ? state.getMood() : "平静",
+                attention.noticeProbability(), attention.inspectProbability(),
+                phone != null && phone.isDoNotDisturb() ? false : phone != null,
+                phone != null ? phone.getNotificationMode() : "vibrate",
+                relationshipStage, closeness, perception != null ? perception.intent() : null,
+                perception != null ? perception.emotion() : null, drives, checked, false, baseline));
+
+        // 7. 执行 Brain 决策
+        if (brainDecision.isDefer()) {
+            // 看到了但不回: 已读 + DEFERRED + 待复查
+            deliveryService.read(companionId, last.getId());
+            deliveryService.deferred(companionId, last.getId());
+            LocalDateTime reviewAt = now.plusMinutes(reviewDelayMinutes(brainDecision));
+            pendingMessageService.defer(last, companionId, userId, brainDecision.reasonFactors() == null
+                    || brainDecision.reasonFactors().isEmpty() ? "暂时不想回" : String.join(";", brainDecision.reasonFactors()), reviewAt);
+            scheduledActionService.schedule(companionId, ScheduledActionService.RE_EVALUATE_MESSAGE,
+                    reviewAt, Map.of("pendingMessageId", last.getId()));
+            return new PipelineResult(PipelineResult.Outcome.DEFERRED, brainDecision, emotion,
+                    recall, last, "看到了但不回, 稍后复查", attention);
+        }
+
+        if (BrainDecision.IGNORE.equals(brainDecision.action())) {
+            deliveryService.ignored(companionId, last.getId());
+            return new PipelineResult(PipelineResult.Outcome.IGNORE, brainDecision, emotion,
+                    recall, last, "决定不回(忽略)", attention);
+        }
+
+        // 回复路径
+        return new PipelineResult(PipelineResult.Outcome.REPLY, brainDecision, emotion,
+                recall, last, "进入回复路径", attention);
+    }
+
+    /** 复查等待时间(分钟): 由决策优先级决定, 30min~4h */
+    private static long reviewDelayMinutes(BrainDecision d) {
+        if (d == null) return 60;
+        double p = d.priority();
+        if (p >= 0.7) return 30;
+        if (p >= 0.5) return 90;
+        return 180;
+    }
+
+    /** 记忆激活: 用 MemoryAgent 的结果重新排序(回退时保持原序) */
+    private List<Memory> applyActivation(List<Memory> candidates, MemoryRecallResult recall) {
+        if (candidates == null || candidates.isEmpty() || recall == null
+                || recall.activations() == null || recall.activations().isEmpty()) {
+            return candidates;
+        }
+        Map<String, Double> activation = new HashMap<>();
+        for (MemoryRecallResult.MemoryActivation a : recall.activations()) {
+            activation.put(a.memoryId(), a.activation());
+        }
+        List<Memory> sorted = new ArrayList<>(candidates);
+        sorted.sort((x, y) -> Double.compare(
+                activation.getOrDefault(y.getId(), 0.0),
+                activation.getOrDefault(x.getId(), 0.0)));
+        return sorted;
+    }
+
+    private List<Memory> retrieveMemories(String userId, String companionId, String query) {
+        try {
+            return memoryService.retrieve(userId, companionId, query, 8);
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    private static List<String> summarizeRecent(List<Message> messages) {
+        List<String> out = new ArrayList<>();
+        for (Message m : messages) {
+            String prefix = "user".equals(m.getSenderType()) ? "用户: " : "我: ";
+            out.add(prefix + m.getContent());
+        }
+        return out;
+    }
+
+    /** 手机通知触达(与 AttentionService 一致) */
+    private static double phoneNotificationFactor(PhoneState phone) {
+        if (phone == null) return 0.5;
+        if (phone.isDoNotDisturb()) return 0;
+        String mode = phone.getNotificationMode() == null ? "vibrate" : phone.getNotificationMode();
+        double base = switch (mode) {
+            case "dnd" -> 0.0;
+            case "silent" -> 0.2;
+            case "vibrate" -> 0.5;
+            case "sound" -> 0.75;
+            default -> 0.5;
+        };
+        String loc = phone.getPhoneLocation() == null ? "hand" : phone.getPhoneLocation();
+        switch (loc) {
+            case "hand" -> base += 0.25;
+            case "bag" -> base -= 0.1;
+            case "other_room" -> base -= 0.3;
+            default -> { }
+        }
+        return Math.max(0, Math.min(1, base));
+    }
+
+    /** 流水线结果 */
+    public record PipelineResult(Outcome outcome, BrainDecision brainDecision,
+                                 EmotionAppraisalResult emotion, MemoryRecallResult recall,
+                                 Message lastMessage, String reason,
+                                 AttentionService.Attention attention) {
+
+        public enum Outcome {
+            /** 她根本没看到(静音/勿扰/在忙) */
+            IGNORE_NOT_NOTICED,
+            /** 决定不回 */
+            IGNORE,
+            /** 看到了但不回(待复查) */
+            DEFERRED,
+            /** 进入回复路径 */
+            REPLY
+        }
+
+        public boolean shouldReply() {
+            return outcome == Outcome.REPLY;
+        }
+
+        public boolean isDeferred() {
+            return outcome == Outcome.DEFERRED;
+        }
+
+        public boolean isIgnored() {
+            return outcome == Outcome.IGNORE || outcome == Outcome.IGNORE_NOT_NOTICED;
+        }
+    }
+}

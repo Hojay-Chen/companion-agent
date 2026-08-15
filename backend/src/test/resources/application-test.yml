@@ -1,0 +1,22 @@
+# 测试配置: 使用隔离的 companion_test 数据库, 避免干扰运行中的服务。
+spring:
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/companion_test
+    username: admin
+    password: shared-secret
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+app:
+  scheduler:
+    daily-reflection-cron: 0 0 0 1 1 *
+    weekly-reflection-cron: 0 0 0 1 1 *
+    proactive-cron: 0 0 0 1 1 *
+    birthday-cron: 0 0 0 1 1 *
+    life-tick-cron: 0 0 0 1 1 *
+    thought-maintenance-cron: 0 0 0 1 1 *
+    emotion-maintenance-cron: 0 0 0 1 1 *
+    open-loop-cron: 0 0 0 1 1 *
+    memory-consolidation-cron: 0 0 0 1 1 *
+    event-simulation-cron: 0 0 0 1 1 *

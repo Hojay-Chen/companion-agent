@@ -47,6 +47,19 @@ public class AppraisalService {
     @Transactional
     public AppraisalResult appraise(String companionId, String userId, String messageId,
                                     String text, PerceptionEngine.Perception perception) {
+        AppraisalResult result = computeAppraisal(companionId, userId, messageId, text, perception);
+        applyToState(companionId, result.appraisal());
+        applyToRelationship(userId, companionId, result.appraisal());
+        return result;
+    }
+
+    /**
+     * V5: 仅计算评估并落记录, 不修改状态。
+     * 供 EmotionAgent 使用 —— 关键词只作为 cheap signal, 状态变更统一走 StateReducer。
+     */
+    @Transactional
+    public AppraisalResult computeAppraisal(String companionId, String userId, String messageId,
+                                            String text, PerceptionEngine.Perception perception) {
         if (text == null) text = "";
         String t = text;
 
@@ -55,7 +68,7 @@ public class AppraisalService {
         a.setCompanionId(companionId);
         a.setContext(t.length() > 200 ? t.substring(0, 200) : t);
 
-        // 1. 关键词维度
+        // 1. 关键词维度(cheap signal)
         if (APOLOGY.matcher(t).find()) {
             a.setWarmth(0.5); a.setHurt(0); a.setAnger(0); a.setRelationshipImpact(0.25);
         }
@@ -114,7 +127,7 @@ public class AppraisalService {
             a.setPersonalRelevance(Math.max(a.getPersonalRelevance(), 0.6));
         }
 
-        // 3. 落库
+        // 3. 落库(只记录, 不改状态)
         a.setEmotionalImpact(clamp(a.getEmotionalImpact()));
         a.setRelationshipImpact(clamp(a.getRelationshipImpact(), -1, 1));
         a.setUrgency(clamp(a.getUrgency()));
@@ -124,18 +137,18 @@ public class AppraisalService {
         a.setPersonalRelevance(clamp(a.getPersonalRelevance()));
         appraisalRepo.save(a);
 
-        // 4. 更新 Agent 内部状态(hurt/anger 累积, warmth 增进亲密度)
-        applyToState(companionId, a);
-
-        // 5. 关系微调(负面→信任略降; 温暖→亲密度略升)
-        applyToRelationship(userId, companionId, a);
-
         return new AppraisalResult(a);
     }
 
     private void applyToState(String companionId, MessageAppraisal a) {
         AgentState state = agentStateService.getOrCreate(companionId);
         agentStateService.applyAppraisal(companionId, a.getHurt(), a.getAnger(), a.getWarmth());
+    }
+
+    /** V5: 供 EmotionAgent 使用 —— 关系微调独立暴露(信任/亲密度是慢变量) */
+    @Transactional
+    public void applyRelationshipImpact(String userId, String companionId, AppraisalResult result) {
+        applyToRelationship(userId, companionId, result.appraisal());
     }
 
     private void applyToRelationship(String userId, String companionId, MessageAppraisal a) {
@@ -159,6 +172,23 @@ public class AppraisalService {
         public double urgency() { return appraisal.getUrgency(); }
         public double relationshipImpact() { return appraisal.getRelationshipImpact(); }
         public double emotionalImpact() { return appraisal.getEmotionalImpact(); }
+
+        /** V5: 从 Emotion Agent 的评估值构建(不落库), 供 DrivesService/基线决策使用 */
+        public static AppraisalResult fromValues(double hurt, double anger, double warmth,
+                                                 double urgency, double relationshipImpact, double emotionalImpact) {
+            MessageAppraisal a = new MessageAppraisal();
+            a.setHurt(clamp0(hurt));
+            a.setAnger(clamp0(anger));
+            a.setWarmth(clamp0(warmth));
+            a.setUrgency(clamp0(urgency));
+            a.setRelationshipImpact(Math.max(-1, Math.min(1, relationshipImpact)));
+            a.setEmotionalImpact(clamp0(emotionalImpact));
+            return new AppraisalResult(a);
+        }
+
+        private static double clamp0(double v) {
+            return Math.max(0, Math.min(1, v));
+        }
     }
 
     private static double clamp(double v) {

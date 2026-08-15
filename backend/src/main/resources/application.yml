@@ -87,6 +87,8 @@ app:
     emotion-maintenance-cron: 0 45 * * * *
     open-loop-cron: 0 */15 * * * *
     memory-consolidation-cron: 0 0 4 * * *
+    # V5: 事件模拟 / 已读未回复查(复查已在 Job 内固定每分钟)
+    event-simulation-cron: 0 */30 * * * *
 
   # 主动消息打断控制
   proactive:

@@ -1,5 +1,7 @@
 package com.luxera.companion.state;
 
+import com.luxera.companion.runtime.EmotionDelta;
+import com.luxera.companion.runtime.EmotionReducer;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -9,9 +11,24 @@ import java.util.Optional;
 public class AgentStateService {
 
     private final AgentStateRepository repo;
+    private final EmotionReducer emotionReducer;
 
-    public AgentStateService(AgentStateRepository repo) {
+    public AgentStateService(AgentStateRepository repo, EmotionReducer emotionReducer) {
         this.repo = repo;
+        this.emotionReducer = emotionReducer;
+    }
+
+    /** V5: 情绪增量经 StateReducer 应用到状态(唯一入口) */
+    @Transactional
+    public AgentState applyEmotionDelta(String companionId, EmotionDelta delta) {
+        AgentState s = getOrCreate(companionId);
+        return emotionReducer.apply(s, delta);
+    }
+
+    /** V5: 持久化状态 */
+    @Transactional
+    public AgentState save(AgentState state) {
+        return repo.save(state);
     }
 
     @Transactional
@@ -86,17 +103,20 @@ public class AgentStateService {
         repo.save(s);
     }
 
-    /** V4: hurt/anger 随时间衰减(状态愈合) */
+    /** V4/V5: hurt/anger/sadness/anxiety 随时间衰减(状态愈合) */
     @Transactional
     public void decayNegative(String companionId, double rate) {
         repo.findByCompanionId(companionId).ifPresent(s -> {
             s.setHurt(clamp(s.getHurt() - rate));
             s.setAnger(clamp(s.getAnger() - rate));
+            s.setSadness(clamp(s.getSadness() - rate));
+            s.setAnxiety(clamp(s.getAnxiety() - rate));
+            s.setWarmth(clamp(s.getWarmth() - rate * 0.2));
             repo.save(s);
         });
     }
 
-    /** V4: 全部伴侣的负面情绪衰减(定时任务调用, 负面情绪会随时间自然愈合) */
+    /** V4/V5: 全部伴侣的负面情绪衰减(定时任务调用, 负面情绪会随时间自然愈合) */
     @Transactional
     public void decayAllNegative(double rate) {
         for (AgentState s : repo.findAll()) {
@@ -109,8 +129,17 @@ public class AgentStateService {
                 s.setAnger(clamp(s.getAnger() - rate));
                 changed = true;
             }
+            if (s.getSadness() > 0.001) {
+                s.setSadness(clamp(s.getSadness() - rate));
+                changed = true;
+            }
+            if (s.getAnxiety() > 0.001) {
+                s.setAnxiety(clamp(s.getAnxiety() - rate));
+                changed = true;
+            }
             if (changed) {
-                if (s.getHurt() < 0.15 && s.getAnger() < 0.15 && !"平静的".equals(s.getMood())) {
+                if (s.getHurt() < 0.15 && s.getAnger() < 0.15 && s.getSadness() < 0.15
+                        && s.getAnxiety() < 0.15 && !"平静的".equals(s.getMood())) {
                     s.setMood("平静的");
                 }
                 repo.save(s);

@@ -2,7 +2,62 @@
 
 > **不是 Chatbot**：拥有稳定人格、连续人生、持续记忆，随时间与用户建立关系，并在合适的时候主动找你。
 >
-> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime + V4 Continuous Human Runtime。当前完成 **V2.0(44/44) + V3 P0/P1/P2 + V4 P0/P1/P2/P3**。
+> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime + V4 Continuous Human Runtime + **V5 Continuous Person Runtime**。当前完成 **V2.0(44/44) + V3 P0/P1/P2 + V4 P0/P1/P2/P3 + V5 P0~P8**。
+
+---
+
+## V5 · Continuous Person Runtime（2026-08）
+
+> **V4 是"持续运行的 AI 人"；V5 是"拥有世界状态、注意力、情绪、记忆、事件模拟、执行控制和表达系统的持续运行的人格 Runtime"。**
+>
+> 目标：让用户发来的消息，成为这个人现实生活中发生的一件事，而不是"收到就回答"。
+
+### V5 核心改造
+
+1. **消息流水线（P1）**：`用户消息 → WorldEvent → Emotion → Attention → Brain → (REPLY | DEFER | IGNORE)`。
+   消息**不再直接进入 Brain** —— 先经过情绪评估改变内部状态，再由手机/注意力层决定"她有没有看到"，
+   最后 Brain 决定"要不要回 / 怎么回 / 回不回"。
+2. **Emotion Agent（P3，P0 优先级）**：用 LLM 结构化 `emotion-appraisal` 取代关键词规则。
+   输出 `appraisal + emotionDelta + memoryTriggers + confidence + reason`，经 `EmotionReducer` 落状态；
+   关键词只作为 cheap signal（LLM 不可用/低置信度时回退）。
+3. **Brain Executive（P4）**：取代 `replyDrive > avoidDrive` 的最终裁决。
+   Brain 输出结构化 `action（REPLY/SHORT_ACK/CHECK_PHONE_FIRST/READ_NO_REPLY/IGNORE/END_CONVERSATION）`，
+   Drives 只作为上下文输入。**Brain 不输出自然语言**。
+4. **Expression Agent（P5）**：决定"怎么说 / 说几条 / 什么时候发"，与"说什么"分离。
+   表达策略（tone/directness/warmth/playfulness/vulnerability）注入生成提示词；不再按标点机械拆句。
+5. **已读不回复查（P1 §79）**：`PendingMessageState` 记录"看到了但不回" + 复查时间，
+   `PendingMessageReevaluationJob` 到点唤醒 Brain —— 会议结束可能回、可能继续冷处理、也可能放下。
+6. **Memory Agent（P2）**：两阶段召回 —— 廉价检索 → LLM 激活评分（`memory-recall`），激活后重排。
+7. **Event Simulation（P6）**：LLM 提候选、Runtime 决定是否发生（NORMAL 概率最高），事件落 `world_events`，
+   产生经历与想法（可能成为主动分享的种子）。
+8. **Runtime 基础设施（P0）**：`AgentTrace`（可回放"为什么她突然不理我"）、`ScheduledAction`（排程持久化，重启不丢）、
+   `WorldEventLog`（事件溯源）、`StateReducer`（所有状态变更可追踪）、`AgentRegistry` + `skills/`（技能注册表）。
+9. **Skills（P7）**：`resources/skills/**/SKILL.md`（core/emotion/brain/memory/expression/event），
+   `SkillRegistry` 按 Agent 类型固定注入；身份/人格/关系与技能分离。
+
+### V5 数据表（新增）
+
+| 表 | 用途 |
+|----|------|
+| `agent_traces` | Agent 调用痕迹（输入摘要/输出/耗时/状态），用于回放 |
+| `scheduled_actions` | 持久化排程动作（延迟回复/复查/主动行为），重启不丢 |
+| `pending_message_states` | "已读未回"消息 + 复查时间 |
+| `world_events` | 世界事件日志（事件溯源） |
+| `agent_states` 新增列 | `sadness / anxiety / warmth`（情绪维度） |
+
+### V5 验收
+
+- `mvn test`：**24 个单元/集成测试全部通过**（EmotionReducer / SkillRegistry / MemoryAgent / ScheduledActionService / V5MessagePipeline 昼夜场景 / 回复路径）。
+- `scripts/v5_check.sh`：V5 运行时表结构 + Agent 注册 + 消息生命周期 + Agent 痕迹 + 诊断端点。
+- `scripts/v4_check.sh`：V4 回归。
+- 诊断端点：`GET /api/companions/{id}/v5/{traces|scheduled|pending-messages|world-events|agents}`
+
+### V5 已知边界
+
+- 活动尚未实现"ActivityPlan + Checkpoint"（由 LifeRuntime 按作息推进）；事件模拟只做轻量扰动。
+- 单实例内存事件总线（多实例需 Redis）。
+- LLM 不可用（Mock 模式）时所有 Agent 回退到规则基准 —— 保证离线可跑、行为确定。
+
 
 | 项 | 值 |
 |----|----|
@@ -16,6 +71,11 @@
 
 ## 📖 目录
 
+- [V5 · Continuous Person Runtime（2026-08）](#v5--continuous-person-runtime2026-08)
+  - [V5 核心改造](#v5-核心改造)
+  - [V5 数据表（新增）](#v5-数据表新增)
+  - [V5 验收](#v5-验收)
+  - [V5 已知边界](#v5-已知边界)
 - [8. 实体关系总览](#8-实体关系总览)
 - [9. 数据表详细设计（36 张表）](#9-数据表详细设计36-张表)
   - [9.1 用户与伴侣](#91-用户与伴侣)

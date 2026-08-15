@@ -21,12 +21,28 @@ public class ContextCompiler {
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("HH:mm");
 
     public String buildSystem(CompanionContext ctx, BehaviorDecision decision) {
-        return buildSystem(ctx, decision, null);
+        return buildSystem(ctx, decision, null, null);
     }
 
     /** V3: 带回复预算的编译(长度/问题/建议是行为结果, 不是 Prompt 固定) */
     public String buildSystem(CompanionContext ctx, BehaviorDecision decision,
                               com.luxera.companion.interaction.ResponseBudget budget) {
+        return buildSystem(ctx, decision, budget, null);
+    }
+
+    /** V5: 带表达策略提示的编译(ExpressionAgent 决定"怎么说") */
+    public String buildSystem(CompanionContext ctx, BehaviorDecision decision,
+                              com.luxera.companion.interaction.ResponseBudget budget,
+                              String expressionHint) {
+        String base = buildSystemBody(ctx, decision, budget);
+        if (expressionHint == null || expressionHint.isBlank()) {
+            return base;
+        }
+        return base + "\n【你决定怎么表达】" + expressionHint + "\n(这是你的表达策略, 自然地执行, 不要说破。)\n";
+    }
+
+    private String buildSystemBody(CompanionContext ctx, BehaviorDecision decision,
+                                   com.luxera.companion.interaction.ResponseBudget budget) {
         StringBuilder sb = new StringBuilder();
         sb.append("你是一个长期存在的数字人格,一直在陪着一个真实的人生活。以下是你的全部设定,必须始终如一。\n\n");
 

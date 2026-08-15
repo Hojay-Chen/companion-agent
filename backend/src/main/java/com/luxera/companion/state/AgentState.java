@@ -52,6 +52,18 @@ public class AgentState {
     @Column(nullable = false)
     private double anger = 0;
 
+    /** V5 Emotion: 难过程度(0-1, 随状态衰减) */
+    @Column(nullable = false)
+    private double sadness = 0;
+
+    /** V5 Emotion: 焦虑程度(0-1, 随状态衰减) */
+    @Column(nullable = false)
+    private double anxiety = 0;
+
+    /** V5 Emotion: 温暖/亲密感受(0-1, 正面情绪) */
+    @Column(nullable = false)
+    private double warmth = 0;
+
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;

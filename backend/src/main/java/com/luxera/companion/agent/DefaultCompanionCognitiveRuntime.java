@@ -71,6 +71,17 @@ public class DefaultCompanionCognitiveRuntime implements CompanionCognitiveRunti
                                               String userMessageId, String userText,
                                               List<Message> recentMessages, Consumer<String> onDelta,
                                               com.luxera.companion.interaction.InteractionDecision interaction) {
+        return processUserMessage(userId, companionId, conversationId, userMessageId, userText,
+                recentMessages, onDelta, interaction, null);
+    }
+
+    /** V5: 带表达策略提示的处理 */
+    @Override
+    public CognitiveResult processUserMessage(String userId, String companionId, String conversationId,
+                                              String userMessageId, String userText,
+                                              List<Message> recentMessages, Consumer<String> onDelta,
+                                              com.luxera.companion.interaction.InteractionDecision interaction,
+                                              String expressionHint) {
         // 1. 感知(质量优先: 同步 LLM 精炼, 失败回退启发式)
         PerceptionEngine.Perception heuristic = perceptionEngine.perceive(userText);
         PerceptionEngine.Perception perception = perceptionRefiner.refineNow(
@@ -88,10 +99,10 @@ public class DefaultCompanionCognitiveRuntime implements CompanionCognitiveRunti
         // 4. 行为策略: Runtime 决定"现在应该做什么"
         BehaviorDecision decision = behaviorPolicyEngine.decide(ctx);
 
-        // 5. 上下文编译: 压缩为 LLM 可消费的提示(V3: 带回复预算)
+        // 5. 上下文编译: 压缩为 LLM 可消费的提示(V3: 带回复预算; V5: 带表达策略)
         com.luxera.companion.interaction.ResponseBudget budget =
                 interaction != null ? interaction.budget : null;
-        String system = contextCompiler.buildSystem(ctx, decision, budget);
+        String system = contextCompiler.buildSystem(ctx, decision, budget, expressionHint);
 
         // 6. 组装消息
         List<LlmMessage> messages = new ArrayList<>();

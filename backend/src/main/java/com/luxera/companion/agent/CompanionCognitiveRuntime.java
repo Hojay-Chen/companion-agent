@@ -26,6 +26,16 @@ public interface CompanionCognitiveRuntime {
                 recentMessages, onDelta);
     }
 
+    /** V5: 带表达策略提示的处理 */
+    default CognitiveResult processUserMessage(String userId, String companionId, String conversationId,
+                                               String userMessageId, String userText,
+                                               List<Message> recentMessages, Consumer<String> onDelta,
+                                               com.luxera.companion.interaction.InteractionDecision interaction,
+                                               String expressionHint) {
+        return processUserMessage(userId, companionId, conversationId, userMessageId, userText,
+                recentMessages, onDelta, interaction);
+    }
+
     /** 无用户交互时的生命/思想/情绪/主动推进 */
     void tick(String companionId, LocalDateTime now);
 }
