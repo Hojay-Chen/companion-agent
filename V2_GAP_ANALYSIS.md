@@ -16,11 +16,13 @@
 
 ## 一、总览
 
+> 更新记录：2026-08-15 第二轮补齐（Git `f1213be`）——可解释性、BehaviorConstraints、模型用途路由、Imperfection、Experience 清理、记忆评分+类型、thoughts 收敛、@Deprecated、测试/评测脚本已补。
+
 | 类别 | 数量 | 说明 |
 |------|------|------|
-| ✅ 已完成 | 24 节 | 核心架构、生命内核、认知内核、自我/关系/反思/演化、验收场景 |
-| ◐ 部分实现 | 20 节 | 多为"机制简化版"（检索评分、主动公式、摩擦、生命周期清理等） |
-| ❌ 未实现 | 6 节 | 模型用途路由、BehaviorConstraints、可解释性、4类长期测试、Human-likeness评测、Imperfection |
+| ✅ 已完成 | 32 节 | 核心架构、生命内核、认知内核、四缺口、自我/关系/反思/演化、验收场景、可解释性、行为约束、模型路由、Imperfection、Experience清理、记忆评分、thoughts收敛 |
+| ◐ 部分实现 | 12 节 | 多为"机制简化版"（主动公式、摩擦、Life/Memory/Thought反思维度、Pattern归纳等）+ 测试/评测脚本为半自动 |
+| ❌ 未实现 | 0 节 | —（本轮已全部补齐） |
 | ⛔ 方案后置 | 1 节 | MCP/Tool 生态（§49 明确第一阶段不做） |
 
 ---
@@ -55,7 +57,7 @@
 |------|------|------|---------|
 | §11 Experience Layer | Message/Life/Thought/Emotion→Experience→Consolidation | ✅ | 核心链路完整 |
 | §12 Memory 2.0 | 类型扩展+检索评分升级+pgvector | ◐ | 见"记忆专项" |
-| §13 BehaviorPolicy | BehaviorDecision+Constraints | ◐ | `BehaviorDecision`+`BehaviorPolicyEngine`✅（规则驱动）；**`BehaviorConstraints` 类未建**；`proactive_candidate` 字段未实际填充 |
+| §13 BehaviorPolicy | BehaviorDecision+Constraints | ✅ | `BehaviorDecision`+`BehaviorPolicyEngine`+`BehaviorConstraints`✅；`proactive_candidate` 已填充（open_loop/thought） |
 | §14 ContextCompiler | 替代 PromptAssembler，上下文分层 | ✅ | `ContextCompiler` 已用；Runtime/Prompt 分层实现 |
 | §15 LLM 职责边界 | Runtime 决定，LLM 表达 | ✅ | 已贯彻 |
 | §16 用户消息链路 | 感知→上下文→策略→编译→生成→经历→异步学习 | ✅ | `processUserMessage` 完整链路 |
@@ -87,9 +89,9 @@
 
 | 方案 | 内容 | 状态 | 差距说明 |
 |------|------|------|---------|
-| §25 LLM Router 升级 | 模型用途路由（CHAT/PERCEPTION/THOUGHT/REFLECTION/...） | ❌ | **未实现**。当前所有任务共用 `deepseek-chat`；无"轻模型/强模型按用途切换" |
-| §30 API 演进 | /life /thoughts /open-loops /self /experiences + admin | ◐ | 大部分✅；`/admin/cognitive/tick` 为占位（实际由各 Job 推进） |
-| §31 UI 原则 | 用户看"她最近/经历/故事"，不暴露数值 | ◐ | 「她最近」抽屉✅；**偏差：/thoughts 暴露给普通用户**（方案要求不暴露 Internal Thought） |
+| §25 LLM Router 升级 | 模型用途路由（CHAT/PERCEPTION/THOUGHT/REFLECTION/...） | ✅ | 已实现：`app.llm.purpose.*` 按任务分模型/温度，`StructuredRequest.model` 覆盖；默认各任务同 chat-model，可配置不同模型 |
+| §30 API 演进 | /life /thoughts /open-loops /self /experiences + admin | ◐ | 大部分✅；`/admin/cognitive/tick` 为占位（实际由各 Job 推进）；/thoughts 已收敛为仅内部（见 §31） |
+| §31 UI 原则 | 用户看"她最近/经历/故事"，不暴露数值 | ✅ | 「她最近」抽屉✅；**/thoughts 已从用户 API 移除**（仅管理/内部可用） |
 | §32 "她今天在干嘛" | 来自 Life Runtime | ✅ | 已实现 |
 | §33 虚构人生边界 | SIMULATED/USER_SHARED/REAL_TOOL/SYSTEM 事件来源区分 | ◐ | 只用了 SIMULATED_LIFE_EVENT；其他来源未实际产生 |
 | §34 MCP/Tool 层 | Tool Runtime + Calendar/Weather/Search/McpTool | ⛔ | 方案 §49 明确第一阶段不做，**非缺口** |
@@ -102,18 +104,18 @@
 | §36 Self 与 Persona 关系 | 五者不混 | ✅ | Persona/Self/State/Thought/Life 分离清晰 |
 | §37 Relationship 与 Memory 关系 | Memory→Relationship→Narrative 三层 | ◐ | 叙事层✅；关系→记忆的显式连接未专门做 |
 | §38 Narrative 层 | RelationshipNarrative 版本化 | ✅ | 已实现 |
-| §41 数据生命周期 | Experience 7-30天清理；Thought/Episode 短周期 | ◐ | Thought(24h/72h)✅ Episode(消退)✅；**低价值 Experience 未清理（DISCARDED 残留表内）** |
+| §41 数据生命周期 | Experience 7-30天清理；Thought/Episode 短周期 | ✅ | Thought(24h/72h)✅ Episode(消退)✅；**低价值 Experience 每日清理（30 天前 DISCARDED）** |
 | §42 版本化 | Persona/SelfModel/RelationshipNarrative 带 version/change_reason | ✅ | 三对象全部版本化 |
-| §43 可解释性 | "为什么主动/为什么记住/为什么人格变"结构化解释 | ❌ | **未实现**（无 explain 端点） |
-| §46 Imperfection | 记不清/不知道/偶尔误解（需合理原因） | ❌ | **未实现专门机制**（现只有 AI 腔拦截，无主动合理的"不完美"表达） |
+| §43 可解释性 | "为什么主动/为什么记住/为什么人格变"结构化解释 | ✅ | **已实现** `/api/admin/explain/{proactive,memory,persona}` |
+| §46 Imperfection | 记不清/不知道/偶尔误解（需合理原因） | ◐ | **轻量实现**：ContextCompiler 对低置信/久远记忆标注"记不太清"，允许自然承认模糊 |
 
 ### 测试 / 评测 / 迁移
 
 | 方案 | 内容 | 状态 | 差距说明 |
 |------|------|------|---------|
-| §44 测试体系 | 4 类长期测试（Memory/Life/Relationship/Proactive Continuity） | ❌ | **未实现**（仅有 smoke 冒烟） |
-| §45 真实感评测 | Human-likeness Score（10 维度 1-5 分） | ❌ | **未实现** |
-| §47 迁移策略 | Strangler Pattern | ◐ | `CompanionRuntime` 已委托新内核✅；**旧 PromptAssembler/ContextBuilder 未标 @Deprecated** |
+| §44 测试体系 | 4 类长期测试（Memory/Life/Relationship/Proactive Continuity） | ◐ | **脚本已建** `scripts/longterm_test.sh`（4 类连续性冒烟）；尚未做成全自动持续回归 |
+| §45 真实感评测 | Human-likeness Score（10 维度 1-5 分） | ◐ | **脚本已建** `scripts/evaluate.sh`（10 维评分模板）；尚未接入自动打分 |
+| §47 迁移策略 | Strangler Pattern | ✅ | `CompanionRuntime` 已委托新内核✅；**旧 PromptAssembler/ContextBuilder 已标 @Deprecated** |
 | §48 开发顺序 | Phase 1-7 | ✅ | 全部完成 |
 | §49 第一阶段不做 | MCP/多端/Avatar/3D/语音/K8s/向量库 | ✅ | 已遵守 |
 | §50 验收场景 | A-E | ✅ | 全部通过 |
