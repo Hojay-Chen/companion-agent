@@ -19,6 +19,9 @@ public class RelationshipController {
     private final RelationshipService relationshipService;
     private final RelationshipEventRepository eventRepo;
     private final SharedExperienceRepository sharedRepo;
+    private final RelationshipThreadService threadService;
+    private final RelationshipNarrativeService narrativeService;
+    private final PromiseService promiseService;
     private final AgentStateService agentStateService;
     private final CompanionService companionService;
     private final CurrentUser currentUser;
@@ -26,12 +29,18 @@ public class RelationshipController {
     public RelationshipController(RelationshipService relationshipService,
                                   RelationshipEventRepository eventRepo,
                                   SharedExperienceRepository sharedRepo,
+                                  RelationshipThreadService threadService,
+                                  RelationshipNarrativeService narrativeService,
+                                  PromiseService promiseService,
                                   AgentStateService agentStateService,
                                   CompanionService companionService,
                                   CurrentUser currentUser) {
         this.relationshipService = relationshipService;
         this.eventRepo = eventRepo;
         this.sharedRepo = sharedRepo;
+        this.threadService = threadService;
+        this.narrativeService = narrativeService;
+        this.promiseService = promiseService;
         this.agentStateService = agentStateService;
         this.companionService = companionService;
         this.currentUser = currentUser;
@@ -65,5 +74,31 @@ public class RelationshipController {
         companionService.requireOwned(userId, companionId);
         Relationship r = relationshipService.require(userId, companionId);
         return sharedRepo.findByRelationshipIdOrderByOccurredAtDesc(r.getId());
+    }
+
+    // ── V2.0 Relationship 2.0 ───────────────────
+
+    @GetMapping("/threads")
+    public List<RelationshipThread> threads(@PathVariable String companionId) {
+        String userId = currentUser.requireUserId();
+        companionService.requireOwned(userId, companionId);
+        Relationship r = relationshipService.require(userId, companionId);
+        return threadService.activeThreads(r.getId());
+    }
+
+    @GetMapping("/narrative")
+    public RelationshipNarrative narrative(@PathVariable String companionId) {
+        String userId = currentUser.requireUserId();
+        companionService.requireOwned(userId, companionId);
+        Relationship r = relationshipService.require(userId, companionId);
+        return narrativeService.getOrCreate(r.getId());
+    }
+
+    @GetMapping("/promises")
+    public List<Promise> promises(@PathVariable String companionId) {
+        String userId = currentUser.requireUserId();
+        companionService.requireOwned(userId, companionId);
+        Relationship r = relationshipService.require(userId, companionId);
+        return promiseService.openPromises(r.getId());
     }
 }

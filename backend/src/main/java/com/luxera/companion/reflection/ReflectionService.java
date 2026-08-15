@@ -57,16 +57,26 @@ public class ReflectionService {
     private final MemoryService memoryService;
     private final UserModelService userModelService;
     private final ReflectionRecordRepository recordRepo;
+    private final com.luxera.companion.selfmodel.SelfModelExtractor selfModelExtractor;
+    private final com.luxera.companion.relationship.RelationshipService relationshipService;
+    private final com.luxera.companion.relationship.RelationshipNarrativeService narrativeService;
     private final LlmRouter llm;
 
     public ReflectionService(CompanionRepository companionRepo, MessageRepository messageRepo,
                              MemoryService memoryService, UserModelService userModelService,
-                             ReflectionRecordRepository recordRepo, LlmRouter llm) {
+                             ReflectionRecordRepository recordRepo,
+                             com.luxera.companion.selfmodel.SelfModelExtractor selfModelExtractor,
+                             com.luxera.companion.relationship.RelationshipService relationshipService,
+                             com.luxera.companion.relationship.RelationshipNarrativeService narrativeService,
+                             LlmRouter llm) {
         this.companionRepo = companionRepo;
         this.messageRepo = messageRepo;
         this.memoryService = memoryService;
         this.userModelService = userModelService;
         this.recordRepo = recordRepo;
+        this.selfModelExtractor = selfModelExtractor;
+        this.relationshipService = relationshipService;
+        this.narrativeService = narrativeService;
         this.llm = llm;
     }
 
@@ -166,7 +176,21 @@ public class ReflectionService {
             log.warn("每日反思 LLM 分析失败,使用兜底摘要: {}", e.getMessage());
             rec.setSummary("今天聊了 " + dayMessages.size() + " 条消息。");
         }
-        return recordRepo.save(rec);
+        ReflectionRecord saved = recordRepo.save(rec);
+        // Phase 2: 反思后同步自我模型("她此刻觉得自己怎样")
+        try {
+            StringBuilder selfCtx = new StringBuilder("今天经历:\n");
+            for (Message m : dayMessages) {
+                selfCtx.append(("user".equals(m.getSenderType()) ? "用户" : "我") + ": " + m.getContent()).append("\n");
+            }
+            if (rec.getInsights() != null && !rec.getInsights().isEmpty()) {
+                selfCtx.append("今天洞察: ").append(rec.getInsights()).append("\n");
+            }
+            selfModelExtractor.extractFromContext(c.getId(), selfCtx.toString());
+        } catch (Exception e) {
+            log.debug("自我模型同步失败: {}", e.getMessage());
+        }
+        return saved;
     }
 
     // ── 每周 ─────────────────────────────────
@@ -215,7 +239,20 @@ public class ReflectionService {
             log.warn("每周反思 LLM 分析失败,使用兜底摘要: {}", e.getMessage());
             rec.setSummary("这一周聊了 " + weekMessages.size() + " 条消息。");
         }
-        return recordRepo.save(rec);
+        ReflectionRecord saved = recordRepo.save(rec);
+        // Phase 3: 每周反思后更新关系叙事("我们之间发生过一个故事")
+        try {
+            var rel = relationshipService.find(userId, c.getId());
+            if (rel != null) {
+                StringBuilder ctx = new StringBuilder("这一周的关系变化: ");
+                if (rec.getRelationshipCandidates() != null) ctx.append(rec.getRelationshipCandidates());
+                ctx.append("\n这段对话: ").append(excerpt);
+                narrativeService.generateNarrative(rel.getId(), ctx.toString());
+            }
+        } catch (Exception e) {
+            log.debug("关系叙事同步失败: {}", e.getMessage());
+        }
+        return saved;
     }
 
     // ── 工具 ─────────────────────────────────

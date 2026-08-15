@@ -147,6 +147,10 @@ public class MockLlmGateway implements LlmGateway {
                 return "{\"summary\":\"这一周相处稳定,彼此更熟悉了。\",\"long_term_user_understanding\":[],\"behavioral_patterns\":[],\"relationship_changes\":[]}";
             case "persona-evolution":
                 return "{\"adjustments\":[],\"summary_note\":\"\"}";
+            case "self-model-extraction":
+                return "{\"facts\":[],\"preferences\":[],\"patterns\":[],\"beliefs\":[],\"goals\":[],\"concerns\":[],\"plans\":[],\"narrative\":\"最近日子平静而充实。\"}";
+            case "relationship-narrative":
+                return "{\"current_summary\":\"我们从陌生到熟悉,一起经历了一些安静的夜晚。\",\"important_chapters\":[],\"emotional_arc\":[\"初识的好奇\"],\"shared_identity\":\"共同的陪伴\"}";
             case "reminder-extraction":
                 return "{\"remind\":false,\"title\":\"\",\"content\":\"\",\"remind_at\":\"\",\"type\":\"user_set\"}";
             default:
