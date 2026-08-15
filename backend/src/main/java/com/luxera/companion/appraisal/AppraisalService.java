@@ -21,9 +21,10 @@ import java.util.regex.Pattern;
 public class AppraisalService {
 
     private static final Pattern APOLOGY = Pattern.compile("(对不起|抱歉|不好意思|我错了|是我不好|语气不好|不该那样)");
-    private static final Pattern ACCUSATION = Pattern.compile("(你怎么这么|你真|太冷漠|没意思|敷衍|烦死|讨厌你|不理我|不在乎)");
+    private static final Pattern ACCUSATION = Pattern.compile(
+            "(你怎么这么|你真|太冷漠|敷衍|烦死|讨厌你|不理我|不在乎|你.*说话.*没意思|跟你.*聊天.*没意思|你说话真没意思)");
     private static final Pattern AFFECTION = Pattern.compile("(想你|想你|好想|舍不得|在乎|喜欢你|爱你|依赖)");
-    private static final Pattern DISTRESS = Pattern.compile("(很难过|好难过|难受|痛苦|委屈|崩溃|撑不住|想哭|压力好大|好累)");
+    private static final Pattern DISTRESS = Pattern.compile("(很难过|好难过|难受|痛苦|委屈|崩溃|撑不住|撑不下去|想哭|压力好大|好累|没意义|不知道该怎么办)");
     private static final Pattern URGENT = Pattern.compile("(怎么办|救命|出事了|紧急|快来|帮帮我|在医院|出车祸)");
     private static final Pattern SHARE_JOY = Pattern.compile("(太好了|成功了|升职|拿到|通过了|中了|赢了|好开心)");
 

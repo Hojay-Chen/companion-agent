@@ -175,7 +175,13 @@ public class ContextCompiler {
             } else {
                 sb.append("本回合不需要分享你自己的事。");
             }
-            sb.append("如果合适且自然,你可以用 <split> 把回复拆成两条消息先后发(先一句短的,隔一会再补一句)。只在真正自然时用,不要滥用,通常一条就够。");
+            // V3 P3 Expression Loop: 深度内容允许"思维展开连发", 短回应保持一条
+            if (budget.maxSentences >= 3) {
+                sb.append("如果你有更深的感受或想法是一层层展开的,可以用 <split> 把回复拆成 2-3 条消息,"
+                        + "像你边想边说一样(先一句,隔一会再补一句)。不要为了拆而拆,只在真的有更多想表达时用。");
+            } else {
+                sb.append("本回合通常一条就够,不要拆分。");
+            }
             sb.append("\n");
         }
         return sb.toString();

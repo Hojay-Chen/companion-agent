@@ -2,13 +2,13 @@
 
 > **不是 Chatbot**：拥有稳定人格、连续人生、持续记忆，随时间与用户建立关系，并在合适的时候主动找你。
 >
-> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime + V4 Continuous Human Runtime。当前完成 **V2.0(44/44) + V3 P0/P1/P2 + V4 P0/P1**。
+> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime + V4 Continuous Human Runtime。当前完成 **V2.0(44/44) + V3 P0/P1/P2 + V4 P0/P1/P2/P3**。
 
 | 项 | 值 |
 |----|----|
-| 后端 | Spring Boot 2.7.18 · JDK 17 · 模块化单体（200+ 个 Java 类，24 个业务模块） |
+| 后端 | Spring Boot 2.7.18 · JDK 17 · 模块化单体（210+ 个 Java 类，25 个业务模块） |
 | 前端 | React 19 · Vite 8 · TypeScript(strict) · Tailwind CSS 3 · Zustand |
-| 数据库 | PostgreSQL 16 · 35 张表（含 pgvector） |
+| 数据库 | PostgreSQL 16 · 36 张表（含 pgvector） |
 | 大模型 | 统一 LLM 网关 → DeepSeek(deepseek-chat)，无 key 自动降级 Mock；模型用途路由可配 |
 | 线上 | `https://companion.luxera.top`（nginx + systemd jar :8081） |
 | 代码 | GitHub `Hojay-Chen/companion-agent` |
@@ -17,7 +17,7 @@
 ## 📖 目录
 
 - [8. 实体关系总览](#8-实体关系总览)
-- [9. 数据表详细设计（35 张表）](#9-数据表详细设计35-张表)
+- [9. 数据表详细设计（36 张表）](#9-数据表详细设计36-张表)
   - [9.1 用户与伴侣](#91-用户与伴侣)
   - [9.2 对话](#92-对话)
   - [9.3 记忆](#93-记忆)
@@ -128,6 +128,13 @@
   - [36.7 验收（`scripts/v4_check.sh` 全过）](#367-验收scriptsv4_checksh-全过)
   - [36.8 对原方案的两处工程修正](#368-对原方案的两处工程修正)
   - [36.9 完成度](#369-完成度)
+- [37. V4.1 P2/P3 — 完整 Human Behavior + Natural Expression（完成）](#37-v41-p2p3--完整-human-behavior--natural-expression完成)
+  - [37.1 Phone Runtime（她也有手机，手机不是总响的）](#371-phone-runtime她也有手机手机不是总响的)
+  - [37.2 Attention 动态场（忙 ≠ 永远不看手机）](#372-attention-动态场忙--永远不看手机)
+  - [37.3 负面情绪衰减 + Re-engagement](#373-负面情绪衰减--re-engagement)
+  - [37.4 Expression Loop（她的思想真的在展开）](#374-expression-loop她的思想真的在展开)
+  - [37.5 Playwright 实测发现的 3 个 Bug（已修复）](#375-playwright-实测发现的-3-个-bug已修复)
+  - [37.6 Playwright 实测通过（真实 UI）](#376-playwright-实测通过真实-ui)
 - [附录](#附录)
 ---
 
@@ -150,9 +157,9 @@ users 1─* companions 1─* conversations 1─* messages
 
 > 所有核心表强制携带 `user_id + companion_id`（多租户隔离，查询强制过滤）。
 
-## 9. 数据表详细设计（35 张表）
+## 9. 数据表详细设计（36 张表）
 
-> 原有 19 表 + V2.0 新增 10 表 + V3 新增 5 表 + V4 新增 1 表（`message_appraisals`）。
+> 原有 19 表 + V2.0 新增 10 表 + V3 新增 5 表 + V4 新增 2 表（`message_appraisals` / `companion_phone_states`）。
 
 ### 9.1 用户与伴侣
 
@@ -173,6 +180,7 @@ users 1─* companions 1─* conversations 1─* messages
 | `conversation_exchanges`(V3) | id, session_id, conversation_id, companion_id, user_id, started_at, ended_at, status(OPEN/CLOSED), message_count |
 | `conversation_boundaries`(V3) | id, conversation_id, companion_id, user_id, type(SOFT_END/HARD_END/PAUSE/BUSY/SLEEP/DISTRACTED/RETURN_LATER), reason, occurred_at |
 | `message_appraisals`(V4) | id, message_id, companion_id, emotional_impact, relationship_impact, urgency, warmth, hurt, anger, personal_relevance, context |
+| `companion_phone_states`(V4 P2) | id, companion_id, notification_mode(sound/vibrate/silent/dnd), sound_enabled, vibration_enabled, phone_location(hand/desk/bag/other_room), battery, screen_on, do_not_disturb, last_checked_at |
 
 ### 9.3 记忆
 
@@ -1040,9 +1048,65 @@ AVOID - REPLY > 0.15 → DEFER(已读不回)     ← V4 核心行为
 ```
 V4 P0: ✅ 持久 Event Stream / Message Lifecycle / read receipts
 V4 P1: ✅ Appraisal / Drives / DEFER / 已读不回
-V4 P2(下一轮): Phone Runtime(静音/勿扰/手机位置) / Attention 动态场
-V4 P3(再往后): Expression Loop(思维展开连发) / Wakeup Scheduler / Redis 事件总线
+V4 P2: ✅ Phone Runtime / Attention 动态场 / 负面情绪衰减 / Re-engagement   (§37)
+V4 P3: ✅ Expression Loop(思维展开连发)                                     (§37)
+后续: Wakeup Scheduler(advance) / Redis 事件总线(多实例)
 ```
+
+---
+
+## 37. V4.1 P2/P3 — 完整 Human Behavior + Natural Expression（完成）
+
+> 通过 **Playwright 真实 UI 实测**发现并修复了 3 个问题，P2/P3 全部落地。
+
+### 37.1 Phone Runtime（她也有手机，手机不是总响的）
+
+新增 `companion_phone_states` 表 + `PhoneStateService`（由作息确定性派生）：
+
+| 时段 | 通知模式 | 手机位置 |
+|------|----------|----------|
+| 上班 | silent | desk |
+| 开会/睡觉 | dnd(勿扰) | other_room |
+| 晚间/休闲 | vibrate/sound | hand |
+
+`notificationSalience` 决定"消息能否通过通知触达她"——**手机 dnd 且任务注意力高 → 消息保持未读(DELIVERED)**，她根本没看到。
+
+### 37.2 Attention 动态场（忙 ≠ 永远不看手机）
+
+`AttentionService` 计算 `noticeProbability / inspectProbability / inspectDelayMs`：
+- 由 活动注意力 + 精力(stress 代理疲劳) + 手机状态 + 消息显著性 共同决定
+- **长时间工作注意力下降 → 反而容易分心看手机**（V4 §七的"14:20→15:10 注意力递减"）
+- 已读延迟由 Attention 决定（忙/疲劳 → 慢），替代固定延迟
+
+### 37.3 负面情绪衰减 + Re-engagement
+
+- **负面情绪会随时间愈合**：`EmotionMaintenanceJob` 定时把 `hurt/anger` 衰减 0.08/次——冲突后的生气不会永远挂在脸上
+- **Re-engagement**：`ProactiveEngine` 新触发——hurt+anger 高且 1h 无互动 → 她主动低头缓和（"刚才是我不太对……"）
+
+### 37.4 Expression Loop（她的思想真的在展开）
+
+- 深度倾诉(DEEP + emotionalImpact≥0.5 + 回复>50字)时，即使 LLM 没输出 `<split>`，后端也在第二个句号处**兜底拆成两条**独立消息（先回应，隔 1s 补一句）
+- 前端每条独立气泡，配合 typing 三点动画（新增 `typing-dot`）
+- 效果：她"边想边说"，而不是一次给一段完整话
+
+### 37.5 Playwright 实测发现的 3 个 Bug（已修复）
+
+| 现象 | 根因 | 修复 |
+|------|------|------|
+| 深度倾诉"生活没意思" → 她已读不回(DEFER) | ACCUSATION 正则含"没意思"，把"生活没意义"误判成"指责她" | 收窄为正则 `你.*说话.*没意思` 等明确指向；"没意义/没意思"移入 DISTRESS |
+| 冲突后 hurt/anger 永久累积不愈合 | `decayAllNegative` 存在但从未调用 | `EmotionMaintenanceJob` 调用，每次 -0.08 |
+| Expression Loop 从不触发 | 纯靠 LLM 自然输出 `<split>`（低频） | 后端兜底：DEEP+情绪强+长回复按标点拆两条 |
+
+### 37.6 Playwright 实测通过（真实 UI）
+
+| 场景 | 结果 |
+|------|------|
+| 登录/注册/建伴/聊天 | ✅ |
+| read receipts：消息显示"已读" | ✅ |
+| 连发 2 条 → 一次回复 | ✅ |
+| 冲突消息"你怎么这么烦" → **已读不回**(DEFER) | ✅ |
+| 道歉"对不起" → **温和回复**(Appraisal 延续) | ✅ |
+| 深度倾诉 → 共情陪伴回复 | ✅ |
 
 ---
 
@@ -1051,4 +1115,4 @@ V4 P3(再往后): Expression Loop(思维展开连发) / Wakeup Scheduler / Redis
 - **设计依据**：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）
 - **代码**：GitHub `Hojay-Chen/companion-agent`
 - **运行**：`https://companion.luxera.top`（nginx + systemd jar :8081 + PostgreSQL :5432）
-- **规模**：后端 200+ 个 Java 类 · 前端 17 个源文件 · 数据库 35 张表
+- **规模**：后端 210+ 个 Java 类 · 前端 17 个源文件 · 数据库 36 张表

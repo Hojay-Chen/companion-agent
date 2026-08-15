@@ -30,8 +30,17 @@ export default function ChatBubble({
             : 'rounded-bl-md border border-cocoa-700 bg-cocoa-800 text-cocoa-100'
         }`}
       >
-        {content}
-        {streaming && <span className="marker-dot ml-1 animate-pulseSoft bg-ember-soft" />}
+        {streaming && !content ? (
+          // V4: 她正在输入(三点动画)
+          <span className="flex items-center gap-1 text-cocoa-400">
+            <span className="typing-dot" />
+            <span className="typing-dot" style={{ animationDelay: '0.15s' }} />
+            <span className="typing-dot" style={{ animationDelay: '0.3s' }} />
+          </span>
+        ) : (
+          content
+        )}
+        {streaming && content && <span className="marker-dot ml-1 animate-pulseSoft bg-ember-soft" />}
       </div>
       {(time || status) && (
         <span className="mt-1 px-1 text-[10px] text-cocoa-500">

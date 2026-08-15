@@ -96,6 +96,28 @@ public class AgentStateService {
         });
     }
 
+    /** V4: 全部伴侣的负面情绪衰减(定时任务调用, 负面情绪会随时间自然愈合) */
+    @Transactional
+    public void decayAllNegative(double rate) {
+        for (AgentState s : repo.findAll()) {
+            boolean changed = false;
+            if (s.getHurt() > 0.001) {
+                s.setHurt(clamp(s.getHurt() - rate));
+                changed = true;
+            }
+            if (s.getAnger() > 0.001) {
+                s.setAnger(clamp(s.getAnger() - rate));
+                changed = true;
+            }
+            if (changed) {
+                if (s.getHurt() < 0.15 && s.getAnger() < 0.15 && !"平静的".equals(s.getMood())) {
+                    s.setMood("平静的");
+                }
+                repo.save(s);
+            }
+        }
+    }
+
     private static String moodFor(String emotion) {
         switch (emotion == null ? "" : emotion) {
             case "sad": return "有点心疼";

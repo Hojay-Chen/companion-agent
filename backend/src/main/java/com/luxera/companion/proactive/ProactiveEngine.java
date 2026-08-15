@@ -57,6 +57,7 @@ public class ProactiveEngine {
     private final CompanionSchedule schedule;
     private final OpenLoopService openLoopService;
     private final ThoughtService thoughtService;
+    private final com.luxera.companion.state.AgentStateService agentStateService;
     private final com.luxera.companion.event.CompanionEventBus eventBus;
 
     public ProactiveEngine(AppProperties props, CompanionRepository companionRepo, PersonaService personaService,
@@ -65,6 +66,7 @@ public class ProactiveEngine {
                            NotificationService notificationService,
                            ReminderRepository reminderRepo, LlmRouter llm, CompanionSchedule schedule,
                            OpenLoopService openLoopService, ThoughtService thoughtService,
+                           com.luxera.companion.state.AgentStateService agentStateService,
                            com.luxera.companion.event.CompanionEventBus eventBus) {
         this.props = props;
         this.companionRepo = companionRepo;
@@ -79,6 +81,7 @@ public class ProactiveEngine {
         this.schedule = schedule;
         this.openLoopService = openLoopService;
         this.thoughtService = thoughtService;
+        this.agentStateService = agentStateService;
         this.eventBus = eventBus;
     }
 
@@ -136,6 +139,29 @@ public class ProactiveEngine {
                 log.info("[主动消息] {}: {} (trigger={})", c.getName(), decision.title(), decision.trigger());
             }
         }
+        return actions;
+    }
+
+    /** V4: 定向触发某伴侣的主动消息(测试实时推送用, 跳过 DND/间隔限制以便验证) */
+    @Transactional
+    public List<String> runForCompanion(String companionId) {
+        List<String> actions = new ArrayList<>();
+        LocalDateTime now = LocalDateTime.now();
+        companionRepo.findById(companionId).ifPresent(c -> {
+            if (c.getDeletedAt() != null) return;
+            String userId = c.getUserId();
+            Relationship rel = relationshipRepo.findByUserIdAndCompanionId(userId, c.getId()).orElse(null);
+            LocalDateTime lastInteraction = rel != null ? rel.getLastInteractionAt() : null;
+            ProactiveDecision decision = decide(c, now, lastInteraction, 0, true);
+            if (decision.act()) {
+                String content = draftMessage(c, decision.trigger(), decision.content(), now);
+                injectMessage(c.getId(), content);
+                actions.add(c.getName() + " → " + decision.title() + " (trigger=" + decision.trigger() + ")");
+                log.info("[主动消息-定向] {}: {} (trigger={})", c.getName(), decision.title(), decision.trigger());
+            } else {
+                actions.add(c.getName() + " → 无合适触发");
+            }
+        });
         return actions;
     }
 
@@ -251,6 +277,16 @@ public class ProactiveEngine {
                     "silence", 0.5 * factor, cost(now, lastInteraction, todayCount, responsive));
         }
 
+        // 触发 5.5: V4 Re-engagement(冲突后缓和) — 她受了伤/生气, 但过了一阵想缓和关系
+        var astate = agentStateService.get(c.getId());
+        if (astate != null && (astate.getHurt() + astate.getAnger()) > 0.5
+                && lastInteraction != null && lastInteraction.isBefore(now.minusHours(1))
+                && todayCount == 0) {
+            return ProactiveDecision.send("缓和关系",
+                    "刚才是我不太对……你现在还生气吗?",
+                    "reconnect", 0.55 * factor, cost(now, lastInteraction, todayCount, responsive));
+        }
+
         return ProactiveDecision.nothing();
     }
 
@@ -289,6 +325,7 @@ public class ProactiveEngine {
             case "evening_checkin": return "用户今天聊过但有一阵没动静了";
             case "follow_up_joy": return "用户前几天分享过好消息,想问问后续";
             case "silence": return "用户两天没联系你了";
+            case "reconnect": return "你们刚闹了点不愉快,你想主动缓和一下,先低个头";
             default: return "随口关心一下用户";
         }
     }

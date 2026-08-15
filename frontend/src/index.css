@@ -79,4 +79,19 @@
   .marker-dot {
     @apply inline-block h-1.5 w-1.5 rounded-full;
   }
+  /* V4: 她正在输入的三点动画 */
+  .typing-dot {
+    @apply inline-block h-1.5 w-1.5 rounded-full bg-ember-soft;
+    animation: typingBounce 1.2s ease-in-out infinite;
+  }
+  @keyframes typingBounce {
+    0%, 60%, 100% {
+      transform: translateY(0);
+      opacity: 0.4;
+    }
+    30% {
+      transform: translateY(-4px);
+      opacity: 1;
+    }
+  }
 }

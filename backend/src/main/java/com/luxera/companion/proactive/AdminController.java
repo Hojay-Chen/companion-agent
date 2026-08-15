@@ -10,6 +10,7 @@ import com.luxera.companion.reflection.ReflectionService;
 import com.luxera.companion.thought.ThoughtEngine;
 import com.luxera.companion.thought.ThoughtMaintenanceJob;
 import com.luxera.companion.tool.BirthdayService;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -75,6 +76,13 @@ public class AdminController {
     @PostMapping("/proactive/run")
     public Map<String, Object> runProactive() {
         List<String> actions = proactiveEngine.run();
+        return Map.of("actions", actions, "count", actions.size());
+    }
+
+    /** V4: 定向触发某伴侣的主动消息(测试实时推送) */
+    @PostMapping("/proactive/run/{companionId}")
+    public Map<String, Object> runProactiveFor(@PathVariable String companionId) {
+        List<String> actions = proactiveEngine.runForCompanion(companionId);
         return Map.of("actions", actions, "count", actions.size());
     }
 

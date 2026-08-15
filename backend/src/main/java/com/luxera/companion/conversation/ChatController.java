@@ -5,6 +5,7 @@ import com.luxera.companion.agent.CompanionSchedule;
 import com.luxera.companion.agent.PerceptionEngine;
 import com.luxera.companion.agent.WorkingMemory;
 import com.luxera.companion.appraisal.AppraisalService;
+import com.luxera.companion.attention.AttentionService;
 import com.luxera.companion.config.CurrentUser;
 import com.luxera.companion.event.CompanionEventBus;
 import com.luxera.companion.event.CompanionEventType;
@@ -13,6 +14,8 @@ import com.luxera.companion.interaction.InteractionDecision;
 import com.luxera.companion.interaction.InteractionPolicyEngine;
 import com.luxera.companion.interaction.ResponseLatencyEngine;
 import com.luxera.companion.persona.CompanionService;
+import com.luxera.companion.phone.PhoneState;
+import com.luxera.companion.phone.PhoneStateService;
 import com.luxera.companion.relationship.Relationship;
 import com.luxera.companion.relationship.RelationshipService;
 import com.luxera.companion.state.AgentState;
@@ -62,6 +65,8 @@ public class ChatController {
     private final RelationshipService relationshipService;
     private final UserChatStyleService userChatStyleService;
     private final AppraisalService appraisalService;
+    private final PhoneStateService phoneStateService;
+    private final AttentionService attentionService;
     private final CompanionEventBus eventBus;
     private final CompanionSchedule schedule;
     private final CurrentUser currentUser;
@@ -75,6 +80,7 @@ public class ChatController {
                           ResponseLatencyEngine latencyEngine, AgentStateService agentStateService,
                           AvailabilityService availabilityService, RelationshipService relationshipService,
                           UserChatStyleService userChatStyleService, AppraisalService appraisalService,
+                          PhoneStateService phoneStateService, AttentionService attentionService,
                           CompanionEventBus eventBus, CompanionSchedule schedule,
                           CurrentUser currentUser, TaskExecutor taskExecutor) {
         this.conversationService = conversationService;
@@ -90,6 +96,8 @@ public class ChatController {
         this.relationshipService = relationshipService;
         this.userChatStyleService = userChatStyleService;
         this.appraisalService = appraisalService;
+        this.phoneStateService = phoneStateService;
+        this.attentionService = attentionService;
         this.eventBus = eventBus;
         this.schedule = schedule;
         this.currentUser = currentUser;
@@ -212,7 +220,7 @@ public class ChatController {
             // 5. DEFER(V4 §十一/§十二): 已读但不回 —— 状态已变, 下次重新评估
             if (decision.action == InteractionAction.DEFER) {
                 for (Message um : userMsgs) {
-                    conversationService.updateDeliveryStatus(um.getId(), "READ");
+                    conversationService.updateDeliveryStatus(um.getId(), "DEFERRED");
                 }
                 eventBus.publish(companionId, CompanionEventType.MESSAGE_READ,
                         Map.of("messageId", last.getId()));
@@ -222,7 +230,7 @@ public class ChatController {
                 return;
             }
 
-            // 6. 正常回复路径: 已读延迟(availability 加成) → 标记 READ + 事件
+            // 6. 正常回复路径(V4 P2: Attention 决定已读节奏): 手机静音/勿扰 → 消息可能不被注意到
             List<Message> recent = conversationService.recentMessages(conversationId, 40);
             String kind = decision.action == InteractionAction.SHORT_ACK ? "SHORT_ACK" : "NORMAL";
             send(emitter, "meta", Map.of(
@@ -234,7 +242,21 @@ public class ChatController {
 
             var state = agentStateService.get(companionId);
             var availability = availabilityService.current(companionId, now, state);
-            long readDelay = (long) (600 + Math.random() * 900);
+            PhoneState phone = phoneStateService.current(companionId, now);
+            double salience = 0.3 + (appraisal != null ? appraisal.urgency() * 0.4 + appraisal.warmth() * 0.3 : 0);
+            AttentionService.Attention attention = attentionService.compute(
+                    schedule.activityFor(companionId, now), state, phone, salience);
+
+            // 若手机 dnd(睡觉/勿扰)且任务注意力高 → 消息未被注意到 → 保持 DELIVERED(未读), 本次不回
+            if (phone.isDoNotDisturb() && attention.noticeProbability() < 0.3) {
+                send(emitter, "done", Map.of("ignored", true, "action", "IGNORE",
+                        "reason", "她在休息/勿扰, 没注意到消息"));
+                emitter.complete();
+                return;
+            }
+
+            // Attention 决定的已读延迟(忙/疲劳 → 慢)
+            long readDelay = attention.inspectDelayMs();
             if (readDelay > 0) {
                 Thread.sleep(readDelay);
             }
@@ -266,9 +288,17 @@ public class ChatController {
                     last.getId(), decisionText, recent,
                     delta -> send(emitter, "token", Map.of("delta", delta)), decision);
 
-            // 9. ResponsePlan: 她也可以连发(低频, 用 <split> 分隔)
+            // 9. ResponsePlan / Expression Loop(V4 P3): 她也可以连发
+            //    深度倾诉时即使 LLM 没输出 <split>, 也按标点兜底拆成两条 —— "边想边说"的自然展开
             String reply = outcome.reply();
             List<String> chunks = splitReply(reply);
+            if (chunks.size() == 1 && decision.commitment.level >= com.luxera.companion.interaction.ResponseCommitment.DEEP.level
+                    && reply.length() > 50 && appraisal != null && appraisal.emotionalImpact() >= 0.5) {
+                String mid = splitAtPunctuation(reply);
+                if (mid != null) {
+                    chunks = List.of(mid, reply.substring(mid.length()).trim());
+                }
+            }
             String first = chunks.get(0).trim();
             if (!first.equals(outcome.rawReply().trim())) {
                 send(emitter, "replace", Map.of("content", first));
@@ -327,6 +357,21 @@ public class ChatController {
             if (!seg.isBlank()) out.add(seg);
         }
         return out;
+    }
+
+    /** 在第二个句号/感叹号处拆分(Expression Loop 兜底): 前半是完整回应, 后半是补充 */
+    private static String splitAtPunctuation(String text) {
+        int count = 0;
+        for (int i = 0; i < text.length() - 1; i++) {
+            char c = text.charAt(i);
+            if (c == '。' || c == '！' || c == '？' || c == '!') {
+                count++;
+                if (count >= 2 && i > 10 && i < text.length() - 3) {
+                    return text.substring(0, i + 1).trim();
+                }
+            }
+        }
+        return null;
     }
 
     /** 计算交互决策(V4: Appraisal + Drives 竞争) */
