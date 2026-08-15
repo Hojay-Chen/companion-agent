@@ -78,6 +78,37 @@ public class LlmRouter implements LlmGateway {
 
     @Override
     public StructuredResult structured(StructuredRequest request) {
-        return active.structured(request);
+        // 模型用途路由(设计文档 V2.0 §25): 按 task 指定模型/温度, 缺省用 chat-model
+        StructuredRequest routed = applyPurpose(request);
+        return active.structured(routed);
+    }
+
+    /** 按任务类型应用用途路由(感知/抽取用轻模型, 反思/演化用强模型等) */
+    private StructuredRequest applyPurpose(StructuredRequest request) {
+        String purposeKey = purposeFor(request.getTask());
+        AppProperties.Purpose purpose = props.getLlm().getPurpose().get(purposeKey);
+        if (purpose == null) return request;
+        return StructuredRequest.builder()
+                .system(request.getSystem())
+                .user(request.getUser())
+                .task(request.getTask())
+                .schemaHint(request.getSchemaHint())
+                .temperature(request.getTemperature() != null ? request.getTemperature() : purpose.getTemperature())
+                .model(purpose.getModel())
+                .build();
+    }
+
+    /** 任务 → 用途 key */
+    private static String purposeFor(String task) {
+        if (task == null) return "extraction";
+        return switch (task) {
+            case "perception" -> "perception";
+            case "daily-reflection", "weekly-reflection" -> "reflection";
+            case "persona-evolution" -> "persona_evolution";
+            case "persona-compile" -> "extraction";
+            case "memory-extraction", "user-model-extraction", "self-model-extraction",
+                 "relationship-narrative", "reminder-extraction" -> "extraction";
+            default -> "extraction";
+        };
     }
 }

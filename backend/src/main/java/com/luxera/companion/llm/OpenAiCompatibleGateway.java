@@ -103,7 +103,7 @@ public class OpenAiCompatibleGateway implements LlmGateway {
     @Override
     public StructuredResult structured(StructuredRequest request) {
         Map<String, Object> body = new HashMap<>();
-        body.put("model", props.getLlm().getChatModel());
+        body.put("model", request.getModel() != null ? request.getModel() : props.getLlm().getChatModel());
         body.put("temperature", request.getTemperature() != null ? request.getTemperature() : props.getLlm().getStructuredTemperature());
         body.put("max_tokens", props.getLlm().getMaxTokens());
         body.put("response_format", Map.of("type", "json_object"));

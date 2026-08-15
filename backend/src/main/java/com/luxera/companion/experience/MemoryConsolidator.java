@@ -88,8 +88,10 @@ public class MemoryConsolidator {
     private static String mapType(String experienceType) {
         if (experienceType == null) return "episodic";
         return switch (experienceType) {
-            case "RELATIONSHIP_EVENT", "SHARED_EXPERIENCE" -> "shared";
-            case "THOUGHT", "EMOTIONAL_EVENT" -> "semantic";
+            case "RELATIONSHIP_EVENT" -> "relational";
+            case "SHARED_EXPERIENCE" -> "shared";
+            case "THOUGHT" -> "self";
+            case "EMOTIONAL_EVENT" -> "semantic";
             default -> "episodic";   // CONVERSATION / LIFE_EVENT
         };
     }

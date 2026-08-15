@@ -94,13 +94,15 @@ public class ContextCompiler {
             }
         }
 
-        // 9. Memories
+        // 9. Memories(含 Imperfection 提示: 低置信/久远记忆允许"记不清")
         if (ctx.memories != null && !ctx.memories.isEmpty()) {
             sb.append("【你的记忆】自然地引用,不要生硬复述:\n");
             for (Memory m : ctx.memories) {
-                sb.append("- ").append(m.getContent()).append("\n");
+                boolean hazy = m.getConfidence() < 0.6
+                        || (m.getOccurredAt() != null && m.getOccurredAt().isBefore(ctx.now.minusDays(120)));
+                sb.append("- ").append(hazy ? "【记不太清】" : "").append(m.getContent()).append("\n");
             }
-            sb.append("\n");
+            sb.append("(标注'记不太清'的记忆,如果用户问起,可以自然地承认记得模糊,不必假装完全记得)\n\n");
         }
 
         // 10. Behavior Decision(Runtime 决定的行为意图)

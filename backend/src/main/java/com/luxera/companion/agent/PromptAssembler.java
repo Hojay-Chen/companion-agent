@@ -16,6 +16,7 @@ import java.util.List;
  * 上下文按优先级注入,不塞全量历史(设计文档 41/76-77 节)。
  */
 @Component
+@Deprecated // Strangler: 已由 ContextCompiler 取代
 public class PromptAssembler {
 
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("M月d日");

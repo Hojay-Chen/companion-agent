@@ -21,13 +21,17 @@ public class MemoryService {
     private final MemoryRepository repo;
     private final EmbeddingProvider embeddingProvider;
     private final MemoryAssociationService associationService;
+    private final com.luxera.companion.openloop.OpenLoopService openLoopService;
     private final AppProperties props;
 
     public MemoryService(MemoryRepository repo, EmbeddingProvider embeddingProvider,
-                         MemoryAssociationService associationService, AppProperties props) {
+                         MemoryAssociationService associationService,
+                         com.luxera.companion.openloop.OpenLoopService openLoopService,
+                         AppProperties props) {
         this.repo = repo;
         this.embeddingProvider = embeddingProvider;
         this.associationService = associationService;
+        this.openLoopService = openLoopService;
         this.props = props;
     }
 
@@ -64,7 +68,8 @@ public class MemoryService {
     }
 
     /**
-     * 检索记忆: 结构化候选(关键词/类型) + 可插拔向量检索 → 按检索强度排序 → 强化。
+     * 检索记忆(设计文档 V2.0 §12.2): 结构化候选 + 可插拔向量检索 →
+     * 评分 = 检索强度 × narrative_relevance × open_loop_relevance → 强化。
      */
     @Transactional
     public List<Memory> retrieve(String userId, String companionId, String query, int limit) {
@@ -74,19 +79,37 @@ public class MemoryService {
         } else {
             candidates.addAll(repo.search(userId, companionId, null));
         }
-        // 向量检索补充(Noop 时为空)
+        // 向量检索补充(未配 embedding key 时为空)
         for (String id : embeddingProvider.searchSimilar(userId, companionId, query, 20)) {
             repo.findById(id).ifPresent(m -> {
                 if (!candidates.contains(m)) candidates.add(m);
             });
         }
 
+        // 未完成事项关键词(open_loop_relevance 因子)
+        List<String> loopKeywords = openLoopService.activeLoops(companionId).stream()
+                .map(l -> l.getTitle() == null ? "" : l.getTitle())
+                .toList();
+
         LocalDateTime now = LocalDateTime.now();
         var ranked = candidates.stream()
                 .map(m -> {
                     LocalDateTime base = m.getOccurredAt() != null ? m.getOccurredAt() : m.getCreatedAt();
                     int days = (int) ChronoUnit.DAYS.between(base, now);
-                    return new AbstractMap.SimpleEntry<>(m, m.retrievalStrength(days));
+                    double strength = m.retrievalStrength(days);
+                    // narrative_relevance: 有叙事角色的记忆(如里程碑/梗)略加权
+                    double narrativeFactor = m.getNarrativeRole() != null ? 1.2 : 1.0;
+                    // open_loop_relevance: 内容与未了结事项相关的记忆加权(她会想起待办)
+                    double loopFactor = 1.0;
+                    if (!loopKeywords.isEmpty()) {
+                        for (String kw : loopKeywords) {
+                            if (!kw.isBlank() && m.getContent() != null && m.getContent().contains(kw)) {
+                                loopFactor = 1.4;
+                                break;
+                            }
+                        }
+                    }
+                    return new AbstractMap.SimpleEntry<>(m, strength * narrativeFactor * loopFactor);
                 })
                 .sorted((a, b) -> Double.compare(b.getValue(), a.getValue()))
                 .toList();

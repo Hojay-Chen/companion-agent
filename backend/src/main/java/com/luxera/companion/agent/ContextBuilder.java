@@ -18,6 +18,7 @@ import java.util.List;
 
 /** 上下文构建: 按优先级把数据库内容聚合成运行时上下文(设计文档 40-41 节) */
 @Component
+@Deprecated // Strangler: 已由 ContextLoader 取代
 public class ContextBuilder {
 
     private final CompanionService companionService;

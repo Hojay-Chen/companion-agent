@@ -8,8 +8,12 @@ import lombok.Getter;
 public class StructuredRequest {
     private final String system;
     private final String user;
-    /** 任务类型标识,用于 Mock 网关返回合理 JSON: persona-compile | memory-extraction | user-model-extraction | daily-reflection | conversation-summary */
+    /** 任务类型标识: persona-compile | perception | memory-extraction | user-model-extraction |
+     *  daily-reflection | weekly-reflection | persona-evolution | reminder-extraction |
+     *  self-model-extraction | relationship-narrative */
     private final String task;
     private final String schemaHint;
     private final Double temperature;
+    /** 模型覆盖(由 LlmRouter 按用途路由填充, 缺省用 chat-model) */
+    private final String model;
 }

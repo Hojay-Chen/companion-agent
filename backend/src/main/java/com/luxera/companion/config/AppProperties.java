@@ -41,6 +41,14 @@ public class AppProperties {
         private int timeoutSeconds = 120;
         /** api-key 为空时自动降级为 mock */
         private boolean mockFallback = true;
+        /** 模型用途路由(设计文档 V2.0 §25): 按任务类型可分别指定模型/温度, 缺省用 chat-model */
+        private Map<String, Purpose> purpose = new java.util.HashMap<>();
+    }
+
+    @Data
+    public static class Purpose {
+        private String model;
+        private Double temperature;
     }
 
     @Data
