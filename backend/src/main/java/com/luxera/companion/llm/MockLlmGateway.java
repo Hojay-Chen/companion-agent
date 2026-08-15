@@ -151,6 +151,10 @@ public class MockLlmGateway implements LlmGateway {
                 return "{\"facts\":[],\"preferences\":[],\"patterns\":[],\"beliefs\":[],\"goals\":[],\"concerns\":[],\"plans\":[],\"narrative\":\"最近日子平静而充实。\"}";
             case "relationship-narrative":
                 return "{\"current_summary\":\"我们从陌生到熟悉,一起经历了一些安静的夜晚。\",\"important_chapters\":[],\"emotional_arc\":[\"初识的好奇\"],\"shared_identity\":\"共同的陪伴\"}";
+            case "open-loop-extraction":
+                return "{\"open_loops\":[]}";
+            case "human-likeness-evaluation":
+                return "{\"score\":4.0,\"dimensions\":{\"Continuity\":4,\"Consistency\":4,\"Initiative\":4,\"ContextualRelevance\":4,\"EmotionalCoherence\":4,\"SelfConsistency\":4,\"RelationshipCoherence\":4,\"MemoryNaturalness\":4,\"TemporalCoherence\":4,\"Imperfection\":4}}";
             case "reminder-extraction":
                 return "{\"remind\":false,\"title\":\"\",\"content\":\"\",\"remind_at\":\"\",\"type\":\"user_set\"}";
             default:

@@ -35,12 +35,14 @@ public class AdminController {
     private final ThoughtMaintenanceJob thoughtMaintenanceJob;
     private final ThoughtEngine thoughtEngine;
     private final OpenLoopService openLoopService;
+    private final com.luxera.companion.agent.CompanionCognitiveRuntime cognitiveRuntime;
 
     public AdminController(ReflectionService reflectionService, ProactiveEngine proactiveEngine,
                            BirthdayService birthdayService, PersonaEvolutionService personaEvolutionService,
                            LifeRuntime lifeRuntime, CompanionRepository companionRepo,
                            ExperienceProcessor experienceProcessor, ThoughtMaintenanceJob thoughtMaintenanceJob,
-                           ThoughtEngine thoughtEngine, OpenLoopService openLoopService) {
+                           ThoughtEngine thoughtEngine, OpenLoopService openLoopService,
+                           com.luxera.companion.agent.CompanionCognitiveRuntime cognitiveRuntime) {
         this.reflectionService = reflectionService;
         this.proactiveEngine = proactiveEngine;
         this.birthdayService = birthdayService;
@@ -51,6 +53,7 @@ public class AdminController {
         this.thoughtMaintenanceJob = thoughtMaintenanceJob;
         this.thoughtEngine = thoughtEngine;
         this.openLoopService = openLoopService;
+        this.cognitiveRuntime = cognitiveRuntime;
     }
 
     @PostMapping("/reflection/run")
@@ -134,7 +137,13 @@ public class AdminController {
 
     @PostMapping("/cognitive/tick")
     public Map<String, Object> cognitiveTick() {
-        // 统一内核 tick(Phase4 后接入 CompanionCognitiveRuntime.tick)
-        return Map.of("ok", true, "note", "由 LifeTick/Thought/Emotion/OpenLoop Job 各自推进");
+        // 统一内核 tick: Life→Emotion→Thought→OpenLoop→Proactive(设计文档 V2.0 §17)
+        int ticked = 0;
+        for (Companion c : companionRepo.findAll()) {
+            if (c.getDeletedAt() != null) continue;
+            cognitiveRuntime.tick(c.getId(), LocalDateTime.now());
+            ticked++;
+        }
+        return Map.of("ticked", ticked);
     }
 }

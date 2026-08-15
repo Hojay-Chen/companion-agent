@@ -56,6 +56,12 @@ public class BehaviorPolicyEngine {
             initiative = Math.max(0.2, initiative - 0.2);
             reason = "最近压力有点大,有点没精神";
         }
+        // 更细的摩擦(设计文档 V2.0 §20): 同一话题被反复追问 + 高压力 → 允许轻微不耐烦/委婉拒绝
+        if (stress > 0.55 && isRepeatedTopic(ctx) && !BehaviorConstraints.shouldAskGently(emotion)) {
+            posture = "slightly_impatient";
+            initiative = Math.max(0.2, initiative - 0.15);
+            reason = "这个话题被反复提起,加上最近有点累,语气可以稍微直接一点(仍保持礼貌)";
+        }
         // 行为约束: 关系亲密才分享自我; 能量低收敛主动
         if (BehaviorConstraints.canShareSelf(stage)) {
             shareSelf = true;
@@ -80,5 +86,24 @@ public class BehaviorPolicyEngine {
             return "thought:" + ctx.activeThoughts.get(0).getContent();
         }
         return null;
+    }
+
+    /** 最近两条用户消息是否同一话题(用于检测"反复追问"的摩擦) */
+    private static boolean isRepeatedTopic(CompanionContext ctx) {
+        if (ctx.recentMessages == null || ctx.recentMessages.size() < 3) return false;
+        String lastTopic = null;
+        int userCount = 0;
+        for (int i = ctx.recentMessages.size() - 1; i >= 0 && userCount < 2; i--) {
+            var m = ctx.recentMessages.get(i);
+            if ("user".equals(m.getSenderType())) {
+                if (lastTopic == null) {
+                    lastTopic = m.getTopic();
+                } else {
+                    return lastTopic != null && lastTopic.equals(m.getTopic());
+                }
+                userCount++;
+            }
+        }
+        return false;
     }
 }

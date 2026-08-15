@@ -59,6 +59,15 @@ public class ReflectionRecord {
     @Column(name = "relationship_candidates", columnDefinition = "text")
     private List<Object> relationshipCandidates = new ArrayList<>();
 
+    /** 设计文档 V2.0 §39: 伴侣自我洞察 / 用户生活模式 */
+    @Convert(converter = ObjectListConverter.class)
+    @Column(name = "self_insights", columnDefinition = "text")
+    private List<Object> selfInsights = new ArrayList<>();
+
+    @Convert(converter = ObjectListConverter.class)
+    @Column(name = "life_patterns", columnDefinition = "text")
+    private List<Object> lifePatterns = new ArrayList<>();
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

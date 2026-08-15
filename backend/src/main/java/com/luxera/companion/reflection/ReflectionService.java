@@ -30,14 +30,18 @@ import java.util.stream.Collectors;
 public class ReflectionService {
 
     private static final String DAILY_SYSTEM = """
-            你是反思引擎,回顾用户与数字伴侣今天的对话,产出对关系的深度洞察。
+            你是反思引擎,回顾用户与数字伴侣今天的对话,产出多维度洞察(设计文档 V2.0 §39)。
             输出严格 JSON,不要输出其他内容:
             {
               "summary": "今天相处的总结(2-3句)",
               "insights": ["对今天关系的洞察,2-4条"],
               "memory_candidates": [{"content":"值得长期记住的事","type":"episodic|semantic|shared","importance":0-1}],
               "user_insights": ["对用户的新认识,1-3条"],
-              "relationship_candidates": ["关系变化的观察,1-3条"]
+              "relationship_candidates": ["关系变化的观察,1-3条"],
+              "self_insights": ["她(伴侣)自己今天的状态/变化,1-2条"],
+              "life_patterns": ["用户今天的生活/作息模式,1-2条"],
+              "memory_insights": ["今天哪些记忆被强化/值得重新唤起,1-2条"],
+              "thought_insights": ["她今天可能在想什么,1-2条"]
             }
             只基于提供的对话,不要编造。""";
 
@@ -48,7 +52,8 @@ public class ReflectionService {
               "summary": "这一周的相处总结(2-3句)",
               "long_term_user_understanding": ["对用户稳定的长期认识,3-6条,必须是这周对话能支撑的"],
               "behavioral_patterns": [{"pattern":"user_often_works_late","description":"行为模式描述","confidence":0-1}],
-              "relationship_changes": ["关系在这周的变化,1-3条"]
+              "relationship_changes": ["关系在这周的变化,1-3条"],
+              "self_evolution": ["她(伴侣)自己这一周的变化,1-2条"]
             }
             只基于提供的对话,不要编造。""";
 
@@ -58,6 +63,9 @@ public class ReflectionService {
     private final UserModelService userModelService;
     private final ReflectionRecordRepository recordRepo;
     private final com.luxera.companion.selfmodel.SelfModelExtractor selfModelExtractor;
+    private final com.luxera.companion.selfmodel.SelfModelService selfModelService;
+    private final com.luxera.companion.thought.ThoughtEngine thoughtEngine;
+    private final com.luxera.companion.agent.ContextLoader contextLoader;
     private final com.luxera.companion.relationship.RelationshipService relationshipService;
     private final com.luxera.companion.relationship.RelationshipNarrativeService narrativeService;
     private final LlmRouter llm;
@@ -66,6 +74,9 @@ public class ReflectionService {
                              MemoryService memoryService, UserModelService userModelService,
                              ReflectionRecordRepository recordRepo,
                              com.luxera.companion.selfmodel.SelfModelExtractor selfModelExtractor,
+                             com.luxera.companion.selfmodel.SelfModelService selfModelService,
+                             com.luxera.companion.thought.ThoughtEngine thoughtEngine,
+                             com.luxera.companion.agent.ContextLoader contextLoader,
                              com.luxera.companion.relationship.RelationshipService relationshipService,
                              com.luxera.companion.relationship.RelationshipNarrativeService narrativeService,
                              LlmRouter llm) {
@@ -75,6 +86,9 @@ public class ReflectionService {
         this.userModelService = userModelService;
         this.recordRepo = recordRepo;
         this.selfModelExtractor = selfModelExtractor;
+        this.selfModelService = selfModelService;
+        this.thoughtEngine = thoughtEngine;
+        this.contextLoader = contextLoader;
         this.relationshipService = relationshipService;
         this.narrativeService = narrativeService;
         this.llm = llm;
@@ -157,6 +171,13 @@ public class ReflectionService {
             rec.setInsights(texts(root.path("insights")));
             rec.setUserModelCandidates(texts(root.path("user_insights")));
             rec.setRelationshipCandidates(texts(root.path("relationship_candidates")));
+            // V2.0 §39 多维度: 自我洞察 / 生活模式 / 记忆洞察 / 想法洞察
+            rec.setSelfInsights(texts(root.path("self_insights")));
+            rec.setLifePatterns(texts(root.path("life_patterns")));
+            List<Object> allInsights = new ArrayList<>(rec.getInsights());
+            for (Object s : texts(root.path("memory_insights"))) allInsights.add("记忆: " + s);
+            for (Object t : texts(root.path("thought_insights"))) allInsights.add("想法: " + t);
+            rec.setInsights(allInsights);
 
             // 记忆候选入库
             List<Memory> candidates = new ArrayList<>();
@@ -177,16 +198,17 @@ public class ReflectionService {
             rec.setSummary("今天聊了 " + dayMessages.size() + " 条消息。");
         }
         ReflectionRecord saved = recordRepo.save(rec);
-        // Phase 2: 反思后同步自我模型("她此刻觉得自己怎样")
+        // V2.0 §8: 反思后用 LLM 补抽未了结事项
         try {
-            StringBuilder selfCtx = new StringBuilder("今天经历:\n");
-            for (Message m : dayMessages) {
-                selfCtx.append(("user".equals(m.getSenderType()) ? "用户" : "我") + ": " + m.getContent()).append("\n");
-            }
-            if (rec.getInsights() != null && !rec.getInsights().isEmpty()) {
-                selfCtx.append("今天洞察: ").append(rec.getInsights()).append("\n");
-            }
-            selfModelExtractor.extractFromContext(c.getId(), selfCtx.toString());
+            thoughtEngine.extractOpenLoopsFromDay(c.getId(), excerpt);
+        } catch (Exception e) {
+            log.debug("OpenLoop 抽取失败: {}", e.getMessage());
+        }
+        // Phase 2 + §29: 反思后同步自我模型(用 LearningContext)
+        try {
+            java.util.List<String> expSummary = java.util.List.of(excerpt);
+            com.luxera.companion.agent.LearningContext learning = contextLoader.loadLearning(userId, c.getId(), expSummary);
+            selfModelExtractor.extractFromContext(c.getId(), learning.toLearningText());
         } catch (Exception e) {
             log.debug("自我模型同步失败: {}", e.getMessage());
         }
@@ -235,6 +257,16 @@ public class ReflectionService {
                 userModelService.savePattern(userId, c.getId(), p);
             }
             rec.setRelationshipCandidates(texts(root.path("relationship_changes")));
+            // V2.0 §35/§39: 她自己的变化 → 归入自我模式(Pattern 归纳)
+            List<Object> selfEvolution = texts(root.path("self_evolution"));
+            rec.setSelfInsights(selfEvolution);
+            if (!selfEvolution.isEmpty()) {
+                List<String> patterns = selfEvolution.stream().map(String::valueOf).toList();
+                selfModelService.update(c.getId(),
+                        new com.luxera.companion.selfmodel.SelfModelService.SelfModelUpdate(
+                                null, null, patterns, null, null, null, null, null),
+                        "每周反思: 自我模式归纳");
+            }
         } catch (Exception e) {
             log.warn("每周反思 LLM 分析失败,使用兜底摘要: {}", e.getMessage());
             rec.setSummary("这一周聊了 " + weekMessages.size() + " 条消息。");

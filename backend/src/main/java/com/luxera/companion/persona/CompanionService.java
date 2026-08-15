@@ -109,6 +109,22 @@ public class CompanionService {
         return personaService.history(companionId);
     }
 
+    /** 用户分享的真实生活事件(设计文档 V2.0 §33: USER_SHARED_EVENT 来源) */
+    @Transactional
+    public void recordUserSharedLifeEvent(String companionId, String title, String description) {
+        if (title == null || title.isBlank()) return;
+        LifeEvent ev = new LifeEvent();
+        ev.setCompanionId(companionId);
+        ev.setType("user_shared");
+        ev.setTitle(title);
+        ev.setDescription(description);
+        ev.setStartTime(LocalDate.now());
+        ev.setImportance(0.55);
+        ev.setEmotionalSignificance(0.5);
+        ev.setSource("USER_SHARED_EVENT");
+        lifeEvents.save(ev);
+    }
+
     public List<LifeEvent> listLifeEvents(String companionId) {
         return lifeEvents.findByCompanionIdOrderByStartTimeAsc(companionId);
     }

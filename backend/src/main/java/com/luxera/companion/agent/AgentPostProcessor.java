@@ -36,13 +36,16 @@ public class AgentPostProcessor {
     private final RelationshipService relationshipService;
     private final RelationshipThreadService threadService;
     private final PromiseService promiseService;
+    private final com.luxera.companion.persona.CompanionService companionService;
     private final AgentStateService agentStateService;
 
     public AgentPostProcessor(ExperienceProcessor experienceProcessor, ThoughtEngine thoughtEngine,
                               EmotionEngine emotionEngine, MemoryExtractor memoryExtractor,
                               UserModelExtractor userModelExtractor, RelationshipEngine relationshipEngine,
                               RelationshipService relationshipService, RelationshipThreadService threadService,
-                              PromiseService promiseService, AgentStateService agentStateService) {
+                              PromiseService promiseService,
+                              com.luxera.companion.persona.CompanionService companionService,
+                              AgentStateService agentStateService) {
         this.experienceProcessor = experienceProcessor;
         this.thoughtEngine = thoughtEngine;
         this.emotionEngine = emotionEngine;
@@ -52,6 +55,7 @@ public class AgentPostProcessor {
         this.relationshipService = relationshipService;
         this.threadService = threadService;
         this.promiseService = promiseService;
+        this.companionService = companionService;
         this.agentStateService = agentStateService;
     }
 
@@ -72,6 +76,9 @@ public class AgentPostProcessor {
             // 3. 情绪事件(设计文档 V2.0 §7)
             emotionEngine.fromConversation(companionId, perception.emotion(), perception.intent(), userText);
 
+            // 3.5 用户分享真实生活事件 → 记入人生时间线(设计文档 V2.0 §33 USER_SHARED_EVENT)
+            maybeRecordUserSharedEvent(companionId, userText);
+
             // 4. 关系 2.0: 承诺识别 + 关系线索更新
             Relationship rel = relationshipService.find(userId, companionId);
             if (rel != null) {
@@ -91,6 +98,10 @@ public class AgentPostProcessor {
             relationshipEngine.onMessage(userId, companionId, LocalDateTime.now(), perception.emotion(), perception.intent());
             if ("correction".equals(perception.intent())) {
                 relationshipEngine.onUserCorrected(userId, companionId);
+                relationshipEngine.onRepair(userId, companionId);
+            }
+            if ("angry".equals(perception.emotion()) || "frustrated".equals(perception.emotion())) {
+                relationshipEngine.onConflict(userId, companionId, userText);
             }
             agentStateService.onMessage(companionId, perception.emotion());
         } catch (Exception e) {
@@ -104,6 +115,23 @@ public class AgentPostProcessor {
             if (text.contains(kw)) return kw;
         }
         return null;
+    }
+
+    /** 识别用户分享的真实生活事件(搬家/换工作/养猫等) */
+    private void maybeRecordUserSharedEvent(String companionId, String userText) {
+        if (userText == null || userText.isBlank()) return;
+        for (String[] pat : new String[][]{
+                {"搬家", "我搬家"}, {"换工作", "我换了工作"}, {"辞职", "我辞职"}, {"入职", "我入职"},
+                {"养了", "我养了"}, {"买了", "我买了"}, {"报名", "我报名"}, {"恋爱", "我恋爱"},
+                {"分手", "我分手"}, {"结婚", "我结婚"}, {"健身", "我开始健身"}, {"回国", "我回国"}
+        }) {
+            if (userText.contains(pat[1])) {
+                companionService.recordUserSharedLifeEvent(companionId,
+                        "用户" + pat[0],
+                        userText.length() > 60 ? userText.substring(0, 60) : userText);
+                return;
+            }
+        }
     }
 
     private static double intentImportance(String intent) {

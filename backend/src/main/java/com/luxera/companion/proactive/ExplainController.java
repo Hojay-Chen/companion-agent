@@ -37,16 +37,42 @@ public class ExplainController {
     private final CompanionSchedule schedule;
     private final MemoryService memoryService;
     private final PersonaVersionRepository personaVersionRepo;
+    private final com.luxera.companion.llm.LlmRouter llm;
 
     public ExplainController(CompanionRepository companionRepo, OpenLoopService openLoopService,
                              ThoughtService thoughtService, CompanionSchedule schedule,
-                             MemoryService memoryService, PersonaVersionRepository personaVersionRepo) {
+                             MemoryService memoryService, PersonaVersionRepository personaVersionRepo,
+                             com.luxera.companion.llm.LlmRouter llm) {
         this.companionRepo = companionRepo;
         this.openLoopService = openLoopService;
         this.thoughtService = thoughtService;
         this.schedule = schedule;
         this.memoryService = memoryService;
         this.personaVersionRepo = personaVersionRepo;
+        this.llm = llm;
+    }
+
+    private static final String EVAL_SYSTEM = """
+            你是真人感评测器。对一段数字伴侣的回复, 按 10 个维度各打 1-5 分。
+            输出严格 JSON:
+            {"score": 0-5的总平均分, "dimensions": {"Continuity":1-5,"Consistency":1-5,"Initiative":1-5,"ContextualRelevance":1-5,"EmotionalCoherence":1-5,"SelfConsistency":1-5,"RelationshipCoherence":1-5,"MemoryNaturalness":1-5,"TemporalCoherence":1-5,"Imperfection":1-5}}
+            打分标准: 5=非常像真人, 1=机械。""";
+
+    /** Human-likeness 自动评测(设计文档 V2.0 §45) */
+    @org.springframework.web.bind.annotation.PostMapping("/evaluate")
+    public Map<String, Object> evaluate(@org.springframework.web.bind.annotation.RequestBody Map<String, String> body) {
+        String reply = body.get("reply");
+        var res = llm.structured(com.luxera.companion.llm.StructuredRequest.builder()
+                .task("human-likeness-evaluation")
+                .system(EVAL_SYSTEM)
+                .user(reply == null ? "" : reply)
+                .temperature(0.2)
+                .build());
+        com.fasterxml.jackson.databind.JsonNode root = res.getJson();
+        return Map.of(
+                "score", root.path("score").asDouble(0),
+                "dimensions", root.path("dimensions")
+        );
     }
 
     /** 为什么现在(会/不会)主动联系 */

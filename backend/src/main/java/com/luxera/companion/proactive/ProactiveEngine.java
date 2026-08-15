@@ -143,6 +143,8 @@ public class ProactiveEngine {
         Relationship rel = relationshipRepo.findByUserIdAndCompanionId(userId, c.getId()).orElse(null);
         // 按作息调节主动意愿: 忙碌时低, 休闲时高
         double factor = schedule.proactiveFactor(c.getId(), now);
+        // 关系相关性(设计文档 V2.0 §18): 越熟悉/越亲密, 主动联系的价值越高
+        double relBonus = relationshipBonus(rel);
 
         // 触发 0: OpenLoop 驱动(未完成事项, 最真实) — "面试怎么样了"
         // 只在预期解决时间临近/已过(±3h)才问, 提前不打扰
@@ -153,7 +155,9 @@ public class ProactiveEngine {
                 .max(Comparator.comparingDouble(OpenLoop::getImportance))
                 .orElse(null);
         if (bestLoop != null && !loopFollowedUp(c.getId(), bestLoop.getTitle())) {
-            double value = 0.68 * factor;
+            double timeliness = bestLoop.getExpectedResolutionAt() != null
+                    && bestLoop.getExpectedResolutionAt().isBefore(now) ? 0.12 : 0.06;
+            double value = 0.68 * factor + relBonus + timeliness;
             double cst = cost(now, lastInteraction, todayCount, responsive);
             if (value > cst) {
                 return ProactiveDecision.send("未了结的事",
@@ -174,7 +178,7 @@ public class ProactiveEngine {
             if (isPremature(bestThought, now)) {
                 thoughtService.suppress(bestThought.getId());
             } else {
-                double value = (0.35 + bestThought.getStrength() * 0.4) * factor;
+                double value = (0.35 + bestThought.getStrength() * 0.4) * factor + relBonus;
                 double cst = cost(now, lastInteraction, todayCount, responsive);
                 if (value > cst) {
                     thoughtService.act(bestThought.getId());
@@ -322,6 +326,16 @@ public class ProactiveEngine {
                 .map(l -> l.getExpectedResolutionAt() != null
                         && l.getExpectedResolutionAt().isAfter(now.plusHours(2)))
                 .orElse(false);
+    }
+
+    /** 关系相关性加权(设计文档 V2.0 §18): 越熟悉/越亲密, 主动价值越高 */
+    private static double relationshipBonus(Relationship rel) {
+        if (rel == null) return 0;
+        return clamp(rel.getFamiliarity() * 0.1 + rel.getIntimacy() * 0.1);
+    }
+
+    private static double clamp(double v) {
+        return Math.max(0, Math.min(1, v));
     }
 
     private void injectMessage(String companionId, String content) {

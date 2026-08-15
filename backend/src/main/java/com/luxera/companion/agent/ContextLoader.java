@@ -82,4 +82,13 @@ public class ContextLoader {
                 selfModel, userModel, relationship, memories, recentMessages, wm, perception,
                 scheduleDesc, toolResult, now);
     }
+
+    /** 加载学习上下文(设计文档 V2.0 §29): 供反思/记忆/人格学习使用 */
+    public LearningContext loadLearning(String userId, String companionId, List<String> recentExperienceSummary) {
+        var companion = companionService.requireOwned(userId, companionId);
+        var userModel = userModelService.summary(userId, companionId);
+        String lifeSummary = lifeContextProvider.describeToday(companionId, companion.getName());
+        return new LearningContext(companionId, companion.getName(), recentExperienceSummary,
+                userModel, lifeSummary, LocalDateTime.now());
+    }
 }

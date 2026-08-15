@@ -1,5 +1,6 @@
 package com.luxera.companion.relationship;
 
+import com.luxera.companion.memory.Memory;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,13 +19,16 @@ public class RelationshipEngine {
     private final RelationshipRepository relRepo;
     private final RelationshipEventRepository eventRepo;
     private final SharedExperienceRepository sharedRepo;
+    private final com.luxera.companion.memory.MemoryService memoryService;
 
     public RelationshipEngine(RelationshipRepository relRepo,
                               RelationshipEventRepository eventRepo,
-                              SharedExperienceRepository sharedRepo) {
+                              SharedExperienceRepository sharedRepo,
+                              com.luxera.companion.memory.MemoryService memoryService) {
         this.relRepo = relRepo;
         this.eventRepo = eventRepo;
         this.sharedRepo = sharedRepo;
+        this.memoryService = memoryService;
     }
 
     @Transactional
@@ -108,7 +112,50 @@ public class RelationshipEngine {
             sx.setOccurredAt(LocalDateTime.now());
             sharedRepo.save(sx);
             r.setSharedExperienceCount((int) sharedRepo.findByRelationshipIdOrderByOccurredAtDesc(r.getId()).size());
+
+            // 关系里程碑 → 也写入共享记忆(设计文档 §37 关系→记忆)
+            Memory mem = new Memory();
+            mem.setUserId(r.getUserId());
+            mem.setCompanionId(r.getCompanionId());
+            mem.setType("shared");
+            mem.setContent(title + ":" + desc);
+            mem.setImportance(clamp(sig));
+            mem.setEmotionalWeight(clamp(sig));
+            mem.setRelationshipWeight(clamp(sig));
+            mem.setOccurredAt(LocalDateTime.now());
+            mem.setSourceType("relationship");
+            mem.setSourceId(r.getId());
+            // Inside Joke 识别: 同类里程碑已出现过(反复共同经历) → 标记
+            long repeat = eventRepo.countByRelationshipIdAndType(r.getId(), type);
+            if (repeat >= 2) {
+                mem.setNarrativeRole("INSIDE_JOKE");
+            }
+            memoryService.save(mem);
         }
+    }
+
+    /** 关系摩擦: 用户对伴侣表达不满/失望 → 记一次冲突(设计文档 V2.0 §20) */
+    @Transactional
+    public void onConflict(String userId, String companionId, String userText) {
+        relRepo.findByUserIdAndCompanionId(userId, companionId).ifPresent(r -> {
+            String cause = userText != null && userText.length() > 40 ? userText.substring(0, 40) : (userText == null ? "一些不愉快" : userText);
+            addMilestone(r, "conflict", "一次不愉快",
+                    "因为" + cause + ",你表达了不满。", 0.55);
+            r.setAffection(clamp(r.getAffection() - 0.01));
+            relRepo.save(r);
+        });
+    }
+
+    /** 关系修复: 冲突后和好/被纠正 → 记修复事件(设计文档 V2.0 §20) */
+    @Transactional
+    public void onRepair(String userId, String companionId) {
+        relRepo.findByUserIdAndCompanionId(userId, companionId).ifPresent(r -> {
+            addMilestone(r, "repair", "和好了",
+                    "你们把话说开了,关系反而更近了一点。", 0.62);
+            r.setTrust(clamp(r.getTrust() + 0.008));
+            r.setIntimacy(clamp(r.getIntimacy() + 0.006));
+            relRepo.save(r);
+        });
     }
 
     private String stageFor(Relationship r) {

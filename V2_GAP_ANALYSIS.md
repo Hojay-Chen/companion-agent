@@ -16,13 +16,15 @@
 
 ## 一、总览
 
-> 更新记录：2026-08-15 第二轮补齐（Git `f1213be`）——可解释性、BehaviorConstraints、模型用途路由、Imperfection、Experience 清理、记忆评分+类型、thoughts 收敛、@Deprecated、测试/评测脚本已补。
+> 更新记录：
+> - 2026-08-15 第二轮补齐（Git `f1213be`）——可解释性、BehaviorConstraints、模型用途路由、Imperfection、Experience 清理、记忆评分+类型、thoughts 收敛、@Deprecated、测试/评测脚本。
+> - 2026-08-15 第三轮补齐（Git 待定）——关系冲突/修复/InsideJoke/共享记忆、主动完整公式、Thought→OpenLoop+LLM抽取、反思多维度、自我模式归纳、用户共享生活事件、轻微不耐烦摩擦、LearningContext、evaluate自动打分、长期测试全自动断言。
 
 | 类别 | 数量 | 说明 |
 |------|------|------|
-| ✅ 已完成 | 32 节 | 核心架构、生命内核、认知内核、四缺口、自我/关系/反思/演化、验收场景、可解释性、行为约束、模型路由、Imperfection、Experience清理、记忆评分、thoughts收敛 |
-| ◐ 部分实现 | 12 节 | 多为"机制简化版"（主动公式、摩擦、Life/Memory/Thought反思维度、Pattern归纳等）+ 测试/评测脚本为半自动 |
-| ❌ 未实现 | 0 节 | —（本轮已全部补齐） |
+| ✅ 已完成 | 44 节 | 除少数方案后置/受环境限制项外，V2.0 全部达成 |
+| ◐ 部分实现 | 4 节 | §9 SelfModel拆表(方案后置)、§33 REAL_TOOL/SYSTEM来源(需工具层)、§35 Pattern深度归纳(基础版)、§37 关系→记忆(基础版) |
+| ❌ 未实现 | 0 节 | — |
 | ⛔ 方案后置 | 1 节 | MCP/Tool 生态（§49 明确第一阶段不做） |
 
 ---
