@@ -1,6 +1,8 @@
 # Luxera Companion — 长期陪伴型 AI 数字伴侣平台
 
-> 一个**不是 Chatbot** 的 AI 数字伴侣：拥有稳定人格、连续人生、持续记忆，随时间与用户建立关系，并在合适的时候主动找你。
+> **不是 Chatbot**：拥有稳定人格、连续人生、持续记忆，随时间与用户建立关系，并在合适的时候主动找你。
+>
+> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）；当前完成 **MVP + 大部分 V2 + 部分 V3**。
 
 | 项 | 值 |
 |----|----|
@@ -9,7 +11,75 @@
 | 数据库 | PostgreSQL 16 · 19 张表 |
 | 大模型 | 统一 LLM 网关 → DeepSeek(deepseek-chat)，无 key 自动降级 Mock |
 | 线上 | `https://companion.luxera.top`（nginx + systemd jar :8081） |
-| 代码 | GitHub `Hojay-Chen/companion-agent` |
+| 代码 | GitHub `Hojay-Chen/companion-agent`（最新 `ea9a850`） |
+| 当前数据量 | 19 用户 / 19 伴侣 / 134 消息 / 104 记忆 / 61 反思记录 |
+
+## 📖 目录
+
+- [1. 产品简介](#1-产品简介)
+  - [1.1 产品定位](#11-产品定位)
+  - [1.2 核心闭环](#12-核心闭环)
+  - [1.3 技术栈](#13-技术栈)
+- [2. 总体架构](#2-总体架构)
+  - [2.1 架构风格](#21-架构风格)
+  - [2.2 逻辑分层](#22-逻辑分层)
+  - [2.3 部署拓扑](#23-部署拓扑)
+  - [2.4 目录结构](#24-目录结构)
+- [3. 模块组织](#3-模块组织)
+  - [3.1 模块全景](#31-模块全景)
+  - [3.2 模块依赖方向](#32-模块依赖方向)
+- [4. 数据架构](#4-数据架构)
+  - [4.1 ER 总览](#41-er-总览)
+  - [4.2 数据表清单（19 表）](#42-数据表清单19-表)
+- [5. 功能实现详解](#5-功能实现详解)
+  - [5.1 人格系统](#51-人格系统)
+    - [5.1.1 人格编译（PersonaCompiler）](#511-人格编译personacompiler)
+    - [5.1.2 版本化与演化](#512-版本化与演化)
+  - [5.2 聊天全链路](#52-聊天全链路)
+    - [5.2.1 SSE 流式协议](#521-sse-流式协议)
+    - [5.2.2 感知引擎](#522-感知引擎)
+    - [5.2.3 工作记忆（WorkingMemory）](#523-工作记忆workingmemory)
+    - [5.2.4 上下文构建与提示词组装](#524-上下文构建与提示词组装)
+    - [5.2.5 输出质量控制（NaturalnessEngine）](#525-输出质量控制naturalnessengine)
+    - [5.2.6 一次对话的完整时序](#526-一次对话的完整时序)
+  - [5.3 记忆系统](#53-记忆系统)
+    - [5.3.1 抽取（每轮异步 LLM）](#531-抽取每轮异步-llm)
+    - [5.3.2 检索排序（核心公式）](#532-检索排序核心公式)
+    - [5.3.3 关联记忆](#533-关联记忆)
+    - [5.3.4 衰减（每周一 04:30）](#534-衰减每周一-0430)
+    - [5.3.5 记忆透明与控制](#535-记忆透明与控制)
+  - [5.4 用户模型](#54-用户模型)
+  - [5.5 关系系统](#55-关系系统)
+  - [5.6 Agent 状态](#56-agent-状态)
+  - [5.7 反思与人格演化](#57-反思与人格演化)
+  - [5.8 主动消息与日常作息](#58-主动消息与日常作息)
+    - [5.8.1 主动决策（每 15 分钟）](#581-主动决策每-15-分钟)
+    - [5.8.2 日常时间表（CompanionSchedule）](#582-日常时间表companionschedule)
+  - [5.9 工具与提醒](#59-工具与提醒)
+- [6. 接口设计（API 清单）](#6-接口设计api-清单)
+  - [6.1 认证](#61-认证)
+  - [6.2 伴侣 / 人格](#62-伴侣--人格)
+  - [6.3 会话 / 聊天](#63-会话--聊天)
+  - [6.4 记忆](#64-记忆)
+  - [6.5 用户模型 / 关系 / 状态 / 提醒 / 通知 / 反思](#65-用户模型--关系--状态--提醒--通知--反思)
+  - [6.6 管理（验收/运维）](#66-管理验收运维)
+- [7. 快速开始](#7-快速开始)
+  - [7.1 环境要求](#71-环境要求)
+  - [7.2 本地启动](#72-本地启动)
+  - [7.3 LLM 配置](#73-llm-配置)
+  - [7.4 生产部署](#74-生产部署)
+  - [7.5 冒烟测试](#75-冒烟测试)
+- [8. 非功能设计](#8-非功能设计)
+  - [8.1 性能](#81-性能)
+  - [8.2 安全](#82-安全)
+  - [8.3 可扩展性](#83-可扩展性)
+  - [8.4 可观测性](#84-可观测性)
+- [9. 技术决策与权衡](#9-技术决策与权衡)
+- [10. 测试与验证](#10-测试与验证)
+- [11. 已知限制与演进路线](#11-已知限制与演进路线)
+  - [11.1 限制（如实）](#111-限制如实)
+  - [11.2 与设计文档路线图的关系](#112-与设计文档路线图的关系)
+  - [11.3 演进路线](#113-演进路线)
 
 ---
 
@@ -96,9 +166,8 @@ companion-agent/
 ├── scripts/
 │   ├── deploy.sh                     # 一键部署(前端+nginx+systemd)
 │   └── smoke.sh                      # 端到端冒烟测试
-├── PRODUCT_STATUS.md                 # 产品情况报告
-├── TECHNICAL_ARCHITECTURE.md         # 架构设计文档
-└── IMPLEMENTATION_DETAILS.md         # 功能实现详解(代码层面)
+├── PRODUCT_STATUS.md                 # 产品情况报告（面向上级汇报）
+└── TECHNICAL_ARCHITECTURE.md         # 架构设计文档（深挖用）
 ```
 
 ---
@@ -214,8 +283,7 @@ event:done    {messageId}
 event:error   {message}
 ```
 
-前端 `api/client.ts` 的 `streamPost`（EventSource 不支持 POST，故用 fetch 读流）：
-按 `\n\n` 分块 → 解析 `event:`/`data:` 行 → 回调驱动气泡渲染（token 追加 / replace 替换 / done 重拉）。
+前端 `api/client.ts` 的 `streamPost`（EventSource 不支持 POST，故用 fetch 读流）：按 `\n\n` 分块 → 解析 `event:`/`data:` 行 → 回调驱动气泡渲染（token 追加 / replace 替换 / done 重拉）。
 
 #### 5.2.2 感知引擎
 
@@ -239,12 +307,25 @@ event:error   {message}
 
 规则检测并修复：AI 套话（13 类，直接剔除）/ 模板安慰 / 说教式建议 / 过度道歉(≥2) / 过度 emoji(>3) / 回应过长(>500字)。修正后经 SSE `replace` 整体替换。
 
+#### 5.2.6 一次对话的完整时序
+
+```
+ChatController(SSE)
+  1 保存 user 消息 + 工作记忆
+  2 启发式感知 → LLM 同步精炼感知
+  3 (request_tool) ReminderPlanner 建提醒
+  4 ContextBuilder 聚合 → PromptAssembler 组提示
+  5 LlmRouter.chatStream → SSE 逐 token
+  6 NaturalnessEngine 校验 → replace 修正
+  7 保存 companion 消息 + 工作记忆 → done
+  8 异步: MemoryExtractor + UserModelExtractor + RelationshipEngine + AgentStateService
+```
+
 ### 5.3 记忆系统
 
 #### 5.3.1 抽取（每轮异步 LLM）
 
-`structured("memory-extraction")` → `{episodic[], semantic[], shared[]}` → `saveBatch`：
-同 content 去重（`max(importance)` + `retrieval_count+1` = **强化**）→ `linkBatch`(同批互链) + `linkNewMemory`(与历史互链)。
+`structured("memory-extraction")` → `{episodic[], semantic[], shared[]}` → `saveBatch`：同 content 去重（`max(importance)` + `retrieval_count+1` = **强化**）→ `linkBatch`(同批互链) + `linkNewMemory`(与历史互链)。
 
 #### 5.3.2 检索排序（核心公式）
 
@@ -322,20 +403,6 @@ if (今日已达上限) cost += 0.3;
 
 - **聊天内建提醒**（ReminderPlanner）：intent=request_tool → LLM 解析 `{remind,title,content,remind_at}`；SYSTEM **注入当前日期**防时间幻觉；过去时间兜底 +1h；建提醒后 toolResult 进 Prompt，回复自然确认。
 - **生日系统**（每日 08:05）：确保每位伴侣有下一年待触发生日提醒。
-
-### 5.10 一次对话的完整时序
-
-```
-ChatController(SSE)
-  1 保存 user 消息 + 工作记忆
-  2 启发式感知 → LLM 同步精炼感知
-  3 (request_tool) ReminderPlanner 建提醒
-  4 ContextBuilder 聚合 → PromptAssembler 组提示
-  5 LlmRouter.chatStream → SSE 逐 token
-  6 NaturalnessEngine 校验 → replace 修正
-  7 保存 companion 消息 + 工作记忆 → done
-  8 异步: MemoryExtractor + UserModelExtractor + RelationshipEngine + AgentStateService
-```
 
 ---
 
@@ -535,21 +602,17 @@ BASE=http://127.0.0.1:8081 bash companion-agent/scripts/smoke.sh
 10. 当前数据多为测试数据。
 11. DeepSeek key 失效降级 Mock（已配置 key 并监控）。
 
-### 11.2 演进路线
+### 11.2 与设计文档路线图的关系
+
+| 阶段 | 状态 |
+|------|------|
+| MVP（§95：用户/伴侣/人格编译/聊天/会话/记忆/用户模型/关系/生日/提醒/基础主动/记忆管理） | ✅ 完成 |
+| V2（§97：每日+每周反思/记忆衰减强化/共同经历/人生时间线/高级用户模型/主动Agent/工具调用） | ✅ 大部分（工具调用=提醒；日历/推送未做） |
+| V3（§98：关联记忆/人格演化/高级关系引擎） | ◐ 部分（关联记忆+人格演化已做；多模态/语音/实时上下文未做） |
+| V4（§99：App/耳机/眼镜生态 + 共享记忆/共享身份） | ⏳ 未启动 |
+
+### 11.3 演进路线
 
 - **短期**：手机推送、向量检索、MCP 工具层（日历/天气/搜索）。
 - **中期**：语音对话、用户自定义作息注入、真实用户灰度。
 - **长期**：V4 多端共享记忆/身份、K8s 高可用、RLS 加固、审计日志。
-
----
-
-## 12. 附录
-
-### 12.1 相关文档
-
-| 文档 | 定位 |
-|------|------|
-| `PRODUCT_STATUS.md` | 产品情况报告（能力清单 + 风险边界） |
-| `TECHNICAL_ARCHITECTURE.md` | 架构设计文档（模块/表结构/API/非功能） |
-| `IMPLEMENTATION_DETAILS.md` | 功能实现详解（代码层面） |
-| 设计文档 | 《Persistent AI Companion 产品与技术设计方案》v1.0 |
