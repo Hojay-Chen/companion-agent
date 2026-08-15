@@ -9,12 +9,16 @@ import com.luxera.companion.conversation.MessageRepository;
 import com.luxera.companion.llm.ChatRequest;
 import com.luxera.companion.llm.LlmMessage;
 import com.luxera.companion.llm.LlmRouter;
+import com.luxera.companion.openloop.OpenLoop;
+import com.luxera.companion.openloop.OpenLoopService;
 import com.luxera.companion.persona.Companion;
 import com.luxera.companion.persona.CompanionRepository;
 import com.luxera.companion.persona.Persona;
 import com.luxera.companion.persona.PersonaService;
 import com.luxera.companion.relationship.Relationship;
 import com.luxera.companion.relationship.RelationshipRepository;
+import com.luxera.companion.thought.Thought;
+import com.luxera.companion.thought.ThoughtService;
 import com.luxera.companion.tool.Reminder;
 import com.luxera.companion.tool.ReminderRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -25,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
@@ -51,12 +56,15 @@ public class ProactiveEngine {
     private final ReminderRepository reminderRepo;
     private final LlmRouter llm;
     private final CompanionSchedule schedule;
+    private final OpenLoopService openLoopService;
+    private final ThoughtService thoughtService;
 
     public ProactiveEngine(AppProperties props, CompanionRepository companionRepo, PersonaService personaService,
                            RelationshipRepository relationshipRepo, MessageRepository messageRepo,
                            ConversationRepository conversationRepo, ConversationService conversationService,
                            NotificationRepository notificationRepo, NotificationService notificationService,
-                           ReminderRepository reminderRepo, LlmRouter llm, CompanionSchedule schedule) {
+                           ReminderRepository reminderRepo, LlmRouter llm, CompanionSchedule schedule,
+                           OpenLoopService openLoopService, ThoughtService thoughtService) {
         this.props = props;
         this.companionRepo = companionRepo;
         this.personaService = personaService;
@@ -69,6 +77,8 @@ public class ProactiveEngine {
         this.reminderRepo = reminderRepo;
         this.llm = llm;
         this.schedule = schedule;
+        this.openLoopService = openLoopService;
+        this.thoughtService = thoughtService;
     }
 
     @Scheduled(cron = "${app.scheduler.proactive-cron}")
@@ -125,7 +135,7 @@ public class ProactiveEngine {
         return actions;
     }
 
-    /** 决策引擎: 收集触发,计算预期价值与打断成本(设计文档 53-55 节) */
+    /** 决策引擎: 收集触发,计算预期价值与打断成本(设计文档 V2.0 §18) */
     ProactiveDecision decide(Companion c, LocalDateTime now, LocalDateTime lastInteraction,
                              long todayCount, boolean responsive) {
         String userId = c.getUserId();
@@ -133,6 +143,42 @@ public class ProactiveEngine {
         Relationship rel = relationshipRepo.findByUserIdAndCompanionId(userId, c.getId()).orElse(null);
         // 按作息调节主动意愿: 忙碌时低, 休闲时高
         double factor = schedule.proactiveFactor(c.getId(), now);
+
+        // 触发 0: OpenLoop 驱动(未完成事项, 最真实) — "面试怎么样了"
+        OpenLoop bestLoop = openLoopService.activeLoops(c.getId()).stream()
+                .filter(l -> l.getExpectedResolutionAt() != null)
+                .filter(l -> !l.getExpectedResolutionAt().isBefore(now.minusHours(4)))
+                .filter(l -> l.getExpectedResolutionAt().isBefore(now.plusHours(18)))
+                .max(Comparator.comparingDouble(OpenLoop::getImportance))
+                .orElse(null);
+        if (bestLoop != null && !loopFollowedUp(c.getId(), bestLoop.getTitle())) {
+            double value = 0.68 * factor;
+            double cst = cost(now, lastInteraction, todayCount, responsive);
+            if (value > cst) {
+                return ProactiveDecision.send("未了结的事",
+                        "想问问" + bestLoop.getTitle() + "的事,后来怎么样了。",
+                        "open_loop", value, cst);
+            }
+        }
+
+        // 触发 0.5: Thought 驱动(她"想起了你")
+        Thought bestThought = thoughtService.activeThoughts(c.getId()).stream()
+                .filter(t -> t.getStrength() >= 0.5)
+                .filter(t -> List.of("CURIOSITY", "WORRY", "EXPECTATION", "UNFINISHED").contains(t.getType()))
+                .filter(t -> !"SUPPRESSED".equals(t.getStatus()))
+                .max(Comparator.comparingDouble(Thought::getStrength))
+                .orElse(null);
+        if (bestThought != null) {
+            double value = (0.35 + bestThought.getStrength() * 0.4) * factor;
+            double cst = cost(now, lastInteraction, todayCount, responsive);
+            if (value > cst) {
+                thoughtService.act(bestThought.getId());
+                return ProactiveDecision.send("心里想着", bestThought.getContent(), "thought", value, cst);
+            } else {
+                // 被成本压制的想法 → SUPPRESSED, 保留次日再激活(形成自然连续性)
+                thoughtService.suppress(bestThought.getId());
+            }
+        }
 
         // 触发 1: 深夜加班模式
         List<Message> week = messageRepo.findUserMessagesSince(c.getId(), now.minusDays(7));
@@ -253,6 +299,14 @@ public class ProactiveEngine {
             if (m.getCreatedAt().isBefore(windowEnd)) return true;
         }
         return false;
+    }
+
+    /** 该未完成事项是否已经被主动跟进过 */
+    private boolean loopFollowedUp(String companionId, String title) {
+        Notification last = notificationRepo.findTopByCompanionIdAndTypeOrderByCreatedAtDesc(companionId, "proactive");
+        if (last == null) return false;
+        String content = last.getContent();
+        return content != null && title != null && content.contains(title);
     }
 
     private void injectMessage(String companionId, String content) {

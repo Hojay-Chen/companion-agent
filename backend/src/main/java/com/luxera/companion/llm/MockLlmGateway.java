@@ -146,7 +146,7 @@ public class MockLlmGateway implements LlmGateway {
             case "weekly-reflection":
                 return "{\"summary\":\"这一周相处稳定,彼此更熟悉了。\",\"long_term_user_understanding\":[],\"behavioral_patterns\":[],\"relationship_changes\":[]}";
             case "persona-evolution":
-                return "{\"adjustments\":[],\"summary_note\":\"\"}";
+                return "{\"behavioral_adaptations\":[],\"interaction_preferences\":[],\"trait_adjustments\":[],\"summary_note\":\"\"}";
             case "self-model-extraction":
                 return "{\"facts\":[],\"preferences\":[],\"patterns\":[],\"beliefs\":[],\"goals\":[],\"concerns\":[],\"plans\":[],\"narrative\":\"最近日子平静而充实。\"}";
             case "relationship-narrative":
