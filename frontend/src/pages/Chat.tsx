@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   Bell,
@@ -267,9 +267,17 @@ export default function Chat() {
 
         <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-8">
           <div className="mx-auto flex max-w-2xl flex-col gap-3">
-            {messages.map((m) => (
-              <ChatBubble key={m.id} sender={m.senderType} content={m.content} />
-            ))}
+            {messages.map((m, i) => {
+              const prev = messages[i - 1]
+              const label = dateLabel(m.createdAt)
+              const showDivider = !prev || dateLabel(prev.createdAt) !== label
+              return (
+                <Fragment key={m.id}>
+                  {showDivider && <TimeDivider label={label} />}
+                  <ChatBubble sender={m.senderType} content={m.content} time={formatTime(m.createdAt)} />
+                </Fragment>
+              )
+            })}
             {streaming && <ChatBubble sender="companion" content={streamingText} streaming />}
             <div ref={bottomRef} />
           </div>
@@ -446,8 +454,8 @@ function MemoriesPanel({ companionId }: { companionId: string }) {
           <div className="flex items-center gap-2 text-xs text-cocoa-500">
             <span className="chip bg-ember/10 text-ember-soft">{TYPE_ZH[m.type] || m.type}</span>
             <span>
-              {m.occurredAt ? format(new Date(m.occurredAt), 'M月d日') : ''}
-              {m.sourceType === 'conversation' ? ' · 来自你们的对话' : ''}
+              {m.occurredAt ? timeAgo(m.occurredAt) : ''}
+              {m.sourceType === 'conversation' ? ' · 来自对话' : ''}
             </span>
             <div className="ml-auto flex items-center gap-2">
               <button onClick={() => toggleSource(m.id)} className="text-ember-soft hover:underline">
@@ -480,6 +488,45 @@ function MemoriesPanel({ companionId }: { companionId: string }) {
 
 function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n) + '…' : s
+}
+
+// ── 时间显示 ───────────────────────────────
+function isSameDay(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+}
+
+function dateLabel(iso: string): string {
+  const d = new Date(iso)
+  const today = new Date()
+  if (isSameDay(d, today)) return '今天'
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+  if (isSameDay(d, yesterday)) return '昨天'
+  return format(d, 'yyyy年M月d日')
+}
+
+function formatTime(iso: string): string {
+  return format(new Date(iso), 'HH:mm')
+}
+
+function timeAgo(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diffMs / 60000)
+  if (mins < 1) return '刚刚'
+  if (mins < 60) return `${mins} 分钟前`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours} 小时前`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days} 天前`
+  return format(new Date(iso), 'yyyy年M月d日')
+}
+
+function TimeDivider({ label }: { label: string }) {
+  return (
+    <div className="my-1 flex items-center justify-center">
+      <span className="rounded-full bg-cocoa-900 px-3 py-1 text-[11px] text-cocoa-500">{label}</span>
+    </div>
+  )
 }
 
 // ── 用户模型面板 ────────────────────────────

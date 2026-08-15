@@ -25,6 +25,7 @@ public class CompanionRuntime {
     private final ContextBuilder contextBuilder;
     private final PromptAssembler promptAssembler;
     private final PerceptionEngine perceptionEngine;
+    private final PerceptionRefiner perceptionRefiner;
     private final NaturalnessEngine naturalnessEngine;
     private final ReminderPlanner reminderPlanner;
     private final LlmRouter llm;
@@ -32,12 +33,13 @@ public class CompanionRuntime {
     private final AppProperties props;
 
     public CompanionRuntime(ContextBuilder contextBuilder, PromptAssembler promptAssembler,
-                            PerceptionEngine perceptionEngine, NaturalnessEngine naturalnessEngine,
-                            ReminderPlanner reminderPlanner, LlmRouter llm,
+                            PerceptionEngine perceptionEngine, PerceptionRefiner perceptionRefiner,
+                            NaturalnessEngine naturalnessEngine, ReminderPlanner reminderPlanner, LlmRouter llm,
                             AgentPostProcessor postProcessor, AppProperties props) {
         this.contextBuilder = contextBuilder;
         this.promptAssembler = promptAssembler;
         this.perceptionEngine = perceptionEngine;
+        this.perceptionRefiner = perceptionRefiner;
         this.naturalnessEngine = naturalnessEngine;
         this.reminderPlanner = reminderPlanner;
         this.llm = llm;
@@ -52,7 +54,10 @@ public class CompanionRuntime {
     public ChatOutcome generate(String userId, String companionId, String conversationId, String userMessageId,
                                 String userText, List<Message> recentMessages,
                                 Consumer<String> onDelta) {
-        PerceptionEngine.Perception perception = perceptionEngine.perceive(userText);
+        // 质量优先: 同步用 LLM 精炼感知(失败回退启发式), 让情绪/话题/实体更准地进入回复
+        PerceptionEngine.Perception heuristic = perceptionEngine.perceive(userText);
+        PerceptionEngine.Perception perception = perceptionRefiner.refineNow(
+                userMessageId, companionId, conversationId, userText, heuristic);
         // 工具调用: 用户请求提醒时,先建提醒并把结果注入上下文,让回复自然确认
         String toolResult = null;
         if ("request_tool".equals(perception.intent())) {

@@ -1,5 +1,6 @@
 package com.luxera.companion.proactive;
 
+import com.luxera.companion.agent.CompanionSchedule;
 import com.luxera.companion.config.AppProperties;
 import com.luxera.companion.conversation.ConversationRepository;
 import com.luxera.companion.conversation.ConversationService;
@@ -49,12 +50,13 @@ public class ProactiveEngine {
     private final NotificationService notificationService;
     private final ReminderRepository reminderRepo;
     private final LlmRouter llm;
+    private final CompanionSchedule schedule;
 
     public ProactiveEngine(AppProperties props, CompanionRepository companionRepo, PersonaService personaService,
                            RelationshipRepository relationshipRepo, MessageRepository messageRepo,
                            ConversationRepository conversationRepo, ConversationService conversationService,
                            NotificationRepository notificationRepo, NotificationService notificationService,
-                           ReminderRepository reminderRepo, LlmRouter llm) {
+                           ReminderRepository reminderRepo, LlmRouter llm, CompanionSchedule schedule) {
         this.props = props;
         this.companionRepo = companionRepo;
         this.personaService = personaService;
@@ -66,6 +68,7 @@ public class ProactiveEngine {
         this.notificationService = notificationService;
         this.reminderRepo = reminderRepo;
         this.llm = llm;
+        this.schedule = schedule;
     }
 
     @Scheduled(cron = "${app.scheduler.proactive-cron}")
@@ -95,6 +98,8 @@ public class ProactiveEngine {
             if (c.getDeletedAt() != null) continue;
             String userId = c.getUserId();
             if (inDnd) continue;
+            // 她的作息: 睡觉时不主动打扰(比 DND 更贴合个人作息)
+            if (schedule.activityFor(c.getId(), now) == CompanionSchedule.Activity.SLEEP) continue;
 
             Notification lastProactive = notificationRepo.findTopByCompanionIdAndTypeOrderByCreatedAtDesc(c.getId(), "proactive");
             int minIntervalHours = props.getProactive().getMinIntervalHours();
@@ -109,7 +114,7 @@ public class ProactiveEngine {
 
             ProactiveDecision decision = decide(c, now, lastInteraction, todayCount, responsive);
             if (decision.act()) {
-                String content = draftMessage(c, decision.trigger(), decision.content());
+                String content = draftMessage(c, decision.trigger(), decision.content(), now);
                 notificationService.notify(userId, c.getId(), "proactive", decision.title(), content);
                 injectMessage(c.getId(), content);
                 actions.add(c.getName() + " → " + decision.title() + " (预期" + round(decision.expectedValue())
@@ -126,6 +131,8 @@ public class ProactiveEngine {
         String userId = c.getUserId();
         int hour = now.getHour();
         Relationship rel = relationshipRepo.findByUserIdAndCompanionId(userId, c.getId()).orElse(null);
+        // 按作息调节主动意愿: 忙碌时低, 休闲时高
+        double factor = schedule.proactiveFactor(c.getId(), now);
 
         // 触发 1: 深夜加班模式
         List<Message> week = messageRepo.findUserMessagesSince(c.getId(), now.minusDays(7));
@@ -139,14 +146,14 @@ public class ProactiveEngine {
         if (lateCount >= 3 && !alreadyMentioned) {
             return ProactiveDecision.send("深夜提醒",
                     "你最近是不是又忙到很晚了?我不催你睡,只是想知道你还好吗。",
-                    "late_work", 0.62, cost(now, lastInteraction, todayCount, responsive));
+                    "late_work", 0.62 * factor, cost(now, lastInteraction, todayCount, responsive));
         }
 
         // 触发 2: 早安问候(上午 8-11 点,今天还没聊过,且之前聊过)
         if (hour >= 8 && hour < 11 && todayCount == 0 && rel != null && rel.getMessageCount() > 0) {
             return ProactiveDecision.send("早安问候",
                     "早上好呀,新的一天开始啦。你今天有什么安排吗?",
-                    "morning_greeting", 0.52, cost(now, lastInteraction, todayCount, responsive));
+                    "morning_greeting", 0.52 * factor, cost(now, lastInteraction, todayCount, responsive));
         }
 
         // 触发 3: 傍晚回访(今天聊过,但 2-8 小时没动静)
@@ -155,7 +162,7 @@ public class ProactiveEngine {
                 && lastInteraction.isBefore(now.minusHours(2))) {
             return ProactiveDecision.send("傍晚回访",
                     "这会儿忙完了吗?想听听你今天过得怎么样。",
-                    "evening_checkin", 0.55, cost(now, lastInteraction, todayCount, responsive));
+                    "evening_checkin", 0.55 * factor, cost(now, lastInteraction, todayCount, responsive));
         }
 
         // 触发 4: 分享好消息后的跟进(48h 内,未跟进过)
@@ -172,7 +179,7 @@ public class ProactiveEngine {
             if (!followedUp) {
                 return ProactiveDecision.send("跟进好消息",
                         "前两天你说的那个好消息,后来怎么样了?我一直惦记着呢。",
-                        "follow_up_joy", 0.65, cost(now, lastInteraction, todayCount, responsive));
+                        "follow_up_joy", 0.65 * factor, cost(now, lastInteraction, todayCount, responsive));
             }
         }
 
@@ -181,22 +188,24 @@ public class ProactiveEngine {
                 && lastInteraction.isBefore(now.minusDays(2))) {
             return ProactiveDecision.send("好久不见",
                     "最近两天你都没怎么找我,我有点想你了。要是忙,就告诉我一声,我不吵你。",
-                    "silence", 0.5, cost(now, lastInteraction, todayCount, responsive));
+                    "silence", 0.5 * factor, cost(now, lastInteraction, todayCount, responsive));
         }
 
         return ProactiveDecision.nothing();
     }
 
-    /** 用 LLM 按人格+时间生成主动消息,失败时回退到固定文案 */
-    private String draftMessage(Companion c, String trigger, String fallback) {
+    /** 用 LLM 按人格+作息+场景生成主动消息,失败时回退到固定文案 */
+    private String draftMessage(Companion c, String trigger, String fallback, LocalDateTime now) {
         try {
             Persona persona = personaService.getActive(c.getId());
             String personaDesc = "";
             if (persona != null && persona.getPersonality() != null && persona.getPersonality().getSummary() != null) {
                 personaDesc = persona.getPersonality().getSummary();
             }
+            String scheduleDesc = schedule.describe(c.getId(), c.getName(), now);
             String system = "你是" + c.getName() + ",一个真实的人。" + personaDesc
-                    + "。现在是" + LocalDateTime.now().format(FMT) + "。你打算主动给用户发一条消息,"
+                    + "。" + scheduleDesc
+                    + "。你打算主动给用户发一条消息,"
                     + "场景:" + triggerDesc(trigger) + "。请自然地说 2-3 句,像发微信,不要解释你是 AI,不要问号堆砌。";
             var r = llm.chat(ChatRequest.builder()
                     .messages(List.of(LlmMessage.system(system), LlmMessage.user("现在给用户发这条主动消息吧。")))

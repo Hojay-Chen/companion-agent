@@ -23,12 +23,14 @@ public class AgentContext {
     public final WorkingMemory.WorkingContext workingMemory;
     /** 本轮调用的工具结果(如刚创建的提醒),供 Prompt 注入 */
     public final String toolResult;
+    /** 她此刻在做什么(日常时间表) */
+    public final String scheduleDesc;
     public final LocalDateTime now;
 
     public AgentContext(Companion companion, Persona persona, AgentState state, Relationship relationship,
                         List<Memory> memories, UserModelService.UserModelSummary userModel,
                         List<Message> recentMessages, WorkingMemory.WorkingContext workingMemory,
-                        String toolResult, LocalDateTime now) {
+                        String toolResult, String scheduleDesc, LocalDateTime now) {
         this.companion = companion;
         this.persona = persona;
         this.state = state;
@@ -38,6 +40,7 @@ public class AgentContext {
         this.recentMessages = recentMessages;
         this.workingMemory = workingMemory;
         this.toolResult = toolResult;
+        this.scheduleDesc = scheduleDesc;
         this.now = now;
     }
 }

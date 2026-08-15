@@ -26,17 +26,20 @@ public class ContextBuilder {
     private final AgentStateService agentStateService;
     private final UserModelService userModelService;
     private final WorkingMemory workingMemory;
+    private final CompanionSchedule schedule;
     private final AppProperties props;
 
     public ContextBuilder(CompanionService companionService, MemoryService memoryService,
                           RelationshipService relationshipService, AgentStateService agentStateService,
-                          UserModelService userModelService, WorkingMemory workingMemory, AppProperties props) {
+                          UserModelService userModelService, WorkingMemory workingMemory,
+                          CompanionSchedule schedule, AppProperties props) {
         this.companionService = companionService;
         this.memoryService = memoryService;
         this.relationshipService = relationshipService;
         this.agentStateService = agentStateService;
         this.userModelService = userModelService;
         this.workingMemory = workingMemory;
+        this.schedule = schedule;
         this.props = props;
     }
 
@@ -50,8 +53,10 @@ public class ContextBuilder {
         var memories = memoryService.retrieve(userId, companionId, query, props.getAgent().getMemoryTopN());
         var userModel = userModelService.summary(userId, companionId);
         var wm = conversationId != null ? workingMemory.get(companionId, conversationId) : null;
+        LocalDateTime now = LocalDateTime.now();
+        String scheduleDesc = schedule.describe(companionId, companion.getName(), now);
         return new AgentContext(companion, persona, state, relationship, memories, userModel, recentMessages, wm,
-                toolResult, LocalDateTime.now());
+                toolResult, scheduleDesc, now);
     }
 
     public static String relationshipSummary(Relationship r) {

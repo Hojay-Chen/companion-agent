@@ -2,11 +2,9 @@ package com.luxera.companion.agent;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.luxera.companion.config.AppProperties;
-import com.luxera.companion.conversation.Message;
 import com.luxera.companion.conversation.MessageRepository;
 import com.luxera.companion.llm.LlmRouter;
 import com.luxera.companion.llm.StructuredRequest;
-import com.luxera.companion.state.AgentStateService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -15,8 +13,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * LLM 感知精炼(异步): 用大模型更准确地识别意图/情绪/话题/实体,
- * 更新消息元数据、工作记忆与 Agent 状态。启发式先保证实时回复,精度由此补齐。
+ * LLM 感知精炼(质量优先): 在回复生成前同步用大模型精炼意图/情绪/话题/实体,
+ * 失败时回退到启发式结果。用户可接受延迟,因此感知精度不再异步补。
  * (设计文档 39 节;app.agent.intent-extraction=llm 时启用)
  */
 @Slf4j
@@ -36,37 +34,34 @@ public class PerceptionRefiner {
     private final LlmRouter llm;
     private final MessageRepository messageRepo;
     private final WorkingMemory workingMemory;
-    private final AgentStateService agentStateService;
     private final AppProperties props;
 
     public PerceptionRefiner(LlmRouter llm, MessageRepository messageRepo, WorkingMemory workingMemory,
-                             AgentStateService agentStateService, AppProperties props) {
+                             AppProperties props) {
         this.llm = llm;
         this.messageRepo = messageRepo;
         this.workingMemory = workingMemory;
-        this.agentStateService = agentStateService;
         this.props = props;
     }
 
-    /** 在异步后处理链路中调用(上层已是 @Async) */
-    public void refineAfterExchange(String userId, String companionId, String conversationId,
-                                    String userMessageId, String userText, String assistantText,
-                                    PerceptionEngine.Perception heuristic) {
-        // 未开启 LLM 感知时,仅把启发式结果记入工作记忆
+    /**
+     * 同步精炼感知(回复生成前调用)。返回精炼后的 Perception(失败回退启发式),
+     * 并更新工作记忆与消息元数据。
+     */
+    public PerceptionEngine.Perception refineNow(String userMessageId, String companionId, String conversationId,
+                                                 String userText, PerceptionEngine.Perception heuristic) {
         WorkingMemory.RecentLine userLine = new WorkingMemory.RecentLine("user", userText, LocalDateTime.now());
-        WorkingMemory.RecentLine assistantLine = new WorkingMemory.RecentLine("companion", assistantText, LocalDateTime.now());
+        // 先记启发式结果,保证即使 LLM 失败工作记忆也是新鲜的
         workingMemory.record(companionId, conversationId, userLine, heuristic);
-        workingMemory.record(companionId, conversationId, assistantLine, null);
 
         if (!"llm".equals(props.getAgent().getIntentExtraction())) {
-            return;
+            return heuristic;
         }
         try {
-            String excerpt = "用户: " + userText + "\n伴侣: " + assistantText;
             var res = llm.structured(StructuredRequest.builder()
                     .task("perception")
                     .system(SYSTEM)
-                    .user(excerpt)
+                    .user(userText)
                     .temperature(0.2)
                     .build());
             JsonNode root = res.getJson();
@@ -80,7 +75,12 @@ public class PerceptionRefiner {
                 if (!s.isBlank()) entities.add(s);
             }
 
-            // 更新用户消息元数据
+            PerceptionEngine.Perception refined = new PerceptionEngine.Perception(
+                    refinedIntent.isBlank() ? heuristic.intent() : refinedIntent,
+                    refinedEmotion.isBlank() ? heuristic.emotion() : refinedEmotion,
+                    refinedTopic.isBlank() ? heuristic.topic() : refinedTopic);
+
+            // 更新用户消息元数据(供关系/反思/追溯用)
             if (userMessageId != null) {
                 messageRepo.findById(userMessageId).ifPresent(m -> {
                     if (!refinedIntent.isBlank()) m.setIntent(refinedIntent);
@@ -90,23 +90,15 @@ public class PerceptionRefiner {
                 });
             }
 
-            // 更新工作记忆
-            if (!refinedIntent.isBlank() || !refinedEmotion.isBlank() || !refinedTopic.isBlank()) {
-                workingMemory.record(companionId, conversationId, userLine,
-                        new PerceptionEngine.Perception(refinedIntent.isBlank() ? null : refinedIntent,
-                                refinedEmotion.isBlank() ? null : refinedEmotion,
-                                refinedTopic.isBlank() ? null : refinedTopic));
-            }
+            // 更新工作记忆(精炼结果 + 实体)
+            workingMemory.record(companionId, conversationId, userLine, refined);
             if (!entities.isEmpty()) {
                 workingMemory.setEntities(companionId, conversationId, entities);
             }
-
-            // 精炼情绪比启发式更显著时,同步 Agent 状态
-            if (!refinedEmotion.isBlank() && !refinedEmotion.equals(heuristic.emotion())) {
-                agentStateService.onMessage(companionId, refinedEmotion);
-            }
+            return refined;
         } catch (Exception e) {
-            log.debug("LLM 感知精炼失败,保留启发式结果: {}", e.getMessage());
+            log.debug("LLM 感知精炼失败,使用启发式结果: {}", e.getMessage());
+            return heuristic;
         }
     }
 }

@@ -27,8 +27,12 @@ public class PromptAssembler {
         // 1. 身份与人格
         sb.append("【你是谁】\n").append(PersonaText.describe(ctx.companion, ctx.persona)).append("\n\n");
 
-        // 2. 时间感
-        sb.append("【现在】").append(timeDesc(ctx)).append("。\n\n");
+        // 2. 时间感 + 日常时间表(此刻她在做什么)
+        if (ctx.scheduleDesc != null && !ctx.scheduleDesc.isBlank()) {
+            sb.append("【现在】").append(ctx.scheduleDesc).append("(回复时自然地体现出你此刻的处境,比如刚下班/在忙/准备睡了)。\n\n");
+        } else {
+            sb.append("【现在】").append(timeDesc(ctx)).append("。\n\n");
+        }
 
         // 3. 当前状态
         if (ctx.state != null) {

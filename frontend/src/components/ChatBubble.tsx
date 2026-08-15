@@ -2,10 +2,12 @@ export default function ChatBubble({
   sender,
   content,
   streaming = false,
+  time,
 }: {
   sender: 'user' | 'companion' | 'system'
   content: string
   streaming?: boolean
+  time?: string
 }) {
   const isUser = sender === 'user'
   const isSystem = sender === 'system'
@@ -17,7 +19,7 @@ export default function ChatBubble({
     )
   }
   return (
-    <div className={`flex animate-fadeUp ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div className={`flex animate-fadeUp flex-col ${isUser ? 'items-end' : 'items-start'}`}>
       <div
         className={`max-w-[78%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
           isUser
@@ -28,6 +30,7 @@ export default function ChatBubble({
         {content}
         {streaming && <span className="marker-dot ml-1 animate-pulseSoft bg-ember-soft" />}
       </div>
+      {time && <span className={`mt-1 px-1 text-[10px] text-cocoa-500`}>{time}</span>}
     </div>
   )
 }
