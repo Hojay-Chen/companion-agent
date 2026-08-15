@@ -115,21 +115,16 @@ public class ProactiveEngine {
             // 她的作息: 睡觉时不主动打扰(比 DND 更贴合个人作息)
             if (schedule.activityFor(c.getId(), now) == CompanionSchedule.Activity.SLEEP) continue;
 
-            // V3: 主动消息 = Chat 消息(kind=PROACTIVE), 不再生成 notification
+            // V4.2 主动意愿: 由"自然频率"决定, 不再有硬性上限/间隔
             Message lastProactive = messageRepo
                     .findFirstByCompanionIdAndMessageKindOrderByCreatedAtDesc(c.getId(), "PROACTIVE")
                     .orElse(null);
-            int minIntervalHours = props.getProactive().getMinIntervalHours();
-            if (lastProactive != null && lastProactive.getCreatedAt().isAfter(now.minusHours(minIntervalHours))) continue;
-            long todayCount = messageRepo.countByCompanionIdAndMessageKindAndCreatedAtAfter(
-                    c.getId(), "PROACTIVE", now.toLocalDate().atStartOfDay());
-            if (todayCount >= props.getProactive().getMaxNotificationsPerDay()) continue;
 
             Relationship rel = relationshipRepo.findByUserIdAndCompanionId(userId, c.getId()).orElse(null);
             LocalDateTime lastInteraction = rel != null ? rel.getLastInteractionAt() : null;
             boolean responsive = isResponsive(userId, c.getId(), lastProactive, now);
 
-            ProactiveDecision decision = decide(c, now, lastInteraction, todayCount, responsive);
+            ProactiveDecision decision = decide(c, now, lastInteraction, lastProactive, responsive);
             if (decision.act()) {
                 String content = draftMessage(c, decision.trigger(), decision.content(), now);
                 // V3: 主动消息只进聊天框(见设计 §二十七~三十), 它是 Chat 消息, 不是 Notification
@@ -142,9 +137,9 @@ public class ProactiveEngine {
         return actions;
     }
 
-    /** V4: 定向触发某伴侣的主动消息(测试实时推送用, 跳过 DND/间隔限制以便验证) */
+    /** V4.2: 定向触发某伴侣的主动消息(测试实时推送用, 可用 force 模拟"隔了一阵没聊") */
     @Transactional
-    public List<String> runForCompanion(String companionId) {
+    public List<String> runForCompanion(String companionId, boolean force) {
         List<String> actions = new ArrayList<>();
         LocalDateTime now = LocalDateTime.now();
         companionRepo.findById(companionId).ifPresent(c -> {
@@ -152,7 +147,11 @@ public class ProactiveEngine {
             String userId = c.getUserId();
             Relationship rel = relationshipRepo.findByUserIdAndCompanionId(userId, c.getId()).orElse(null);
             LocalDateTime lastInteraction = rel != null ? rel.getLastInteractionAt() : null;
-            ProactiveDecision decision = decide(c, now, lastInteraction, 0, true);
+            // force: 模拟"已经有一阵没互动了", 让价值>成本可稳定触发
+            if (force) {
+                lastInteraction = now.minusHours(6);
+            }
+            ProactiveDecision decision = decide(c, now, lastInteraction, null, true);
             if (decision.act()) {
                 String content = draftMessage(c, decision.trigger(), decision.content(), now);
                 injectMessage(c.getId(), content);
@@ -167,7 +166,7 @@ public class ProactiveEngine {
 
     /** 决策引擎: 收集触发,计算预期价值与打断成本(设计文档 V2.0 §18) */
     ProactiveDecision decide(Companion c, LocalDateTime now, LocalDateTime lastInteraction,
-                             long todayCount, boolean responsive) {
+                             Message lastProactive, boolean responsive) {
         String userId = c.getUserId();
         int hour = now.getHour();
         Relationship rel = relationshipRepo.findByUserIdAndCompanionId(userId, c.getId()).orElse(null);
@@ -175,6 +174,17 @@ public class ProactiveEngine {
         double factor = schedule.proactiveFactor(c.getId(), now);
         // 关系相关性(设计文档 V2.0 §18): 越熟悉/越亲密, 主动联系的价值越高
         double relBonus = relationshipBonus(rel);
+        // V4.2 打断成本: 由"最后一次互动距今"的正相关曲线决定(刚聊过→很低, 越久没聊→越低)
+        double cst = cost(lastInteraction);
+        // "今天还没聊过"是合理自然条件(用于早安/回访触发)
+        long todayCount = messageRepo.countByCompanionIdAndMessageKindAndCreatedAtAfter(
+                c.getId(), "PROACTIVE", now.toLocalDate().atStartOfDay());
+
+        // V4.2 自然频率: 上次主动在 2 小时内 → 这次先不主动(真人不会连续轰炸);
+        // 超过 2 小时 → 由成本曲线自然决定是否值得发, 不再有"每日上限"这种机械限制
+        if (lastProactive != null && lastProactive.getCreatedAt().isAfter(now.minusHours(2))) {
+            return ProactiveDecision.nothing();
+        }
 
         // 触发 0: OpenLoop 驱动(未完成事项, 最真实) — "面试怎么样了"
         // V3 P1 增强: 到点后问(±2h 窗口内价值最高), 错过但仍未跟进的在 2 天内仍值得问一次(价值随时间递减)
@@ -186,7 +196,6 @@ public class ProactiveEngine {
                 .orElse(null);
         if (bestLoop != null && !loopFollowedUp(c.getId(), bestLoop.getTitle())) {
             double value = (0.5 + openLoopValue(now, bestLoop)) * factor + relBonus;
-            double cst = cost(now, lastInteraction, todayCount, responsive);
             if (value > cst) {
                 return ProactiveDecision.send("未了结的事",
                         "想问问" + bestLoop.getTitle() + "的事,后来怎么样了。",
@@ -207,7 +216,6 @@ public class ProactiveEngine {
                 thoughtService.suppress(bestThought.getId());
             } else {
                 double value = (0.35 + bestThought.getStrength() * 0.4) * factor + relBonus;
-                double cst = cost(now, lastInteraction, todayCount, responsive);
                 if (value > cst) {
                     thoughtService.act(bestThought.getId());
                     return ProactiveDecision.send("心里想着", bestThought.getContent(), "thought", value, cst);
@@ -232,14 +240,14 @@ public class ProactiveEngine {
         if (lateCount >= 3 && !alreadyMentioned) {
             return ProactiveDecision.send("深夜提醒",
                     "你最近是不是又忙到很晚了?我不催你睡,只是想知道你还好吗。",
-                    "late_work", 0.62 * factor, cost(now, lastInteraction, todayCount, responsive));
+                    "late_work", 0.62 * factor, cst);
         }
 
         // 触发 2: 早安问候(上午 8-11 点,今天还没聊过,且之前聊过)
         if (hour >= 8 && hour < 11 && todayCount == 0 && rel != null && rel.getMessageCount() > 0) {
             return ProactiveDecision.send("早安问候",
                     "早上好呀,新的一天开始啦。你今天有什么安排吗?",
-                    "morning_greeting", 0.52 * factor, cost(now, lastInteraction, todayCount, responsive));
+                    "morning_greeting", 0.52 * factor, cst);
         }
 
         // 触发 3: 傍晚回访(今天聊过,但 2-8 小时没动静)
@@ -248,7 +256,7 @@ public class ProactiveEngine {
                 && lastInteraction.isBefore(now.minusHours(2))) {
             return ProactiveDecision.send("傍晚回访",
                     "这会儿忙完了吗?想听听你今天过得怎么样。",
-                    "evening_checkin", 0.55 * factor, cost(now, lastInteraction, todayCount, responsive));
+                    "evening_checkin", 0.55 * factor, cst);
         }
 
         // 触发 4: 分享好消息后的跟进(48h 内,未跟进过)
@@ -265,7 +273,7 @@ public class ProactiveEngine {
             if (!followedUp) {
                 return ProactiveDecision.send("跟进好消息",
                         "前两天你说的那个好消息,后来怎么样了?我一直惦记着呢。",
-                        "follow_up_joy", 0.65 * factor, cost(now, lastInteraction, todayCount, responsive));
+                        "follow_up_joy", 0.65 * factor, cst);
             }
         }
 
@@ -274,7 +282,7 @@ public class ProactiveEngine {
                 && lastInteraction.isBefore(now.minusDays(2))) {
             return ProactiveDecision.send("好久不见",
                     "最近两天你都没怎么找我,我有点想你了。要是忙,就告诉我一声,我不吵你。",
-                    "silence", 0.5 * factor, cost(now, lastInteraction, todayCount, responsive));
+                    "silence", 0.5 * factor, cst);
         }
 
         // 触发 5.5: V4 Re-engagement(冲突后缓和) — 她受了伤/生气, 但过了一阵想缓和关系
@@ -284,7 +292,7 @@ public class ProactiveEngine {
                 && todayCount == 0) {
             return ProactiveDecision.send("缓和关系",
                     "刚才是我不太对……你现在还生气吗?",
-                    "reconnect", 0.55 * factor, cost(now, lastInteraction, todayCount, responsive));
+                    "reconnect", 0.55 * factor, cst);
         }
 
         return ProactiveDecision.nothing();
@@ -330,15 +338,19 @@ public class ProactiveEngine {
         }
     }
 
-    private double cost(LocalDateTime now, LocalDateTime lastInteraction, long todayCount, boolean responsive) {
-        double cost = 0.15;
-        int h = now.getHour();
-        if (h >= 0 && h < 8) cost += 0.4;
-        if (h >= 22) cost += 0.1;
-        if (lastInteraction != null && lastInteraction.isAfter(now.minusHours(4))) cost += 0.35;
-        cost += responsive ? -0.1 : 0.1;
-        if (todayCount >= props.getProactive().getMaxNotificationsPerDay()) cost += 0.3;
-        return cost;
+    /**
+     * V4.2 打断成本: 由"最后一次互动距今"的正相关曲线决定。
+     * - 刚聊过(<30min) → 成本高, 不打扰(她刚回完你, 不会立刻又发)
+     * - 越久没聊 → 成本越低(她想你了, 联系更自然)
+     * - 用平滑曲线而非固定加值; 时间成本自然回落, 不再有"4h 内一律 +0.35"的生硬
+     */
+    private double cost(LocalDateTime lastInteraction) {
+        if (lastInteraction == null) return 0.05;   // 从未聊过, 几乎无打扰成本
+        long minutes = java.time.Duration.between(lastInteraction, LocalDateTime.now()).toMinutes();
+        if (minutes <= 0) return 0.9;
+        // 1 小时内的打扰成本: 从 0.9 平滑下降到 ~0.2
+        double cost = 0.9 * Math.exp(-minutes / 55.0) + 0.15;
+        return Math.max(0.05, Math.min(1.0, cost));
     }
 
     /** 上次主动消息后 2 小时内用户是否回话(响应率代理) */

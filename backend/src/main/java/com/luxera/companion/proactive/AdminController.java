@@ -79,10 +79,11 @@ public class AdminController {
         return Map.of("actions", actions, "count", actions.size());
     }
 
-    /** V4: 定向触发某伴侣的主动消息(测试实时推送) */
+    /** V4.2: 定向触发某伴侣的主动消息(?force=true 模拟隔了一阵没聊, 稳定验证实时推送) */
     @PostMapping("/proactive/run/{companionId}")
-    public Map<String, Object> runProactiveFor(@PathVariable String companionId) {
-        List<String> actions = proactiveEngine.runForCompanion(companionId);
+    public Map<String, Object> runProactiveFor(@PathVariable String companionId,
+                                               @RequestParam(required = false, defaultValue = "false") boolean force) {
+        List<String> actions = proactiveEngine.runForCompanion(companionId, force);
         return Map.of("actions", actions, "count", actions.size());
     }
 
