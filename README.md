@@ -2,198 +2,268 @@
 
 > **不是 Chatbot**：拥有稳定人格、连续人生、持续记忆，随时间与用户建立关系，并在合适的时候主动找你。
 >
-> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）；当前完成 **MVP + 大部分 V2 + 部分 V3**。
+> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）。当前完成 **MVP + 大部分 V2 + 部分 V3**。
 
 | 项 | 值 |
 |----|----|
-| 后端 | Spring Boot 2.7.18 · JDK 17 · 模块化单体（116 个 Java 类） |
+| 后端 | Spring Boot 2.7.18 · JDK 17 · 模块化单体（116 个 Java 类，14 个业务模块） |
 | 前端 | React 19 · Vite 8 · TypeScript(strict) · Tailwind CSS 3 · Zustand |
 | 数据库 | PostgreSQL 16 · 19 张表 |
 | 大模型 | 统一 LLM 网关 → DeepSeek(deepseek-chat)，无 key 自动降级 Mock |
 | 线上 | `https://companion.luxera.top`（nginx + systemd jar :8081） |
-| 代码 | GitHub `Hojay-Chen/companion-agent`（最新 `ea9a850`） |
+| 代码 | GitHub `Hojay-Chen/companion-agent` |
 | 当前数据量 | 19 用户 / 19 伴侣 / 134 消息 / 104 记忆 / 61 反思记录 |
 
 ## 📖 目录
 
-- [1. 产品简介](#1-产品简介)
-  - [1.1 产品定位](#11-产品定位)
-  - [1.2 核心闭环](#12-核心闭环)
-  - [1.3 技术栈](#13-技术栈)
-- [2. 总体架构](#2-总体架构)
-  - [2.1 架构风格](#21-架构风格)
-  - [2.2 逻辑分层](#22-逻辑分层)
-  - [2.3 部署拓扑](#23-部署拓扑)
-  - [2.4 目录结构](#24-目录结构)
-- [3. 模块组织](#3-模块组织)
-  - [3.1 模块全景](#31-模块全景)
-  - [3.2 模块依赖方向](#32-模块依赖方向)
-- [4. 数据架构](#4-数据架构)
-  - [4.1 ER 总览](#41-er-总览)
-  - [4.2 数据表清单（19 表）](#42-数据表清单19-表)
-- [5. 功能实现详解](#5-功能实现详解)
-  - [5.1 人格系统](#51-人格系统)
-    - [5.1.1 人格编译（PersonaCompiler）](#511-人格编译personacompiler)
-    - [5.1.2 版本化与演化](#512-版本化与演化)
-  - [5.2 聊天全链路](#52-聊天全链路)
-    - [5.2.1 SSE 流式协议](#521-sse-流式协议)
-    - [5.2.2 感知引擎](#522-感知引擎)
-    - [5.2.3 工作记忆（WorkingMemory）](#523-工作记忆workingmemory)
-    - [5.2.4 上下文构建与提示词组装](#524-上下文构建与提示词组装)
-    - [5.2.5 输出质量控制（NaturalnessEngine）](#525-输出质量控制naturalnessengine)
-    - [5.2.6 一次对话的完整时序](#526-一次对话的完整时序)
-  - [5.3 记忆系统](#53-记忆系统)
-    - [5.3.1 抽取（每轮异步 LLM）](#531-抽取每轮异步-llm)
-    - [5.3.2 检索排序（核心公式）](#532-检索排序核心公式)
-    - [5.3.3 关联记忆](#533-关联记忆)
-    - [5.3.4 衰减（每周一 04:30）](#534-衰减每周一-0430)
-    - [5.3.5 记忆透明与控制](#535-记忆透明与控制)
-  - [5.4 用户模型](#54-用户模型)
-  - [5.5 关系系统](#55-关系系统)
-  - [5.6 Agent 状态](#56-agent-状态)
-  - [5.7 反思与人格演化](#57-反思与人格演化)
-  - [5.8 主动消息与日常作息](#58-主动消息与日常作息)
-    - [5.8.1 主动决策（每 15 分钟）](#581-主动决策每-15-分钟)
-    - [5.8.2 日常时间表（CompanionSchedule）](#582-日常时间表companionschedule)
-  - [5.9 工具与提醒](#59-工具与提醒)
-- [6. 接口设计（API 清单）](#6-接口设计api-清单)
-  - [6.1 认证](#61-认证)
-  - [6.2 伴侣 / 人格](#62-伴侣--人格)
-  - [6.3 会话 / 聊天](#63-会话--聊天)
-  - [6.4 记忆](#64-记忆)
-  - [6.5 用户模型 / 关系 / 状态 / 提醒 / 通知 / 反思](#65-用户模型--关系--状态--提醒--通知--反思)
-  - [6.6 管理（验收/运维）](#66-管理验收运维)
-- [7. 快速开始](#7-快速开始)
-  - [7.1 环境要求](#71-环境要求)
-  - [7.2 本地启动](#72-本地启动)
-  - [7.3 LLM 配置](#73-llm-配置)
-  - [7.4 生产部署](#74-生产部署)
-  - [7.5 冒烟测试](#75-冒烟测试)
-- [8. 非功能设计](#8-非功能设计)
-  - [8.1 性能](#81-性能)
-  - [8.2 安全](#82-安全)
-  - [8.3 可扩展性](#83-可扩展性)
-  - [8.4 可观测性](#84-可观测性)
-- [9. 技术决策与权衡](#9-技术决策与权衡)
-- [10. 测试与验证](#10-测试与验证)
-- [11. 已知限制与演进路线](#11-已知限制与演进路线)
-  - [11.1 限制（如实）](#111-限制如实)
-  - [11.2 与设计文档路线图的关系](#112-与设计文档路线图的关系)
-  - [11.3 演进路线](#113-演进路线)
+- [1. 产品是什么](#1-产品是什么)
+  - [1.1 一句话定位](#11-一句话定位)
+  - [1.2 它和普通 AI 助手的区别](#12-它和普通-ai-助手的区别)
+  - [1.3 用户会逐渐产生的感受](#13-用户会逐渐产生的感受)
+- [2. 产品核心原则](#2-产品核心原则)
+- [3. 核心概念模型](#3-核心概念模型)
+- [4. 产品界面](#4-产品界面)
+- [5. 技术栈](#5-技术栈)
+- [6. 总体架构](#6-总体架构)
+  - [6.1 架构风格：前后端分离 + 后端模块化单体](#61-架构风格前后端分离--后端模块化单体)
+  - [6.2 逻辑分层](#62-逻辑分层)
+  - [6.3 部署拓扑](#63-部署拓扑)
+  - [6.4 项目目录](#64-项目目录)
+- [7. 模块组织与依赖](#7-模块组织与依赖)
+  - [7.1 模块全景](#71-模块全景)
+  - [7.2 模块依赖方向](#72-模块依赖方向)
+- [8. 实体关系总览](#8-实体关系总览)
+- [9. 数据表详细设计（19 张表）](#9-数据表详细设计19-张表)
+  - [9.1 用户与伴侣](#91-用户与伴侣)
+  - [9.2 对话](#92-对话)
+  - [9.3 记忆](#93-记忆)
+  - [9.4 用户模型](#94-用户模型)
+  - [9.5 关系 / 状态 / 反思 / 主动 / 工具](#95-关系--状态--反思--主动--工具)
+  - [9.6 JSON 存储实现](#96-json-存储实现)
+- [10. 用户系统](#10-用户系统)
+  - [功能介绍](#功能介绍)
+  - [实现原理](#实现原理)
+- [11. 伴侣创建与人格编译](#11-伴侣创建与人格编译)
+  - [功能介绍](#功能介绍-2)
+  - [实现原理](#实现原理-2)
+- [12. 聊天对话（核心交互）](#12-聊天对话核心交互)
+  - [功能介绍](#功能介绍-3)
+  - [实现原理](#实现原理-3)
+- [13. 感知引擎](#13-感知引擎)
+  - [功能介绍](#功能介绍-4)
+  - [实现原理](#实现原理-4)
+- [14. 工作记忆](#14-工作记忆)
+  - [功能介绍](#功能介绍-5)
+  - [实现原理](#实现原理-5)
+- [15. 记忆系统](#15-记忆系统)
+  - [功能介绍](#功能介绍-6)
+  - [实现原理](#实现原理-6)
+- [16. 用户模型](#16-用户模型)
+  - [功能介绍](#功能介绍-7)
+  - [实现原理](#实现原理-7)
+- [17. 关系系统](#17-关系系统)
+  - [功能介绍](#功能介绍-8)
+  - [实现原理](#实现原理-8)
+- [18. Agent 状态](#18-agent-状态)
+  - [功能介绍](#功能介绍-9)
+  - [实现原理](#实现原理-9)
+- [19. 反思与人格演化](#19-反思与人格演化)
+  - [功能介绍](#功能介绍-10)
+  - [实现原理](#实现原理-10)
+- [20. 主动消息与日常作息](#20-主动消息与日常作息)
+  - [功能介绍](#功能介绍-11)
+  - [实现原理](#实现原理-11)
+- [21. 工具与提醒](#21-工具与提醒)
+  - [功能介绍](#功能介绍-12)
+  - [实现原理](#实现原理-12)
+- [22. 输出质量控制](#22-输出质量控制)
+  - [功能介绍](#功能介绍-13)
+  - [实现原理](#实现原理-13)
+- [23. LLM 网关](#23-llm-网关)
+  - [功能介绍](#功能介绍-14)
+  - [实现原理](#实现原理-14)
+- [24. API 清单](#24-api-清单)
+  - [24.1 认证](#241-认证)
+  - [24.2 伴侣 / 人格](#242-伴侣--人格)
+  - [24.3 会话 / 聊天](#243-会话--聊天)
+  - [24.4 记忆](#244-记忆)
+  - [24.5 用户模型 / 关系 / 状态 / 提醒 / 通知 / 反思](#245-用户模型--关系--状态--提醒--通知--反思)
+  - [24.6 管理（验收/运维）](#246-管理验收运维)
+- [25. 快速开始](#25-快速开始)
+  - [25.1 环境要求](#251-环境要求)
+  - [25.2 本地启动](#252-本地启动)
+  - [25.3 LLM 配置](#253-llm-配置)
+  - [25.4 生产部署](#254-生产部署)
+  - [25.5 冒烟测试](#255-冒烟测试)
+- [26. 非功能设计](#26-非功能设计)
+  - [26.1 性能](#261-性能)
+  - [26.2 安全](#262-安全)
+  - [26.3 可扩展性](#263-可扩展性)
+  - [26.4 可观测性](#264-可观测性)
+- [27. 技术决策与权衡](#27-技术决策与权衡)
+- [28. 测试与验证](#28-测试与验证)
+- [29. 已知限制（如实）](#29-已知限制如实)
+- [30. 与设计文档路线图的关系](#30-与设计文档路线图的关系)
+- [31. 演进路线](#31-演进路线)
+- [附录](#附录)
 
 ---
 
-## 1. 产品简介
+# 第一部分 · 产品介绍
 
-### 1.1 产品定位
+## 1. 产品是什么
 
-不是传统 Chatbot（`User → Question → AI → Answer`），而是：
+### 1.1 一句话定位
+
+一个**长期存在的数字人格**：它不是"你问一句、它答一句"的工具，而是一个**有独立人格、有连续人生、记得你们之间一切、随时间和你一起成长、会在合适的时机主动找你**的 AI 数字伴侣。
+
+### 1.2 它和普通 AI 助手的区别
+
+| 维度 | 普通 AI 助手 | Luxera Companion |
+|------|-------------|-----------------|
+| 交互 | `用户问 → AI 答` | `用户 ⇄ 伴侣` 的双向陪伴 |
+| 记忆 | 无状态或临时 | 分层记忆 + 时间衰减 + 强化 + 关联图谱 |
+| 人格 | 每次对话重新生成 | 稳定人格，存库、版本化、缓慢演化 |
+| 关系 | 无 | 阶段机（初识→熟络→亲密→深深相连）+ 里程碑 |
+| 时间感 | 无 | 动态年龄、人生时间线、日常作息、记忆衰减 |
+| 主动性 | 无 | 主动消息引擎（打断成本控制） |
+
+### 1.3 用户会逐渐产生的感受
 
 ```
-User ⇄ Companion
-      │
-      ├─ Conversation（对话）
-      ├─ Memory（记忆）
-      ├─ Relationship（关系）
-      ├─ Life / Time（人生与时间）
-      └─ Shared Experience（共同经历）
+阶段1: "这个 AI 聊天挺自然。"
+阶段2: "她好像挺了解我的。"
+阶段3: "她居然记得这个。"
+阶段4: "她会根据以前的事情理解我。"
+阶段5: "她已经和以前不一样了。"
+阶段6: "感觉她真的一直在陪着我。"
 ```
 
-核心体验追求：**存在感 · 连续性 · 熟悉感 · 人格一致 · 关系成长 · 共同经历 · 适度主动**。
+## 2. 产品核心原则
 
-### 1.2 核心闭环
+1. **Agent 优先于 Chat**：Chat 是入口，产品本质是一个有 Identity/Life/Personality/State/Memory/Relationship 的 Agent。
+2. **时间是系统的一等公民**：所有状态随时间演化——年龄、记忆、关系、作息、人格都不存"当前值"，而是存时间线 + 动态计算。
+3. **事实与推测分离**：明确告知的（Fact）≠ 观察到的（Pattern）≠ 推测的（Hypothesis），推测永远标注"可能是"。
+4. **人格稳定但可演化**：Stable（价值观/气质）+ Adaptive（相处方式）+ Current State（当下心情）。
+5. **记忆不是向量库**：向量只是检索手段之一；完整检索 = 语义 + 关键词 + 实体 + 时间 + 结构化 + 关联图。
+6. **不把真人感当随机口头禅**：真实感来自长期一致的人格 + 连续记忆 + 关系历史 + 允许不知道。
+
+## 3. 核心概念模型
 
 ```
-User → Conversation → Perception → [Memory / UserModel / State]
-→ Relationship → Intention → Behavior → Response → Experience → Reflection
-→ [Memory更新 / UserModel更新 / Persona演化] →（循环）
+User（用户）
+Companion（数字人格实例）  ← 用户真正长期相处的对象
+  ├─ Persona（人格：traits/沟通/行为/价值观/边界，版本化）
+  ├─ Life（人生：出生/教育/工作/居住，时间线）
+  ├─ Memory（记忆：episodic/semantic/shared + 关联图谱）
+  ├─ State（当下：心情/精力/压力，短期）
+  └─ Relationship（关系：阶段/熟悉/信任/亲密/好感）
+UserModel（系统对用户的长期理解：事实/偏好/模式/推测）
+Time 贯穿一切
 ```
 
-### 1.3 技术栈
+## 4. 产品界面
 
-| 层 | 技术 |
-|----|------|
-| Web | Spring MVC · SSE(SseEmitter) · nginx 反代(`proxy_buffering off`) |
-| 数据 | Spring Data JPA(Hibernate 5.6) · PostgreSQL · JSON 用 `AttributeConverter` 存 text 列 |
-| 认证 | Spring Security + jjwt(HS256) + BCrypt |
-| 异步/定时 | `@EnableAsync/@EnableScheduling` + 自配线程池 |
-| LLM | WebClient(webflux) → DeepSeek `/chat/completions`；结构化用 `response_format=json_object` |
-| 前端 | React 19 + Vite 8 + TS strict + Tailwind + Zustand + fetch 流式解析 |
+| 页面 | 路由 | 功能 |
+|------|------|------|
+| 登录 / 注册 | `/login` `/register` | 账号体系 |
+| 伴侣列表 | `/companions` | 我的伴侣卡片（名字/年龄/关系阶段/性格摘要） |
+| 创建向导 | `/companions/new` | 自然语言描述 → 人格编译 → 场景预览 → 确认创建 |
+| 聊天主界面 | `/companions/:id` | SSE 流式聊天 + 时间分隔 + 抽屉（记忆/她懂你/关系/提醒/通知） |
+| 设置 | `/companions/:id/settings` | 人格编辑 / 人格版本历史 / 反思记录 / 人生时间线 / 隐私 |
 
 ---
 
-## 2. 总体架构
+# 第二部分 · 系统总体架构
 
-### 2.1 架构风格
+## 5. 技术栈
 
-**前后端分离 + 后端模块化单体（Modular Monolith）**：单体部署简单、事务一致性强；按业务域清晰切分（14 个包），未来可平滑拆微服务。
+| 层 | 技术 | 用途 |
+|----|------|------|
+| 后端框架 | Spring Boot 2.7.18 + JDK 17 | 服务主体 |
+| Web | Spring MVC + SSE(SseEmitter) | REST + 流式聊天 |
+| 持久层 | Spring Data JPA (Hibernate 5.6) | ORM |
+| 数据库 | PostgreSQL 16（19 表） | 主存储 |
+| 认证 | Spring Security + jjwt(HS256) + BCrypt | 登录态 |
+| 异步/定时 | @EnableAsync / @EnableScheduling + 自配线程池 | 后处理与定时任务 |
+| LLM | WebClient(webflux) → DeepSeek `/chat/completions` | 聊天 + 结构化抽取 |
+| 前端 | React 19 + Vite 8 + TS(strict) + Tailwind 3 + Zustand + react-router 7 | SPA |
+| 部署 | nginx + systemd jar + systemd 定时 | 生产 |
 
-### 2.2 逻辑分层
+## 6. 总体架构
+
+### 6.1 架构风格：前后端分离 + 后端模块化单体
+
+**为什么是模块化单体**：单体部署简单、事务一致性强；同时按业务域切成 14 个清晰的包（模块），未来可平滑拆分微服务。这是业界对"中小规模但要严谨领域建模"项目的推荐形态。
+
+### 6.2 逻辑分层
 
 ```
-表示层   React SPA（/companions · 聊天 · 抽屉 · 设置）
-接入层   ChatController(SSE) / 各业务 Controller / JWT 认证
-编排层   CompanionRuntime(一次对话) · AgentPostProcessor(异步后处理)
-        · ProactiveEngine / ReflectionJob(定时)
-领域层   persona / conversation / memory / usermodel / relationship
-        / state / reflection / proactive / tool / agent(上下文构建)
-基础层   llm(网关) / config / common / JPA Repository
+┌─────────────────────────────────────────────────────┐
+│ 表示层    React SPA（列表/创建向导/聊天/设置）        │
+├─────────────────────────────────────────────────────┤
+│ 接入层    ChatController(SSE) / 各业务 Controller     │
+│          JWT 认证过滤器                              │
+├─────────────────────────────────────────────────────┤
+│ 编排层    CompanionRuntime（一次对话编排）             │
+│          AgentPostProcessor（异步后处理）             │
+│          ProactiveEngine / ReflectionJob（定时）     │
+├─────────────────────────────────────────────────────┤
+│ 领域层    persona / conversation / memory            │
+│          / usermodel / relationship / state          │
+│          / reflection / proactive / tool             │
+├─────────────────────────────────────────────────────┤
+│ 基础层    llm（网关）/ config / common / Repository   │
+└─────────────────────────────────────────────────────┘
 ```
 
-### 2.3 部署拓扑
+### 6.3 部署拓扑
 
 ```
 浏览器 → https://companion.luxera.top
-       → nginx(80/443) ─ /     → /var/www/companion (SPA 产物)
-                       └─ /api → 127.0.0.1:8081 (jar, systemd 常驻)
-                                → PostgreSQL :5432 (库 companion)
-                                → DeepSeek API (HTTPS 出网)
+       → nginx(80/443) ─ /     → /var/www/companion（SPA 构建产物）
+                       └─ /api → 127.0.0.1:8081（jar，systemd 常驻）
+                                → PostgreSQL :5432（库 companion）
+                                → DeepSeek API（HTTPS 出网）
 ```
 
-### 2.4 目录结构
+### 6.4 项目目录
 
 ```
 companion-agent/
 ├── backend/                          # Spring Boot 模块化单体
 │   └── src/main/java/com/luxera/companion/
-│       ├── auth/  persona/  conversation/  agent/  memory/
-│       ├── usermodel/  relationship/  state/  reflection/
-│       ├── proactive/  tool/  llm/  config/  common/
+│       ├── auth/    persona/    conversation/    agent/
+│       ├── memory/  usermodel/  relationship/    state/
+│       ├── reflection/ proactive/ tool/          llm/
+│       └── config/  common/
 ├── frontend/                         # React SPA
-│   └── src/
-│       ├── api/client.ts             # fetch 封装 + SSE 流式解析
-│       ├── stores/  components/  pages/  types/
-├── scripts/
-│   ├── deploy.sh                     # 一键部署(前端+nginx+systemd)
-│   └── smoke.sh                      # 端到端冒烟测试
-├── PRODUCT_STATUS.md                 # 产品情况报告（面向上级汇报）
-└── TECHNICAL_ARCHITECTURE.md         # 架构设计文档（深挖用）
+│   └── src/{api, stores, components, pages, types}
+└── scripts/{deploy.sh, smoke.sh}
 ```
 
----
+## 7. 模块组织与依赖
 
-## 3. 模块组织
+### 7.1 模块全景
 
-### 3.1 模块全景
+| 模块 | 核心类 | 职责 |
+|------|--------|------|
+| `auth/` | User, AuthService, JwtUtil | 用户系统 + JWT |
+| `persona/` | Companion, Persona, PersonaVersion, PersonaCompiler, PersonaEvolutionService | 人格本体 / 编译 / 版本化 / 演化 |
+| `conversation/` | Conversation, Message, ChatController | 会话 + 消息 + SSE |
+| `agent/` | CompanionRuntime, PerceptionEngine, PerceptionRefiner, WorkingMemory, ContextBuilder, PromptAssembler, NaturalnessEngine, CompanionSchedule | ★ 运行时核心 |
+| `memory/` | Memory, MemoryLink, MemoryService, MemoryExtractor, MemoryAssociationService, MemoryDecayService | 记忆全生命周期 |
+| `usermodel/` | UserFact/Preference/Pattern/Hypothesis, UserModelService | 用户理解 |
+| `relationship/` | Relationship, RelationshipEvent, SharedExperience, RelationshipEngine | 关系演化 |
+| `state/` | AgentState, AgentStateService | 短期状态 |
+| `reflection/` | ReflectionService, Daily/WeeklyReflectionJob | 反思 |
+| `proactive/` | ProactiveEngine, ProactiveDecision, Notification | 主动消息 |
+| `tool/` | Reminder, ReminderPlanner, BirthdayService | 提醒/生日 |
+| `llm/` | LlmGateway, LlmRouter, OpenAiCompatibleGateway, AnthropicGateway, MockLlmGateway | LLM 统一网关 |
+| `config/` | SecurityConfig, JwtUtil, AppProperties, CurrentUser | 基础设施 |
+| `common/` | JsonCodec, ApiError, BusinessException | 公共 |
 
-| 模块 | 职责 |
-|------|------|
-| `auth/` | 用户系统 + JWT |
-| `persona/` | Companion / Persona / 版本化 / LifeEvent / PersonaCompiler / PersonaEvolutionService |
-| `conversation/` | Conversation / Message / ChatController(SSE) |
-| `agent/` | ★ 运行时核心：感知、工作记忆、上下文、提示词、编排、质量、时间表、异步后处理 |
-| `memory/` | 记忆抽取 / 检索 / 衰减 / 强化 / 关联图谱 / 透明 |
-| `usermodel/` | 用户事实/偏好/模式/推测 + 纠正机制 |
-| `relationship/` | 关系阶段机 + 里程碑 + 共同经历 |
-| `state/` | Agent 短期状态（≠人格） |
-| `reflection/` | 每日/每周 LLM 反思 |
-| `proactive/` | 主动消息决策 + 通知 |
-| `tool/` | 提醒 + 生日 + 聊天内建提醒 |
-| `llm/` | LLM 统一网关（OpenAI兼容/Anthropic/Mock） |
-| `config/` | 安全 / JWT / CORS / 配置绑定 / 当前用户 |
-| `common/` | JsonCodec / 异常 / 统一错误 |
-
-### 3.2 模块依赖方向
+### 7.2 模块依赖方向
 
 ```
 agent(运行时) ──依赖──> persona, memory, usermodel, relationship, state, tool, llm, conversation
@@ -202,13 +272,11 @@ reflection    ──依赖──> conversation, memory, usermodel, llm, persona(
 各业务模块     ──依赖──> llm(结构化任务), common, config
 ```
 
-> 原则：领域模块只通过 service 方法互调，不直接访问对方 Repository；llm 是基础设施层。
-
 ---
 
-## 4. 数据架构
+# 第三部分 · 数据架构
 
-### 4.1 ER 总览
+## 8. 实体关系总览
 
 ```
 users 1─* companions 1─* conversations 1─* messages
@@ -223,94 +291,125 @@ users 1─* companions 1─* conversations 1─* messages
                      └─* companion_notifications
 ```
 
-所有核心表强制携带 `user_id + companion_id`（多租户隔离，查询强制过滤）。
+> 所有核心表强制携带 `user_id + companion_id`（多租户隔离，查询强制过滤）。
 
-### 4.2 数据表清单（19 表）
+## 9. 数据表详细设计（19 张表）
 
-| 域 | 表 | 关键字段 |
-|----|----|---------|
-| 用户 | `users` | username, password_hash(bcrypt), email, timezone, birth_date |
-| 用户 | `companions` | name, gender, birth_date, birth_place(JSON), timezone, greeting |
-| 用户 | `persona_versions` | version, is_active, persona_json(JSON), change_source, change_reason |
-| 用户 | `companion_life_events` | type, title, start_time, end_time, importance, emotional_significance |
-| 对话 | `conversations` | title, started_at, last_message_at, message_count, summary |
-| 对话 | `messages` | sender_type, content, intent, emotion, topic, is_proactive, metadata(JSON) |
-| 记忆 | `memories` | type, content, importance, confidence, emotional_weight, relationship_weight, retrieval_count, occurred_at, source_id |
-| 记忆 | `memory_links` | from_memory_id, to_memory_id, relation, strength |
-| 用户模型 | `user_facts` / `user_preferences` / `user_patterns` / `user_hypotheses` | predicate/object, category/preference, pattern/evidence, hypothesis/evidence + confidence |
-| 关系 | `relationships` | relationship_stage, familiarity, trust, intimacy, affection, message_count |
-| 关系 | `relationship_events` / `shared_experiences` | type, title, significance/importance, occurred_at |
-| 状态 | `agent_states` | mood, energy, stress, social_energy, curiosity, emotional_closeness |
-| 反思 | `reflection_records` | type(daily/weekly), period, summary, insights(JSON), memory_candidates(JSON) |
-| 主动 | `companion_notifications` | type, title, content, is_read |
-| 工具 | `reminders` | type(birthday/user_set), title, remind_at, status |
+### 9.1 用户与伴侣
 
-> JSON 存储约定：所有 JSON 字段用 `@Convert` + Jackson 转换器存 `text` 列（`common/convert/`），规避 hibernate-types 在 Hibernate 5.6 下对泛型 Map 的兼容问题；未启用 pgvector。
+| 表 | 字段 |
+|----|------|
+| `users` | id(UUID), username, password_hash(bcrypt), email, nickname, timezone, birth_date, gender, created_at, updated_at |
+| `companions` | id, user_id, name, gender, birth_date, birth_place(JSON), nationality, timezone, greeting, status, deleted_at, created_at, updated_at |
+| `persona_versions` | id, companion_id, version, is_active, persona_json(JSON), change_source(user/evolution), change_reason, created_at |
+| `companion_life_events` | id, companion_id, type, subtype, title, description, start_time, end_time, importance, emotional_significance, source, created_at |
+
+### 9.2 对话
+
+| 表 | 字段 |
+|----|------|
+| `conversations` | id, user_id, companion_id, title, started_at, last_message_at, message_count, summary, status, created_at, updated_at |
+| `messages` | id, conversation_id, sender_type, content, intent, emotion, topic, is_proactive, metadata(JSON), created_at |
+
+### 9.3 记忆
+
+| 表 | 字段 |
+|----|------|
+| `memories` | id, user_id, companion_id, type(episodic/semantic/shared), content, summary, importance, confidence, emotional_weight, relationship_weight, retrieval_count, last_retrieved_at, occurred_at, expires_at, status, source_type, source_id, created_at |
+| `memory_links` | id, from_memory_id, to_memory_id, relation(same_topic), strength, created_at |
+
+### 9.4 用户模型
+
+| 表 | 字段 |
+|----|------|
+| `user_facts` | id, user_id, companion_id, subject, predicate, object, value(JSON), confidence, source_type, source_id, first_observed_at, last_observed_at, status |
+| `user_preferences` | id, user_id, companion_id, category, preference, value(JSON), confidence, source_type, source_id, observed_at, status |
+| `user_patterns` | id, user_id, companion_id, pattern, description, confidence, evidence_count, evidence(JSON), first_observed_at, last_observed_at, status |
+| `user_hypotheses` | id, user_id, companion_id, hypothesis, description, confidence, evidence(JSON), status, created_at, updated_at |
+
+### 9.5 关系 / 状态 / 反思 / 主动 / 工具
+
+| 表 | 字段 |
+|----|------|
+| `relationships` | id, user_id, companion_id, relationship_type, relationship_stage, familiarity, trust, intimacy, affection, shared_experience_count, message_count, last_interaction_at, started_at, updated_at |
+| `relationship_events` | id, relationship_id, type, title, description, significance, occurred_at |
+| `shared_experiences` | id, relationship_id, type, title, description, importance, occurred_at |
+| `agent_states` | id, companion_id, mood, energy, stress, social_energy, curiosity, emotional_closeness, updated_at |
+| `reflection_records` | id, user_id, companion_id, type(daily/weekly), period, summary, insights(JSON), memory_candidates(JSON), user_model_candidates(JSON), relationship_candidates(JSON) |
+| `reminders` | id, user_id, companion_id, type(birthday/user_set/check_in), title, content, remind_at, status, payload(JSON) |
+| `companion_notifications` | id, user_id, companion_id, type, title, content, is_read, created_at |
+
+### 9.6 JSON 存储实现
+
+所有 JSON 字段用 JPA `@Convert` + Jackson 转换器存 `text` 列（`common/convert/`）。**为什么不用 jsonb**：hibernate-types 的 `@Type(jsonb)` 在 Hibernate 5.6 下对泛型 Map 报 `propertyClass null`（已踩坑弃用）。text + 转换器兼容性好，JSON 内查询用独立列覆盖。
 
 ---
 
-## 5. 功能实现详解
+# 第四部分 · 功能详解（功能介绍 + 实现原理）
 
-### 5.1 人格系统
+> 每个功能分两部分：**功能介绍**（是什么、用户怎么用）与**实现原理**（用什么技术、关键类、代码、流程）。
 
-#### 5.1.1 人格编译（PersonaCompiler）
+## 10. 用户系统
 
-```
-用户自然语言描述 → LLM 结构化输出(低温度+response_format=json_object)
-→ Persona POJO（identity/relationship/personality(traits+summary)/communication
-              /behaviors/values/boundaries/life）
-→ fillDefaults(缺字段补默认) + validate → 场景预览(可反复换场景)
-```
+### 功能介绍
+注册 / 登录 / 获取当前用户。账号是用户在平台的唯一身份，所有数据（伴侣、记忆、关系）都归属某个用户。
 
-#### 5.1.2 版本化与演化
+### 实现原理
+- **技术**：Spring Security + jjwt(HS256) + BCrypt。
+- `AuthService`：`register`（用户名唯一校验、bcrypt 加密）、`login`（校验密码 → 发 token）。
+- `JwtUtil`：`@PostConstruct` 用 secret 构建 HMAC-SHA256 key，token 带 `subject=userId` + 7 天过期。
+- `JwtAuthenticationFilter`（`OncePerRequestFilter`）：解析 `Authorization: Bearer <token>` → 校验有效且用户存在 → 把 `userId` 作为 `Authentication.principal` 写入 `SecurityContextHolder`。
+- `CurrentUser`：业务层用 `currentUser.requireUserId()` 拿当前用户并做归属校验。
 
-- **版本化**：每次修改/演化，旧版本 `is_active=false`，新版本 `version+1`，记录 `change_source`(user/evolution) 与 `change_reason`。
-- **身份时间化**：`birth_date` 存库，**年龄 = current_date − birth_date 动态计算**；生日 = 每年自动提醒。
-- **人生时间线**：编译器给 events 则入库，否则按年龄生成默认（小学/中学/大学/第一份工作）。
-- **人格演化**（PersonaEvolutionService，每周反思后）：LLM 提出 traits 微调 → **±0.05/次、最多 3 处、traits∈[0.1,0.95]、价值观/边界不可变** → 生成新版本可回溯。
-
-### 5.2 聊天全链路
-
-#### 5.2.1 SSE 流式协议
-
-后端 `ChatController.chat()` 返回 `SseEmitter`（300s 超时），线程池执行；具名事件：
-
-```
-event:meta    {intent, emotion, topic}
-event:token   {delta}          ← 每个 LLM 增量一次
-event:replace {content}        ← 自然度修正时整体替换
-event:done    {messageId}
-event:error   {message}
+```java
+// SecurityConfig 关键：无状态会话 + JWT 过滤器
+http.csrf().disable()
+    .sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+    .authorizeRequests(auth -> auth
+        .antMatchers("/api/auth/register", "/api/auth/login", "/api/health").permitAll()
+        .anyRequest().authenticated())
+    .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 ```
 
-前端 `api/client.ts` 的 `streamPost`（EventSource 不支持 POST，故用 fetch 读流）：按 `\n\n` 分块 → 解析 `event:`/`data:` 行 → 回调驱动气泡渲染（token 追加 / replace 替换 / done 重拉）。
+## 11. 伴侣创建与人格编译
 
-#### 5.2.2 感知引擎
+### 功能介绍
+用户在创建向导里用**一段自然语言**描述想要的伴侣（性格、说话方式、关系、相处方式），系统自动编译成结构化人格，并能在 4 个预设场景（工作失败/深夜疲惫/分享喜悦/被误解）下**预览她的回应**；满意后确认创建。之后可在设置里重新描述 → 生成新人格版本。
 
-| 层 | 技术 | 用途 |
-|----|------|------|
-| 启发式 `PerceptionEngine` | 关键词短路匹配（12 intent / 8 emotion / 8 topic） | 毫秒级兜底 |
-| LLM 同步精炼 `PerceptionRefiner` | `structured("perception")` → intent/emotion/topic/entities | **质量优先**，失败回退启发式 |
+### 实现原理
+- **技术**：LLM 结构化输出（`response_format=json_object` + 低温度）+ Jackson 映射到强类型 `Persona` POJO。
+- `PersonaCompiler.compile(description)`：LLM 输出符合 Schema 的 JSON → `mapper.treeToValue` 成 `Persona` → `fillDefaults`（缺失字段补默认）→ `validate`。
+- `Persona` 结构：
+  ```
+  identity（name/gender/birth_date/birth_place/nationality/timezone）
+  relationship（type: girlfriend/boyfriend/friend）
+  personality（traits 10维 + summary）
+  communication（formality/verbosity/emoji_usage/teasing/initiative/directness/humor + style）
+  behaviors（trigger → tendencies，如 user_is_upset → [listen_first, avoid_immediate_advice,...]）
+  values / boundaries / life（background + events + residences）
+  ```
+- `PersonaCompiler.preview(persona, scenario)`：以该人格身份、在给定场景下让 LLM 生成 1-3 句回应（`PersonaText.describe` 把人格渲染成系统提示）。
+- `CompanionService.create`：由 Persona 落 `companions` + 初始 `persona_versions`(v1) + 种子 `companion_life_events` + 初始化 `relationships` + `agent_states`。
 
-精炼结果写入消息元数据 + 工作记忆，供本轮 Prompt 使用。
+**关键设计**：人格是**数据**（存库 JSON），不是写死在 Prompt 里；Prompt 只是它的运行时投影。
 
-#### 5.2.3 工作记忆（WorkingMemory）
+## 12. 聊天对话（核心交互）
 
-会话级 `companionId:conversationId → {recent≤12条, currentTopic, currentIntent, currentEmotion, currentEntities}`；TTL 720 分钟过期；注入 Prompt"当前会话状态"。内存 `ConcurrentHashMap` 实现（接口可替换 Redis）。
+### 功能介绍
+流式打字机对话；支持多会话；每条消息带意图/情绪/话题；回复 2-4 句、有来有往、会引用记忆；对话窗口显示真实时间（今天/昨天/日期分隔 + HH:mm）。
 
-#### 5.2.4 上下文构建与提示词组装
-
-`ContextBuilder` 按优先级聚合：最近消息 → 人格 → 时间+作息 → Agent状态 → 工作记忆 → 工具结果 → 关系摘要 → 记忆(Top-N) → 用户模型 → 行为准则。
-**原则**：DB 是源、Prompt 是投影；不塞全量历史。
-
-#### 5.2.5 输出质量控制（NaturalnessEngine）
-
-规则检测并修复：AI 套话（13 类，直接剔除）/ 模板安慰 / 说教式建议 / 过度道歉(≥2) / 过度 emoji(>3) / 回应过长(>500字)。修正后经 SSE `replace` 整体替换。
-
-#### 5.2.6 一次对话的完整时序
-
-```
-ChatController(SSE)
+### 实现原理
+- **SSE 流式**：`ChatController.chat()` 返回 `SseEmitter`（300s），线程池执行；具名事件协议：
+  ```
+  event:meta    {intent, emotion, topic}
+  event:token   {delta}          ← LLM 每个增量
+  event:replace {content}        ← 自然度修正时整体替换
+  event:done    {messageId}
+  event:error   {message}
+  ```
+- **前端**：`streamPost`（fetch + ReadableStream，按 `\n\n` 分块解析 `event:`/`data:`）驱动气泡渲染。
+- **一次对话完整时序**（`CompanionRuntime.generate`）：
+  ```
   1 保存 user 消息 + 工作记忆
   2 启发式感知 → LLM 同步精炼感知
   3 (request_tool) ReminderPlanner 建提醒
@@ -318,17 +417,64 @@ ChatController(SSE)
   5 LlmRouter.chatStream → SSE 逐 token
   6 NaturalnessEngine 校验 → replace 修正
   7 保存 companion 消息 + 工作记忆 → done
-  8 异步: MemoryExtractor + UserModelExtractor + RelationshipEngine + AgentStateService
+  8 异步后处理（记忆抽取/用户模型/关系/状态）
+  ```
+
+## 13. 感知引擎
+
+### 功能介绍
+识别用户每条消息的**意图**（12 类：问候/提问/倾诉开心/倾诉难过/求工具/纠正/计划…）、**情绪**（8 类：累/难过/焦虑/生气/开心/孤单/感激/平静）、**话题**（8 类：工作/学习/健康/关系/娱乐/美食/旅行/天气）。这些是后续关系、状态、记忆、回复的基础。
+
+### 实现原理
+- **双层架构**：
+  | 层 | 技术 | 说明 |
+  |----|------|------|
+  | 启发式 `PerceptionEngine` | 关键词短路匹配 | 毫秒级兜底，保证首包快 |
+  | LLM 同步精炼 `PerceptionRefiner.refineNow` | `structured("perception")` → intent/emotion/topic/entities | **质量优先**（用户接受延迟），失败回退启发式 |
+- 精炼结果写入：用户消息元数据（intent/emotion/topic）+ 工作记忆（含实体），供本轮 Prompt 与后续关系/状态使用。
+
+```java
+// PerceptionRefiner.refineNow 核心
+var res = llm.structured(StructuredRequest.builder()
+        .task("perception").system(SYSTEM).user(userText).temperature(0.2).build());
+JsonNode root = res.getJson();
+String intent = root.path("intent").asText("");
+String emotion = root.path("emotion").asText("");
+// ... 更新消息元数据 + 工作记忆；失败 catch → return heuristic
 ```
 
-### 5.3 记忆系统
+## 14. 工作记忆
 
-#### 5.3.1 抽取（每轮异步 LLM）
+### 功能介绍
+会话级"正在发生什么"：最近消息（≤12 条）、当前话题、当前情绪、当前意图、当前提到的实体。用于让伴侣在**同一会话内**保持连贯（知道刚才在聊什么）。
 
-`structured("memory-extraction")` → `{episodic[], semantic[], shared[]}` → `saveBatch`：同 content 去重（`max(importance)` + `retrieval_count+1` = **强化**）→ `linkBatch`(同批互链) + `linkNewMemory`(与历史互链)。
+### 实现原理
+- `WorkingMemory`：`ConcurrentHashMap<companionId:conversationId, Entry>`，Entry 含 `recent(Deque)`、`currentTopic/Intent/Emotion`、`currentEntities`、`lastUpdated`。
+- **TTL 过期**：超过 `working-memory-ttl-minutes: 720` 自动失效。
+- `ChatController` 同步记录每条消息；`PerceptionRefiner` 写入精炼后的话题/情绪/实体。
+- `ContextBuilder` 读取 → `PromptAssembler` 渲染"当前会话状态"块。
+- 内存实现（接口可替换 Redis，多实例共享）。
 
-#### 5.3.2 检索排序（核心公式）
+## 15. 记忆系统
 
+### 功能介绍
+伴侣的长期记忆，分三类：
+- **Episodic**：发生过的事（"8月10日你说项目上线了"）
+- **Semantic**：对用户的长期认知（"用户加班多，容易累"）
+- **Shared**：双方共同经历/默契（"你们都爱手冲咖啡"）
+
+用户可查看记忆、搜索、看"为什么你知道"（来源对话）、遗忘单条、清空、导出 JSON。记忆会**随时间和使用演化**（衰减/强化）。
+
+### 实现原理
+
+**抽取**（`MemoryExtractor`，@Async，每轮对话后）：
+```
+LLM structured("memory-extraction") → {episodic[], semantic[], shared[]}
+→ saveBatch：同 content 去重 → max(importance) + retrieval_count+1（强化）
+→ linkBatch(同批互链) + linkNewMemory(与历史互链)
+```
+
+**检索排序**（`MemoryService.retrieve`）——核心公式：
 ```java
 public double retrievalStrength(int daysSinceOccurred) {
     double recencyDecay = Math.pow(0.92, Math.max(0, daysSinceOccurred));
@@ -337,87 +483,180 @@ public double retrievalStrength(int daysSinceOccurred) {
             * emotionalWeight * relationshipWeight * frequencyBoost;
 }
 ```
+流程：候选(关键词 ∪ 全部 ∪ 向量接口) → 按强度降序 → 过滤 ≥0.02 → 取 topN → **强化**(count+1, lastRetrievedAt=now) → 关联扩展(封顶 2N)。
 
-流程：候选(关键词 ∪ 全部 ∪ 向量接口) → 按强度降序 → 过滤 ≥0.02 → 取 topN → **强化(count+1)** → 关联扩展(封顶 2N)。
-
-#### 5.3.3 关联记忆
-
-无向量库，用**中文二元组重叠比**近似语义：清洗标点 → 取每 2 字符的集合 → `交集/最小集 ≥ 0.3` → 双向建链 `relation=same_topic`。检索时沿 `memory_links` 取邻居。
-
-#### 5.3.4 衰减（每周一 04:30）
-
-`occurred_at < now-180天 && importance<0.4 && retrieval_count<3` → 状态 archived。**重要记忆不因时间消失**。
-
-#### 5.3.5 记忆透明与控制
-
-- "为什么你知道"：`/memories/why?q=` 命中 + 以 `occurred_at` 为锚取 ±2 条**来源对话摘录**。
-- 控制：搜索 / 遗忘单条 / 清空 / 导出 JSON。
-
-### 5.4 用户模型
-
-- **分层**：事实(explicit 高置信) / 偏好 / 模式(evidence_count 递增) / 推测(低置信 + 证据，Prompt 标注"可能是")。
-- **去重**：`findTopBy...map(existing→max(confidence)).orElseGet(save)`。
-- **纠正机制**：检测"不是/其实" → 旧推测置信 -0.25(下限0.1) + 写入新事实 + 记"你纠正了她"里程碑。
-
-### 5.5 关系系统
-
-`RelationshipEngine.onMessage`：
-- 数值缓慢增长：familiarity+0.0012 / trust+0.0006 / intimacy+0.0004 / affection+0.0005。
-- **一次性里程碑**（count==0 判重，significance≥0.8 同时写 shared_experiences）：第一次对话/深夜聊天/难过被安慰/分享好消息/主动关心她/一起计划/关系进入新阶段。
-- **阶段机**：`new→familiar→close→deeply_connected`，消息量+数值综合判定（非纯计数）。
-
-### 5.6 Agent 状态
-
-`AgentStateService.onMessage`：energy-0.004 / stress+0.001 / emotionalCloseness+0.0009 / mood 按情绪映射。单行/伴侣，`updated_at` 时间戳。
-
-### 5.7 反思与人格演化
-
-| 任务 | 触发 | 产出 |
-|------|------|------|
-| 每日反思 | 03:17 | 规则层深夜模式→user_patterns；LLM 对当天对话→summary/insights/记忆候选(入库)/用户洞察 |
-| 每周反思 | 周一 05:00 | LLM 对 7 天对话→长期用户理解 / 行为模式(入库) / 关系变化 |
-| 人格演化 | 每周反思后 | LLM 提 traits 微调 → 限幅 → 新版本 |
-
-### 5.8 主动消息与日常作息
-
-#### 5.8.1 主动决策（每 15 分钟）
-
-到期提醒先转通知 → 每伴侣过滤(DND 23-8 / 作息SLEEP / 间隔1h / 日上限5) → `decide()` 按优先级评估触发（深夜加班 / 早安 / 傍晚回访 / 好消息跟进 / 沉默回访），每个触发 `expected_value × 作息因子`；打断成本：
-
+**关联记忆**（`MemoryAssociationService`）：无向量库，用**中文二元组重叠比**近似语义：
 ```java
-double cost = 0.15;
-if (h < 8) cost += 0.4;  if (h >= 22) cost += 0.1;
-if (4h内聊过) cost += 0.35;
-cost += responsive ? -0.1 : 0.1;    // 响应率
-if (今日已达上限) cost += 0.3;
-// cost ≥ expected_value → DO_NOTHING
+static Set<String> bigrams(String s) { /* 清洗标点 → 每 2 字符一个集合 */ }
+// 重叠比 = |交集| / min(|A|,|B|)，≥0.3 → 双向建链(relation=same_topic, strength=overlap)
+```
+检索时 `expand()` 沿 `memory_links` 取邻居。
+
+**衰减**（`MemoryDecayService`，每周一 04:30）：`occurred_at<now-180天 && importance<0.4 && retrieval_count<3` → archived。**重要记忆不因时间消失**。
+
+**透明**（`/memories/why`、`/{id}/source`）：命中记忆 + 以 `occurred_at` 为锚取 ±2 条**来源对话摘录**，直接回答"你为什么知道"。
+
+**控制**：搜索 / 遗忘单条 / 清空全部 / 导出 JSON（隐私）。
+
+## 16. 用户模型
+
+### 功能介绍
+伴侣对用户的长期理解，分层：**事实**（明确告知，高置信）、**偏好**、**行为模式**（观察统计）、**推测**（低置信 + 证据，Prompt 里标注"可能是"）。用户纠正时（"不是/其实…"）系统会**修正认知**。
+
+### 实现原理
+- **抽取**（`UserModelExtractor`，@Async）：LLM `"user-model-extraction"` → facts/preferences/hypotheses/corrections。
+- **去重**（`UserModelService.saveFact`）：
+  ```java
+  facts.findTopBy...map(existing -> { setConfidence(max); return save(existing); })
+       .orElseGet(() -> facts.save(f));
+  ```
+- **纠正机制**：检测到 correction → `correct()` 将相关推测 `confidence = max(0.1, conf-0.25)` + 写入新 explicit fact + 记"你纠正了她"关系里程碑。
+- `UserModelService.summary`：产出供 Prompt 注入的高置信摘要（事实/偏好/习惯/推测，各带置信度）。
+
+## 17. 关系系统
+
+### 功能介绍
+用户与伴侣之间有一组随时间演化的关系数值（熟悉度/信任/亲密度/好感）和阶段（初识→熟络→亲密→深深相连），以及**里程碑事件**（第一次对话、第一次深夜聊天、第一次被安慰…）和**共同经历**。
+
+### 实现原理
+`RelationshipEngine.onMessage(userId, companionId, time, emotion, intent)`：
+- **数值缓慢增长**：familiarity+0.0012 / trust+0.0006 / intimacy+0.0004 / affection+0.0005（增量小，防"聊几次就熟"）。
+- **一次性里程碑**：用 `eventRepo.countByRelationshipIdAndType()==0` 判重；significance≥0.8 时同时写入 `shared_experiences`。
+  - first_conversation / first_late_night(23-3点) / first_emotional_support(sad)
+  - first_joy_shared(share_joy) / first_care_about_her(ask_about_her) / first_plan_together(planning)
+  - milestone(关系进入新阶段)
+- **阶段机**（消息量 + 数值综合，非纯计数）：
+  ```
+  msgs>=300 || (msgs>=150 && intimacy>0.55) → deeply_connected
+  msgs>=100 || (msgs>=50  && intimacy>0.45) → close
+  msgs>=30  || (msgs>=15  && familiarity>0.2) → familiar
+  否则 → new
+  ```
+
+## 18. Agent 状态
+
+### 功能介绍
+伴侣的"当下"：心情（平静/轻快/心疼/担心…）、精力、压力、社交能量、好奇心、亲密感。这是短期动态状态，**不等于人格**（人格稳定）。
+
+### 实现原理
+`AgentStateService.onMessage(companionId, emotion)`：energy-0.004 / stress+0.001 / socialEnergy-0.002 / emotionalCloseness+0.0009 / curiosity+0.001 / mood 按情绪映射。单行/伴侣，`updated_at` 时间戳。注入 Prompt"你此刻的状态"。
+
+## 19. 反思与人格演化
+
+### 功能介绍
+每天凌晨、每周一，系统会**回顾对话**做深度分析（洞察、记忆候选、用户理解、关系变化），并**基于证据缓慢演化人格**（比如相处久了她更暖一点），生成新人格版本可回溯。
+
+### 实现原理
+
+**每日反思**（`ReflectionService.dailyReflect`，03:17）：
+- 规则层：统计近 7 天深夜消息数 → 写 `user_patterns`（user_often_works_late）。
+- LLM 层：当天对话摘录(≤3000字) → `"daily-reflection"` → summary/insights/memory_candidates(入库)/user_insights/relationship_candidates。
+
+**每周反思**（`weeklyReflect`，周一 05:00）：7 天对话(≤5000字) → `"weekly-reflection"` → 长期用户理解 / behavioral_patterns(入库) / 关系变化。
+
+**人格演化**（`PersonaEvolutionService.evolve`，每周反思后触发）：
+```java
+// 证据 = 用户模型摘要 + 关系数值
+// LLM 提出 adjustments:[{field:"personality.traits.warmth", delta, reason}]
+double delta = Math.max(-0.05, Math.min(0.05, rawDelta));  // 限幅
+double updated = clamp(cur + delta);                        // [0.1, 0.95]
+if (Math.abs(updated - cur) >= 0.01) { traits.put(trait, updated); applied++; }
+// applied>0 → personaService.update(..., changeSource="evolution")
+```
+约束：每次≤3 处、±0.05 以内、**价值观/边界/身份不可变**、新版本可回溯。
+
+## 20. 主动消息与日常作息
+
+### 功能介绍
+伴侣会在合适的时段**主动找你**：早安问候、傍晚回访、深夜加班关心、分享好消息后的跟进、很久没联系的想念。并且她**有自己的作息**——工作日在忙、周末在休闲、晚上准备睡，回复会体现她"此刻在做什么"（如周六回"正窝在沙发上喝茶"）。
+
+### 实现原理
+
+**日常时间表**（`CompanionSchedule`）：
+```java
+// 由 companionId.hashCode() 确定性派生（同一人每次一致，不同人作息不同）
+Schedule s = new Schedule(8 + h%3, 17 + (h/3)%3, 23 + (h/18)%2, 6 + (h/9)%2);
+// 工作日: MORNING/WORK_BUSY/LUNCH/WORK_AFTERNOON/EVENING/LEISURE/LATE_NIGHT
+// 周末:   睡到自然醒 + 全天休闲
 ```
 
-通过则 `draftMessage()`：**LLM 按"人格+当前作息+场景"生成**（失败回退模板）→ 写通知 + 注入最新会话(`is_proactive=true`)。
+**主动决策**（`ProactiveEngine`，每 15 分钟）：
+```
+到期提醒先转通知（优先，不受打扰控制）
+每伴侣过滤：DND(23-8) / 作息=SLEEP / 最小间隔1h / 每日上限5
+decide() 按优先级评估触发，每个触发 expected_value × 作息因子
+  触发: late_work / morning_greeting / evening_checkin / follow_up_joy / silence
+打断成本:
+  cost = 0.15 + 深夜(0.4) + 22点后(0.1) + 4h内聊过(0.35) ± 响应率(0.1) + 今日上限(0.3)
+cost ≥ expected_value → DO_NOTHING
+通过 → draftMessage(): LLM 按"人格+当前作息+场景"生成（失败回退模板）
+     → 写 Notification + 注入最新会话(is_proactive=true)
+```
 
-#### 5.8.2 日常时间表（CompanionSchedule）
+## 21. 工具与提醒
 
-按 `companionId.hashCode()` **确定性派生**作息（每人不同）：工作日 8-10 上班 / 17-19 下班 / 午休 / 休闲 / 23-24 睡；**周末全天休闲**。主动意愿：忙碌×0.35 / 休闲×1.2 / 睡觉=0。作息注入 Prompt"此刻在做什么"（如周六回复"正窝在沙发上喝茶"）。
+### 功能介绍
+用户可创建自定义提醒；**在聊天里直接说"帮我记得明天上午10点提醒我喝水"**，伴侣会自动创建提醒并自然确认；伴侣生日每年自动生成提醒。
 
-### 5.9 工具与提醒
+### 实现原理
+- `ReminderPlanner.tryCreateFromMessage`（intent=request_tool 时触发）：
+  ```
+  LLM structured("reminder-extraction") → {remind, title, content, remind_at}
+  // SYSTEM 注入"今天是X, 现在是HH:mm" 防模型幻觉错误年份
+  LocalDateTime remindAt = parseTime(...);   // 支持 ISO / "yyyy-MM-dd HH:mm" / "HH:mm"
+  if (remindAt == null || remindAt.isBefore(now)) remindAt = now.plusHours(1);  // 过去时间兜底
+  reminderService.create(...) → 返回 toolResult 注入 Prompt → 回复自然确认
+  ```
+- `BirthdayService`（每日 08:05）：确保每位伴侣有下一年待触发生日提醒。
+- `ProactiveEngine` 兜底：到期提醒统一转 Notification。
 
-- **聊天内建提醒**（ReminderPlanner）：intent=request_tool → LLM 解析 `{remind,title,content,remind_at}`；SYSTEM **注入当前日期**防时间幻觉；过去时间兜底 +1h；建提醒后 toolResult 进 Prompt，回复自然确认。
-- **生日系统**（每日 08:05）：确保每位伴侣有下一年待触发生日提醒。
+## 22. 输出质量控制
+
+### 功能介绍
+拦截 AI 腔和套路话，让回复更像真人：不说"作为AI/我的训练数据/我理解你的感受"，不堆模板安慰，不说教，不过度道歉/emoji。
+
+### 实现原理
+`NaturalnessEngine.validate(text)` 规则检测并修复：
+- AI 套话（13 类）→ 直接剔除
+- 模板安慰（"一切都会好起来的/别想太多"）→ 标记
+- 说教式建议（"你应该/建议你每天"）→ 标记
+- 过度道歉（≥2 次）→ 标记
+- 过度 emoji（>3 个）→ 标记
+- 回应过长（>500 字）→ 标记
+
+修正后文本经 SSE `replace` 事件整体替换（`ChatController` 检测 `reply != rawReply.trim()` 时发送）。
+
+## 23. LLM 网关
+
+### 功能介绍
+统一的大模型接入层：聊天（流式 + 非流式）、结构化 JSON 输出。当前接 DeepSeek，可切换到 Anthropic 或内置 Mock（无 key 时自动降级，保证全流程可跑）。
+
+### 实现原理
+```java
+public interface LlmGateway {
+    ChatResult chat(ChatRequest request);
+    void chatStream(ChatRequest request, Consumer<String> onDelta);
+    StructuredResult structured(StructuredRequest request);  // 强制 JSON
+}
+```
+- `LlmRouter`（门面）：`@PostConstruct` 按 `app.llm.provider` 选择 openai-compatible/anthropic/mock；未配 key 自动降级 mock（日志告警）。
+- `OpenAiCompatibleGateway`：WebClient 调 DeepSeek `/chat/completions`；流式用 `bodyToFlux(DataBuffer)` 逐行解析 `data:` 块（`choices[0].delta.content`）；结构化用 `response_format:{type:"json_object"}` + 低温度。
+- **业务层只依赖 `LlmRouter`**，换模型零改动。
 
 ---
 
-## 6. 接口设计（API 清单）
+# 第五部分 · 接口设计
 
-### 6.1 认证
+## 24. API 清单
 
+### 24.1 认证
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/api/auth/register` | 注册（返回 JWT） |
 | POST | `/api/auth/login` | 登录 |
 | GET | `/api/auth/me` | 当前用户 |
 
-### 6.2 伴侣 / 人格
-
+### 24.2 伴侣 / 人格
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/api/companions/compile` | 自然语言→编译人格+预览 |
@@ -428,8 +667,7 @@ if (今日已达上限) cost += 0.3;
 | GET | `/api/companions/{id}/life-events` | 人生时间线 |
 | GET | `/api/companions/{id}/persona/versions` | 人格版本历史 |
 
-### 6.3 会话 / 聊天
-
+### 24.3 会话 / 聊天
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/companions/{cid}/conversations` | 会话列表 |
@@ -438,8 +676,7 @@ if (今日已达上限) cost += 0.3;
 | GET | `/api/companions/{cid}/conversations/{id}/messages` | 消息列表 |
 | POST | `/api/companions/{cid}/conversations/{id}/chat` | **SSE 流式聊天** |
 
-### 6.4 记忆
-
+### 24.4 记忆
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/companions/{cid}/memories` | 列表 |
@@ -451,8 +688,7 @@ if (今日已达上限) cost += 0.3;
 | DELETE | `/api/companions/{cid}/memories/{id}` | 遗忘 |
 | DELETE | `/api/companions/{cid}/memories` | 清空 |
 
-### 6.5 用户模型 / 关系 / 状态 / 提醒 / 通知 / 反思
-
+### 24.5 用户模型 / 关系 / 状态 / 提醒 / 通知 / 反思
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/companions/{cid}/user-model/{facts,preferences,patterns,hypotheses}` | 她懂你 |
@@ -467,8 +703,7 @@ if (今日已达上限) cost += 0.3;
 | GET | `/api/companions/{cid}/notifications/unread-count` | 未读数 |
 | GET | `/api/companions/{cid}/reflections` | 反思记录 |
 
-### 6.6 管理（验收/运维）
-
+### 24.6 管理（验收/运维）
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/api/admin/reflection/run` | 手动每日反思 |
@@ -479,92 +714,73 @@ if (今日已达上限) cost += 0.3;
 
 ---
 
-## 7. 快速开始
+# 第六部分 · 工程实践
 
-### 7.1 环境要求
+## 25. 快速开始
 
-JDK 17 · Maven 3.8+ · Node 18+ · 本地 PostgreSQL（有 `admin`/`shared-secret` 账号）。
+### 25.1 环境要求
+JDK 17 · Maven 3.8+ · Node 18+ · 本地 PostgreSQL（`admin`/`shared-secret`）。
 
-### 7.2 本地启动
-
+### 25.2 本地启动
 ```bash
 # 1. 建库
 psql -h 127.0.0.1 -U admin -d postgres -c "CREATE DATABASE companion;"
 
-# 2. 启动后端（端口 8081）
-cd companion-agent/backend
-./run.sh                              # 或 mvn spring-boot:run
+# 2. 后端（端口 8081）
+cd companion-agent/backend && ./run.sh            # 或 mvn spring-boot:run
 
-# 3. 启动前端（端口 5173，代理 /api → 8081）
-cd companion-agent/frontend
-npm install && npm run dev
+# 3. 前端（端口 5173，代理 /api → 8081）
+cd companion-agent/frontend && npm install && npm run dev
 
 # 4. 浏览器打开 http://127.0.0.1:5173
 ```
 
-### 7.3 LLM 配置
-
-默认 DeepSeek（OpenAI 兼容），**不配 key 也能跑**（自动降级 Mock）：
-
+### 25.3 LLM 配置
+默认 DeepSeek（OpenAI 兼容），不配 key 自动降级 Mock：
 ```bash
 export DEEPSEEK_API_KEY=sk-xxx
 export LLM_BASE_URL=https://api.deepseek.com
 export LLM_CHAT_MODEL=deepseek-chat
 ```
 
-也可 `LLM_PROVIDER=anthropic|mock`（见 `backend/src/main/resources/application.yml` 的 `app.llm.*`）。
-
-### 7.4 生产部署
-
+### 25.4 生产部署
 ```bash
 sudo bash companion-agent/scripts/deploy.sh
 ```
-
 自动完成：前端产物 → `/var/www/companion` · nginx 配置 → `/etc/nginx/conf.d/` · `/etc/hosts` · systemd 服务 `luxera-companion-backend` · nginx 重载 · 健康检查。
-
 > ⚠️ `deploy.sh` 会重写 systemd 单元，**必须保留 `EnvironmentFile=/etc/companion/.env`**（内含 `DEEPSEEK_API_KEY`），否则降级 Mock。
 
-### 7.5 冒烟测试
-
+### 25.5 冒烟测试
 ```bash
 BASE=http://127.0.0.1:8081 bash companion-agent/scripts/smoke.sh
 ```
+覆盖：注册 → 编译人格 → 创建 → 问候 → SSE 流式 → 记忆抽取 → 关系里程碑 → 生日提醒 → 反思 → 记忆搜索。
 
-覆盖：注册 → 编译人格 → 创建 → 问候 → SSE 流式聊天 → 记忆抽取 → 关系里程碑 → 生日提醒 → 反思 → 记忆搜索。
+## 26. 非功能设计
 
----
-
-## 8. 非功能设计
-
-### 8.1 性能
-
+### 26.1 性能
 - 聊天主链路：启发式感知（毫秒）+ LLM 感知（~1-2s）+ 回复流式（首 token 快）；异步后处理不阻塞响应。
-- 记忆检索：结构化 SQL + 内存排序，单伴侣数据量下 <10ms。
+- 记忆检索：结构化 SQL + 内存排序，单伴侣数据量 <10ms。
 - 定时任务均异步线程池。
 
-### 8.2 安全
-
+### 26.2 安全
 - 密码 bcrypt；JWT(HS256) 7 天过期；无状态会话。
 - 多租户：所有查询强制 `user_id + companion_id`，删除前校验归属。
 - 敏感配置（DeepSeek key）在 `/etc/companion/.env`（root 640），不入 git。
 - 生产走 HTTPS（nginx + 泛域名证书）。
 
-### 8.3 可扩展性
-
+### 26.3 可扩展性
 - LLM 网关接口化 → 换模型改配置。
 - `EmbeddingProvider` 接口 → 接向量库即插即用。
 - `WorkingMemory` 接口可换 Redis（多实例共享）。
 - 模块化单体 → 边界清晰可拆微服务。
 
-### 8.4 可观测性
-
+### 26.4 可观测性
 - systemd journal 日志；`[LLM] 网关已启用` 标识当前模型（监控降级）。
 - 消息元数据存 intent/emotion/topic；自然度 issues 记日志。
 - 主动消息决策日志（触发/预期 vs 成本）。
 
----
-
-## 9. 技术决策与权衡
+## 27. 技术决策与权衡
 
 | 决策 | 权衡 |
 |------|------|
@@ -575,44 +791,57 @@ BASE=http://127.0.0.1:8081 bash companion-agent/scripts/smoke.sh
 | 异步后处理 | 不阻塞 SSE；抽取/关系/状态后台沉淀 |
 | 人格演化保守（±0.05） | 防人格漂移；版本可回溯 |
 | 主动消息打断成本 | 防打扰；按时段/作息调节 |
+| DeepSeek + Mock 降级 | 无 key 也能完整演示；key 失效自动降级 |
 
----
-
-## 10. 测试与验证
+## 28. 测试与验证
 
 - **冒烟**（scripts/smoke.sh）：全链路通过。
 - **真实模型验证**：回复 2-4 句多样、提醒时间正确、记忆图谱建链、记忆透明带来源、LLM 反思有洞察、人格演化在跑、主动消息按时段 LLM 生成、作息体现（周六回复"窝在沙发喝茶"）。
-- **已修 Bug**：LLM 时间幻觉（年份错）→ 注入当前日期+兜底；部署脚本丢 EnvironmentFile 降级 Mock → 已修；HQL `:type` 保留字；hibernate-types JSONB 泛型；`去`字误判 planning 意图。
+- **已修 Bug**：
+  - LLM 时间幻觉（提醒年份错）→ 注入当前日期 + 过去时间兜底
+  - 部署脚本丢 EnvironmentFile 导致降级 Mock → 已修
+  - HQL `:type` 保留字冲突 → 改名 `:mtype`
+  - hibernate-types JSONB 泛型 propertyClass null → 弃用，改 text+Converter
+  - `去`字误判 planning 意图 → 收紧关键词
 
 ---
 
-## 11. 已知限制与演进路线
+# 第七部分 · 限制与演进
 
-### 11.1 限制（如实）
+## 29. 已知限制（如实）
 
-1. 无向量检索（二元组近似，可升级）。
-2. WorkingMemory 单实例内存（多实例需 Redis）。
-3. 主动消息仅站内通知，无手机推送。
-4. 工具层仅提醒，无 MCP/日历/搜索。
-5. 模型 deepseek-chat，无推理/语音/图片/多模态。
-6. 单机部署，无高可用、无 K8s。
-7. 认证无邮箱验证/OAuth。
-8. 多租户应用层过滤，非数据库 RLS。
-9. 反思/演化批量定时，非实时。
-10. 当前数据多为测试数据。
-11. DeepSeek key 失效降级 Mock（已配置 key 并监控）。
+1. **无向量检索**：记忆语义用中文二元组近似，未装 pgvector / 未接向量 API（可无缝升级）。
+2. **WorkingMemory 单实例内存**：多实例部署需换 Redis。
+3. **主动消息仅站内通知**：无 APNs/FCM 手机推送。
+4. **工具层仅提醒**：无 MCP / 日历 / 搜索。
+5. **模型 deepseek-chat**：无推理模式 / 语音 / 图片 / 多模态。
+6. **单机部署**：无高可用、无 K8s（设计文档 §96 后置）。
+7. **认证简单**：用户名+密码 JWT，无邮箱验证 / OAuth / 找回密码。
+8. **多租户应用层过滤**：非数据库 RLS。
+9. **反思/演化批量定时**：非实时。
+10. **当前数据多为测试数据**。
+11. **DeepSeek key 失效降级 Mock**（已配置 key 并监控日志）。
 
-### 11.2 与设计文档路线图的关系
+## 30. 与设计文档路线图的关系
 
 | 阶段 | 状态 |
 |------|------|
-| MVP（§95：用户/伴侣/人格编译/聊天/会话/记忆/用户模型/关系/生日/提醒/基础主动/记忆管理） | ✅ 完成 |
-| V2（§97：每日+每周反思/记忆衰减强化/共同经历/人生时间线/高级用户模型/主动Agent/工具调用） | ✅ 大部分（工具调用=提醒；日历/推送未做） |
-| V3（§98：关联记忆/人格演化/高级关系引擎） | ◐ 部分（关联记忆+人格演化已做；多模态/语音/实时上下文未做） |
-| V4（§99：App/耳机/眼镜生态 + 共享记忆/共享身份） | ⏳ 未启动 |
+| MVP（§95） | ✅ 完成 |
+| V2（§97） | ✅ 大部分（日历/推送未做） |
+| V3（§98） | ◐ 部分（关联记忆+人格演化已做；多模态未做） |
+| V4（§99 生态） | ⏳ 未启动 |
 
-### 11.3 演进路线
+## 31. 演进路线
 
 - **短期**：手机推送、向量检索、MCP 工具层（日历/天气/搜索）。
 - **中期**：语音对话、用户自定义作息注入、真实用户灰度。
 - **长期**：V4 多端共享记忆/身份、K8s 高可用、RLS 加固、审计日志。
+
+---
+
+## 附录
+
+- **设计依据**：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）
+- **代码**：GitHub `Hojay-Chen/companion-agent`
+- **运行**：`https://companion.luxera.top`（nginx + systemd jar :8081 + PostgreSQL :5432）
+- **规模**：后端 116 个 Java 类 · 前端 17 个源文件 · 数据库 19 张表
