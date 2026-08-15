@@ -2,6 +2,7 @@ package com.luxera.companion.agent;
 
 import com.luxera.companion.emotion.EmotionEngine;
 import com.luxera.companion.experience.ExperienceProcessor;
+import com.luxera.companion.memory.MemoryEntityExtractor;
 import com.luxera.companion.memory.MemoryExtractor;
 import com.luxera.companion.relationship.PromiseService;
 import com.luxera.companion.relationship.Relationship;
@@ -20,7 +21,7 @@ import java.util.List;
 
 /**
  * 对话后的异步后处理(V2.0): Experience 记录 + Thought/Emotion/OpenLoop/承诺 触发
- * + 记忆/用户模型抽取 + 关系与状态演化。
+ * + 记忆/用户模型/实体抽取 + 关系与状态演化。
  * 感知精炼已在回复生成前同步完成,这里不再重复。
  */
 @Slf4j
@@ -32,6 +33,7 @@ public class AgentPostProcessor {
     private final EmotionEngine emotionEngine;
     private final MemoryExtractor memoryExtractor;
     private final UserModelExtractor userModelExtractor;
+    private final MemoryEntityExtractor entityExtractor;
     private final RelationshipEngine relationshipEngine;
     private final RelationshipService relationshipService;
     private final RelationshipThreadService threadService;
@@ -41,9 +43,9 @@ public class AgentPostProcessor {
 
     public AgentPostProcessor(ExperienceProcessor experienceProcessor, ThoughtEngine thoughtEngine,
                               EmotionEngine emotionEngine, MemoryExtractor memoryExtractor,
-                              UserModelExtractor userModelExtractor, RelationshipEngine relationshipEngine,
-                              RelationshipService relationshipService, RelationshipThreadService threadService,
-                              PromiseService promiseService,
+                              UserModelExtractor userModelExtractor, MemoryEntityExtractor entityExtractor,
+                              RelationshipEngine relationshipEngine, RelationshipService relationshipService,
+                              RelationshipThreadService threadService, PromiseService promiseService,
                               com.luxera.companion.persona.CompanionService companionService,
                               AgentStateService agentStateService) {
         this.experienceProcessor = experienceProcessor;
@@ -51,6 +53,7 @@ public class AgentPostProcessor {
         this.emotionEngine = emotionEngine;
         this.memoryExtractor = memoryExtractor;
         this.userModelExtractor = userModelExtractor;
+        this.entityExtractor = entityExtractor;
         this.relationshipEngine = relationshipEngine;
         this.relationshipService = relationshipService;
         this.threadService = threadService;
@@ -95,6 +98,8 @@ public class AgentPostProcessor {
             // 5. 原有异步学习链路
             memoryExtractor.extractFromExchange(userId, companionId, conversationId, userText, reply);
             userModelExtractor.extractFromExchange(userId, companionId, conversationId, userText, reply);
+            // 5.5 V3 P2: 实体抽取(长期指代: 那家公司/上次那个地方)
+            entityExtractor.extractFromExchange(userId, companionId, conversationId, userText, reply);
             relationshipEngine.onMessage(userId, companionId, LocalDateTime.now(), perception.emotion(), perception.intent());
             if ("correction".equals(perception.intent())) {
                 relationshipEngine.onUserCorrected(userId, companionId);

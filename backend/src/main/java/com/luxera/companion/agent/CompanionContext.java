@@ -33,6 +33,7 @@ public class CompanionContext {
     public final SelfModel selfModel;
     public final UserModelService.UserModelSummary userModel;
     public final UserChatStyle userChatStyle;
+    public final List<com.luxera.companion.memory.MemoryEntity> entities;
     public final Relationship relationship;
     public final List<Memory> memories;
     public final List<Message> recentMessages;
@@ -48,6 +49,7 @@ public class CompanionContext {
                             List<EmotionalEpisode> emotionalEpisodes, List<Thought> activeThoughts,
                             List<OpenLoop> openLoops, SelfModel selfModel,
                             UserModelService.UserModelSummary userModel, UserChatStyle userChatStyle,
+                            List<com.luxera.companion.memory.MemoryEntity> entities,
                             Relationship relationship,
                             List<Memory> memories, List<Message> recentMessages,
                             WorkingMemory.WorkingContext workingMemory,
@@ -64,6 +66,7 @@ public class CompanionContext {
         this.selfModel = selfModel;
         this.userModel = userModel;
         this.userChatStyle = userChatStyle;
+        this.entities = entities;
         this.relationship = relationship;
         this.memories = memories;
         this.recentMessages = recentMessages;

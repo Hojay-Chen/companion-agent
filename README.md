@@ -2,13 +2,13 @@
 
 > **不是 Chatbot**：拥有稳定人格、连续人生、持续记忆，随时间与用户建立关系，并在合适的时候主动找你。
 >
-> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime 方案。当前完成 **V2.0(44/44) + V3 P0 + V3 P1**。
+> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime 方案。当前完成 **V2.0(44/44) + V3 P0 + V3 P1 + V3 P2**。
 
 | 项 | 值 |
 |----|----|
 | 后端 | Spring Boot 2.7.18 · JDK 17 · 模块化单体（180+ 个 Java 类，23 个业务模块） |
 | 前端 | React 19 · Vite 8 · TypeScript(strict) · Tailwind CSS 3 · Zustand |
-| 数据库 | PostgreSQL 16 · 33 张表（含 pgvector） |
+| 数据库 | PostgreSQL 16 · 34 张表（含 pgvector） |
 | 大模型 | 统一 LLM 网关 → DeepSeek(deepseek-chat)，无 key 自动降级 Mock；模型用途路由可配 |
 | 线上 | `https://companion.luxera.top`（nginx + systemd jar :8081） |
 | 代码 | GitHub `Hojay-Chen/companion-agent` |
@@ -17,7 +17,7 @@
 ## 📖 目录
 
 - [8. 实体关系总览](#8-实体关系总览)
-- [9. 数据表详细设计（33 张表）](#9-数据表详细设计33-张表)
+- [9. 数据表详细设计（34 张表）](#9-数据表详细设计34-张表)
   - [9.1 用户与伴侣](#91-用户与伴侣)
   - [9.2 对话](#92-对话)
   - [9.3 记忆](#93-记忆)
@@ -113,6 +113,11 @@
   - [34.4 FollowUp 增强（关系型跟进）](#344-followup-增强关系型跟进)
   - [34.5 ResponsePlan（她也可以连发，低频）](#345-responseplan她也可以连发低频)
   - [34.6 验收（`scripts/p1_check.sh` 全过）](#346-验收scriptsp1_checksh-全过)
+- [35. V3.2 P2 — 记忆 3.0 起步（完成）](#35-v32-p2--记忆-30-起步完成)
+  - [35.1 Entity Layer（设计 §五十四：长期指代）](#351-entity-layer设计-五十四长期指代)
+  - [35.2 Memory Disclosure（设计 §五十八：记得≠每次说出来）](#352-memory-disclosure设计-五十八记得每次说出来)
+  - [35.3 验收（`scripts/p2_check.sh` 全过）](#353-验收scriptsp2_checksh-全过)
+  - [35.4 一个踩坑记录](#354-一个踩坑记录)
 - [附录](#附录)
 ---
 
@@ -135,9 +140,9 @@ users 1─* companions 1─* conversations 1─* messages
 
 > 所有核心表强制携带 `user_id + companion_id`（多租户隔离，查询强制过滤）。
 
-## 9. 数据表详细设计（33 张表）
+## 9. 数据表详细设计（34 张表）
 
-> 原有 19 表 + V2.0 新增 10 表 + V3 新增 4 表（`interaction_sessions` / `conversation_exchanges` / `conversation_boundaries` / `user_chat_styles`）。
+> 原有 19 表 + V2.0 新增 10 表 + V3 新增 5 表（`interaction_sessions` / `conversation_exchanges` / `conversation_boundaries` / `user_chat_styles` / `entities`）。
 
 ### 9.1 用户与伴侣
 
@@ -164,6 +169,7 @@ users 1─* companions 1─* conversations 1─* messages
 |----|------|
 | `memories` | id, user_id, companion_id, type(episodic/semantic/shared), content, summary, importance, confidence, emotional_weight, relationship_weight, retrieval_count, last_retrieved_at, occurred_at, expires_at, status, source_type, source_id, created_at |
 | `memory_links` | id, from_memory_id, to_memory_id, relation(same_topic), strength, created_at |
+| `entities`(V3 P2) | id, user_id, companion_id, type(PERSON/COMPANY/PLACE/…), name, description, first_seen_at, last_seen_at, mention_count, last_context, salience, status |
 
 ### 9.4 用户模型
 
@@ -894,6 +900,41 @@ Reminder（工具→通知）与 Follow-up（关系→聊天内主动问）在 V
 | 快速连发 → `burst_rate` 上升 | ✅ |
 | P1 表/列结构 | ✅ |
 | V3 P0 回归（洗澡→SOFT_END） | ✅ |
+
+---
+
+## 35. V3.2 P2 — 记忆 3.0 起步（完成）
+
+> P2 解决"她为什么还不像一个真正持续存在的人"：实体记忆(长期指代) + 记忆披露克制(记得≠每次都说出来)。
+
+### 35.1 Entity Layer（设计 §五十四：长期指代）
+
+新增 `entities` 表 + `MemoryEntityExtractor`(LLM 结构化抽取) + `MemoryEntityService`：
+
+- 每轮对话后异步抽取用户提到的实体（PERSON/COMPANY/PLACE/RESTAURANT/PROJECT/MOVIE/EVENT/TOPIC），同名合并、mention_count 累加、salience 上升
+- 注入 ContextCompiler【你记得的这些】："他常提到的东西,当他用'那家/那个/上次的'指代时,你要能对上号"
+- 前端「她的记忆」面板新增「她认识的」区块（显示实体 + 提过次数）
+
+验收实测：聊"下周要面阿里巴巴/那家咖啡馆" → `entities` 表记录 `阿里巴巴`、`那家咖啡馆`。
+
+### 35.2 Memory Disclosure（设计 §五十八：记得≠每次说出来）
+
+- 记忆注入改措辞："只有在本回合相关时才自然地引用,不要为了展示记忆而提起"
+- 行为准则新增第 9 条："不要为了展示记忆而主动列举旧事('你还记得…吗'/'你之前不是喜欢…吗'这种话少说)"
+- 目的：防止"AI 在展示自己的 Memory"的腔调，让记忆只在她相关时自然流露
+
+### 35.3 验收（`scripts/p2_check.sh` 全过）
+
+| 检查 | 结果 |
+|------|------|
+| 提到实体 → `entities` 表记录 | ✅ 阿里巴巴 / 那家咖啡馆 |
+| `GET /memories/entities` 返回列表 | ✅ |
+| entities 表/列结构 | ✅ |
+| V3 P0 回归（洗澡→SOFT_END） | ✅ |
+
+### 35.4 一个踩坑记录
+
+实体类最初命名为 `Entity`，与 JPA 注解 `@Entity` 同名导致注解解析成自引用、Lombok 连锁失败（所有 getter 消失）。已改名 `MemoryEntity`。**教训：实体类名避开 JPA 注解名。**
 
 ---
 

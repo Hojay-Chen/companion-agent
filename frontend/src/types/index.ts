@@ -268,6 +268,18 @@ export interface MemoryLink {
   strength: number
 }
 
+/** V3 P2: 用户常提的实体(长期指代) */
+export interface MemoryEntity {
+  id: string
+  name: string
+  type: string
+  description?: string | null
+  mentionCount: number
+  salience: number
+  lastContext?: string | null
+  lastSeenAt: string
+}
+
 export interface PersonaVersion {
   id: string
   version: number

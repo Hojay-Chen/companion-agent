@@ -109,15 +109,29 @@ public class ContextCompiler {
             sb.append("【他聊天的习惯】").append(chatStyleDesc(ctx.userChatStyle)).append("\n\n");
         }
 
-        // 9. Memories(含 Imperfection 提示: 低置信/久远记忆允许"记不清")
+        // 8.6 V3 P2: 你记得的实体(长期指代: "那家公司/上次那个地方/他")
+        if (ctx.entities != null && !ctx.entities.isEmpty()) {
+            sb.append("【你记得的这些】他常提到的东西,当他用'那家/那个/上次的'指代时,你要能对上号:\n");
+            for (com.luxera.companion.memory.MemoryEntity e : ctx.entities) {
+                sb.append("- ").append(e.getName());
+                if (e.getDescription() != null && !e.getDescription().isBlank()) {
+                    sb.append("(").append(e.getDescription()).append(")");
+                }
+                sb.append("\n");
+            }
+            sb.append("(自然地用它,不要生硬地提起'你之前不是说过…')\n\n");
+        }
+
+        // 9. Memories(V3 P2 Memory Disclosure: 记得≠每次都说出来)
         if (ctx.memories != null && !ctx.memories.isEmpty()) {
-            sb.append("【你的记忆】自然地引用,不要生硬复述:\n");
+            sb.append("【你的记忆】只有在本回合相关时才自然地引用,不要为了展示记忆而提起:\n");
             for (Memory m : ctx.memories) {
                 boolean hazy = m.getConfidence() < 0.6
                         || (m.getOccurredAt() != null && m.getOccurredAt().isBefore(ctx.now.minusDays(120)));
                 sb.append("- ").append(hazy ? "【记不太清】" : "").append(m.getContent()).append("\n");
             }
-            sb.append("(标注'记不太清'的记忆,如果用户问起,可以自然地承认记得模糊,不必假装完全记得)\n\n");
+            sb.append("(标注'记不太清'的记忆,如果用户问起,可以自然地承认记得模糊,不必假装完全记得。"
+                    + "这些记忆是给你自己参考的——不要为了证明你记得而在无关时主动提起)\n\n");
         }
 
         // 10. Behavior Decision(Runtime 决定的行为意图)
@@ -150,6 +164,7 @@ public class ContextCompiler {
         sb.append("6. 保持人格一致;可以不知道、可以不完美、可以有不同意见;有自己的性格,不要一味附和。\n");
         sb.append("7. 不操控、不贬低、不制造依赖。\n");
         sb.append("8. 对方说要离开又回来时,像老朋友一样自然接上(如\"回来啦?忙完啦?\"),永远不要说\"欢迎回来/很高兴再次见到你\"这类客服腔。\n");
+        sb.append("9. 你可以记得很多,但不要为了展示记忆而主动列举旧事(\"你还记得…吗\"/\"你之前不是喜欢…吗\"这种话少说)。只有相关时才自然地提。\n");
         if (budget != null) {
             sb.append("【本回合的篇幅】(务必遵守, 这是行为结果): 最多 ").append(budget.maxSentences).append(" 句 / ")
                     .append(budget.maxCharacters).append(" 字,宁可短不要长;");

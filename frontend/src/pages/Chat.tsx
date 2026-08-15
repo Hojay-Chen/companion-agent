@@ -20,6 +20,7 @@ import type {
   CompanionLife,
   Conversation,
   Memory,
+  MemoryEntity,
   MemoryLink,
   MemorySourceMessage,
   Message,
@@ -445,6 +446,7 @@ function drawerTitle(drawer: DrawerTab, companion: Companion) {
 // ── 记忆面板 ───────────────────────────────
 function MemoriesPanel({ companionId }: { companionId: string }) {
   const [memories, setMemories] = useState<Memory[]>([])
+  const [entities, setEntities] = useState<MemoryEntity[]>([])
   const [q, setQ] = useState('')
   const [sourceOf, setSourceOf] = useState<Record<string, MemorySourceMessage[]>>({})
   const [graph, setGraph] = useState<{ nodes: Memory[]; links: MemoryLink[] } | null>(null)
@@ -456,7 +458,8 @@ function MemoriesPanel({ companionId }: { companionId: string }) {
 
   useEffect(() => {
     load()
-  }, [load])
+    api.get<MemoryEntity[]>(`/api/companions/${companionId}/memories/entities`).then(setEntities).catch(() => {})
+  }, [load, companionId])
 
   async function search() {
     if (!q.trim()) return load()
@@ -520,6 +523,24 @@ function MemoriesPanel({ companionId }: { companionId: string }) {
         </button>
       </div>
       <p className="text-xs text-cocoa-500">她记得这些,并在聊天时自然地使用它们。点「为什么」可看来源对话。</p>
+
+      {entities.length > 0 && (
+        <div className="rounded-xl border border-cocoa-700 bg-cocoa-850 p-3">
+          <p className="text-xs text-cocoa-500">她认识的(你常提的人/地方/事):</p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {entities.map((e) => (
+              <span
+                key={e.id}
+                title={e.description || `${e.type} · 提过 ${e.mentionCount} 次`}
+                className="chip bg-ember/10 text-ember-soft"
+              >
+                {e.name}
+                <span className="ml-1 text-[10px] text-cocoa-400">{e.mentionCount}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <button className="btn-outline !px-3 !py-1 text-xs" onClick={toggleGraph}>
           {graph ? '收起记忆图谱' : `记忆图谱 (${linkCount} 条关联)`}

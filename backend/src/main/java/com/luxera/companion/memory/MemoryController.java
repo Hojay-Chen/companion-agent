@@ -25,18 +25,29 @@ public class MemoryController {
 
     private final MemoryService memoryService;
     private final MemoryAssociationService associationService;
+    private final MemoryEntityService entityService;
     private final MessageRepository messageRepo;
     private final CompanionService companionService;
     private final CurrentUser currentUser;
 
     public MemoryController(MemoryService memoryService, MemoryAssociationService associationService,
+                            MemoryEntityService entityService,
                             MessageRepository messageRepo, CompanionService companionService,
                             CurrentUser currentUser) {
         this.memoryService = memoryService;
         this.associationService = associationService;
+        this.entityService = entityService;
         this.messageRepo = messageRepo;
         this.companionService = companionService;
         this.currentUser = currentUser;
+    }
+
+    /** V3 P2: 用户常提的实体(长期指代: "那家公司/上次那个地方") */
+    @GetMapping("/entities")
+    public List<MemoryEntity> entities(@PathVariable String companionId) {
+        String userId = currentUser.requireUserId();
+        companionService.requireOwned(userId, companionId);
+        return entityService.recent(userId, companionId, 20);
     }
 
     @GetMapping

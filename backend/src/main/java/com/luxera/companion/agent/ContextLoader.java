@@ -35,6 +35,7 @@ public class ContextLoader {
     private final SelfModelService selfModelService;
     private final UserModelService userModelService;
     private final UserChatStyleService userChatStyleService;
+    private final com.luxera.companion.memory.MemoryEntityService entityService;
     private final RelationshipService relationshipService;
     private final MemoryService memoryService;
     private final WorkingMemory workingMemory;
@@ -47,6 +48,7 @@ public class ContextLoader {
                          EmotionService emotionService, ThoughtService thoughtService,
                          OpenLoopService openLoopService, SelfModelService selfModelService,
                          UserModelService userModelService, UserChatStyleService userChatStyleService,
+                         com.luxera.companion.memory.MemoryEntityService entityService,
                          RelationshipService relationshipService, MemoryService memoryService,
                          WorkingMemory workingMemory, LifeContextProvider lifeContextProvider,
                          CompanionSchedule schedule, com.luxera.companion.config.AppProperties props) {
@@ -60,6 +62,7 @@ public class ContextLoader {
         this.selfModelService = selfModelService;
         this.userModelService = userModelService;
         this.userChatStyleService = userChatStyleService;
+        this.entityService = entityService;
         this.relationshipService = relationshipService;
         this.memoryService = memoryService;
         this.workingMemory = workingMemory;
@@ -83,13 +86,14 @@ public class ContextLoader {
         var selfModel = selfModelService.get(companionId);
         var userModel = userModelService.summary(userId, companionId);
         var userChatStyle = userChatStyleService.get(companionId);
+        var entities = entityService.recent(userId, companionId, 8);
         var relationship = relationshipService.find(userId, companionId);
         String query = recentMessages.isEmpty() ? "" : recentMessages.get(recentMessages.size() - 1).getContent();
         var memories = memoryService.retrieve(userId, companionId, query, props.getAgent().getMemoryTopN());
         var wm = conversationId != null ? workingMemory.get(companionId, conversationId) : null;
         String scheduleDesc = schedule.describe(companionId, companion.getName(), now);
         return new CompanionContext(companion, persona, life, state, availability, episodes, thoughts, loops,
-                selfModel, userModel, userChatStyle, relationship, memories, recentMessages, wm, perception,
+                selfModel, userModel, userChatStyle, entities, relationship, memories, recentMessages, wm, perception,
                 scheduleDesc, toolResult, now);
     }
 
