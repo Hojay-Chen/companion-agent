@@ -48,16 +48,14 @@ public class EventSimulator {
     private final CompanionRepository companionRepository;
     private final MemoryService memoryService;
     private final WorldEventLogService worldEventLogService;
-    private final ExperienceProcessor experienceProcessor;
-    private final ThoughtService thoughtService;
     private final AgentTraceService traceService;
+    private final EventChainService eventChainService;
 
     public EventSimulator(EventSimulationAgent agent, CompanionLifeService lifeService,
                           AgentStateService stateService, CompanionService companionService,
                           CompanionRepository companionRepository,
                           MemoryService memoryService, WorldEventLogService worldEventLogService,
-                          ExperienceProcessor experienceProcessor, ThoughtService thoughtService,
-                          AgentTraceService traceService) {
+                          AgentTraceService traceService, EventChainService eventChainService) {
         this.agent = agent;
         this.lifeService = lifeService;
         this.stateService = stateService;
@@ -65,9 +63,8 @@ public class EventSimulator {
         this.companionRepository = companionRepository;
         this.memoryService = memoryService;
         this.worldEventLogService = worldEventLogService;
-        this.experienceProcessor = experienceProcessor;
-        this.thoughtService = thoughtService;
         this.traceService = traceService;
+        this.eventChainService = eventChainService;
     }
 
     /** 模拟一次事件(通常由定时任务在休闲/通勤/晚间调用, 不在睡觉时调用) */
@@ -110,34 +107,14 @@ public class EventSimulator {
             return EventSimulationResult.NORMAL;
         }
 
-        // 事件发生: 记录 + 经历抽取 + 可能的想法
+        // 事件发生: 记录主事件 + V6 §21 因果链(后果逐层应用, 深度 ≤ MAX_DEPTH)
         worldEventLogService.record(WorldEvent.of(WorldEventType.WORLD_EVENT_OCCURRED,
                 companionId, Map.of("event", chosen.eventType(), "trigger", chosen.trigger(),
                         "consequences", chosen.consequences() == null ? List.of() : chosen.consequences(),
                         "at", now.toString())));
-        applyConsequences(companionId, chosen, now);
+        eventChainService.applyChain(companionId, chosen.eventType(), chosen.consequences(), now);
         log.info("[事件模拟] {}: {}", companionId, chosen.eventType());
         return chosen.eventType();
-    }
-
-    private void applyConsequences(String companionId, EventSimulationResult.EventCandidate e, LocalDateTime now) {
-        String title = titleFor(e.eventType());
-        if (title == null) return;
-        try {
-            experienceProcessor.recordLifeEvent(companionId, title, descriptionFor(e), 0.45, 0.35);
-        } catch (Exception ex) {
-            log.warn("[事件模拟] 经历记录失败: {}", ex.getMessage());
-        }
-        // 好消息 → 产生一个想分享的想法(后续可能主动联系用户)
-        if (EventSimulationResult.GOOD_NEWS.equals(e.eventType())) {
-            try {
-                thoughtService.create(companionId,
-                        "今天遇到了件开心的小事,想告诉他。",
-                        "CURIOSITY", "EVENT", e.eventType(), 0.5, 0.5, 0.3, 0.8, 0.7);
-            } catch (Exception ex) {
-                log.warn("[事件模拟] 想法创建失败: {}", ex.getMessage());
-            }
-        }
     }
 
     /** 加权采样: 基概率 + modifier, 随机决定哪个事件发生 */
@@ -180,27 +157,5 @@ public class EventSimulator {
         if (hour >= 8 && hour < 18) return "白天";
         if (hour >= 18 && hour < 22) return "傍晚";
         return "夜晚";
-    }
-
-    private static String titleFor(String eventType) {
-        return switch (eventType) {
-            case EventSimulationResult.FORGOT_UMBRELLA -> "出门忘带伞";
-            case EventSimulationResult.MEET_ACQUAINTANCE -> "路上遇到熟人";
-            case EventSimulationResult.SUDDEN_PLAN_CHANGE -> "临时改变计划";
-            case EventSimulationResult.WORK_INTERRUPTION -> "工作被打断";
-            case EventSimulationResult.GOOD_NEWS -> "遇到一件开心的小事";
-            default -> null;
-        };
-    }
-
-    private static String descriptionFor(EventSimulationResult.EventCandidate e) {
-        return switch (e.eventType()) {
-            case EventSimulationResult.FORGOT_UMBRELLA -> "出门忘带伞,淋了点雨,有点狼狈";
-            case EventSimulationResult.MEET_ACQUAINTANCE -> "路上遇到熟人,聊了几句";
-            case EventSimulationResult.SUDDEN_PLAN_CHANGE -> "本来安排好的事临时有变,重新调整了";
-            case EventSimulationResult.WORK_INTERRUPTION -> "正在忙的时候被打断,多处理了一件小事";
-            case EventSimulationResult.GOOD_NEWS -> "遇到一件让人开心的小事";
-            default -> null;
-        };
     }
 }

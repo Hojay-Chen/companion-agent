@@ -31,11 +31,14 @@ public class ExpressionAgent implements Agent<ExpressionContext, ExpressionResul
     private final LlmRouter llm;
     private final AgentTraceService traceService;
     private final SkillPromptComposer skillPrompts;
+    private final TypingSimulationService typing;
 
-    public ExpressionAgent(LlmRouter llm, AgentTraceService traceService, SkillPromptComposer skillPrompts) {
+    public ExpressionAgent(LlmRouter llm, AgentTraceService traceService, SkillPromptComposer skillPrompts,
+                           TypingSimulationService typing) {
         this.llm = llm;
         this.traceService = traceService;
         this.skillPrompts = skillPrompts;
+        this.typing = typing;
     }
 
     @Override
@@ -49,9 +52,14 @@ public class ExpressionAgent implements Agent<ExpressionContext, ExpressionResul
             return llmPlan;
         }
 
+        // V6 §57 回退: 单段 + 打字时长由 TypingSimulation 估算
         ExpressionResult fallback = ExpressionResult.single(true);
-        trace(traceId, ctx, fallback, System.currentTimeMillis() - start, "fallback");
-        return fallback;
+        long typingMs = typing.typingDurationMs(ctx.messageText(), ctx.urgency());
+        ExpressionResult timed = new ExpressionResult(fallback.strategy(),
+                List.of(new ExpressionResult.MessageSegment("reply", 0, 0, typingMs)),
+                true, true);
+        trace(traceId, ctx, timed, System.currentTimeMillis() - start, "fallback");
+        return timed;
     }
 
     private ExpressionResult tryLlm(ExpressionContext ctx) {
@@ -61,7 +69,7 @@ public class ExpressionAgent implements Agent<ExpressionContext, ExpressionResul
                     .system(buildSystem(ctx))
                     .user(buildUser(ctx))
                     .task("expression-generation")
-                    .schemaHint("{\"strategy\":{},\"segments\":[],\"stopAfter\":true}")
+                    .schemaHint("{\"strategy\":{},\"segments\":[{\"purpose\":\"\",\"delayMs\":0,\"maxChars\":0,\"typingDurationMs\":0}],\"stopAfter\":true}")
                     .build());
             return parse(result.getRaw(), ctx);
         } catch (Exception e) {
@@ -83,10 +91,15 @@ public class ExpressionAgent implements Agent<ExpressionContext, ExpressionResul
 
             List<ExpressionResult.MessageSegment> segments = new ArrayList<>();
             for (JsonNode s : n.path("segments")) {
+                long typingMs = s.path("typingDurationMs").asLong(0);
+                if (typingMs <= 0) {
+                    typingMs = typing.typingDurationMs(ctx.messageText(), ctx.urgency());
+                }
                 segments.add(new ExpressionResult.MessageSegment(
                         s.path("purpose").asText("reply"),
                         s.path("delayMs").asLong(0),
-                        s.path("maxChars").asInt(0)));
+                        s.path("maxChars").asInt(0),
+                        typingMs));
             }
             if (segments.isEmpty()) {
                 return ExpressionResult.single(true);

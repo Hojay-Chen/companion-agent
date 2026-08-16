@@ -76,6 +76,12 @@ public class MemoryService {
         List<Memory> candidates = new ArrayList<>();
         if (StringUtils.hasText(query)) {
             candidates.addAll(repo.searchByKeyword(userId, companionId, query));
+            // V6 §19 回退: 整段消息很少能精确命中记忆内容(LIKE 全文匹配)。
+            // 关键词检索为空时, 回退到最近的记忆 —— 她仍会"想起"一些近事,
+            // 让 Memory Agent 有候选可评估(而不是直接无记忆)。
+            if (candidates.isEmpty()) {
+                candidates.addAll(repo.search(userId, companionId, null));
+            }
         } else {
             candidates.addAll(repo.search(userId, companionId, null));
         }

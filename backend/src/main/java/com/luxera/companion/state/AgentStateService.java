@@ -121,20 +121,25 @@ public class AgentStateService {
     public void decayAllNegative(double rate) {
         for (AgentState s : repo.findAll()) {
             boolean changed = false;
+            // V6 §48 状态惯性: 按比例衰减(情绪越高消退越慢, 保留"还有一点不爽"的残余感)
             if (s.getHurt() > 0.001) {
-                s.setHurt(clamp(s.getHurt() - rate));
+                s.setHurt(clamp(s.getHurt() - Math.max(rate, s.getHurt() * 0.15) * 0.5));
                 changed = true;
             }
             if (s.getAnger() > 0.001) {
-                s.setAnger(clamp(s.getAnger() - rate));
+                s.setAnger(clamp(s.getAnger() - Math.max(rate, s.getAnger() * 0.15) * 0.5));
                 changed = true;
             }
             if (s.getSadness() > 0.001) {
-                s.setSadness(clamp(s.getSadness() - rate));
+                s.setSadness(clamp(s.getSadness() - Math.max(rate, s.getSadness() * 0.15) * 0.5));
                 changed = true;
             }
             if (s.getAnxiety() > 0.001) {
-                s.setAnxiety(clamp(s.getAnxiety() - rate));
+                s.setAnxiety(clamp(s.getAnxiety() - Math.max(rate, s.getAnxiety() * 0.15) * 0.5));
+                changed = true;
+            }
+            if (s.getLoneliness() > 0.001) {
+                s.setLoneliness(clamp(s.getLoneliness() - Math.max(rate, s.getLoneliness() * 0.15) * 0.5));
                 changed = true;
             }
             if (changed) {

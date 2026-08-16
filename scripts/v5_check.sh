@@ -100,6 +100,13 @@ sleep 1
 
 # ── 测试 4: Agent 痕迹 ──
 note "测试4: Agent 痕迹(Emotion 必记录; Brain/Memory 仅在'注意到'后调用 —— V5 §73)"
+# 发第二条消息, 让异步记忆抽取完成后再查 memory trace
+if [ "$NIGHT" -eq 0 ]; then
+  curl -s -N -m 90 -X POST "$BASE/api/companions/$CID/conversations/$CONV/chat" \
+    -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    -d '{"content":"其实我最近有点累,想跟你聊聊"}' > /dev/null 2>&1 || true
+  sleep 2
+fi
 TRACES=$(curl -s "$BASE/api/companions/$CID/v5/traces" -H "Authorization: Bearer $TOKEN")
 EMO=$(echo "$TRACES" | $PY -c "import sys,json;d=json.load(sys.stdin);print('Y' if any(t.get('agent')=='emotion' for t in d) else 'N')")
 BRAIN=$(echo "$TRACES" | $PY -c "import sys,json;d=json.load(sys.stdin);print('Y' if any(t.get('agent')=='brain' for t in d) else 'N')")

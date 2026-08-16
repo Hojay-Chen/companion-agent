@@ -64,6 +64,35 @@ public class AgentState {
     @Column(nullable = false)
     private double warmth = 0;
 
+    // ── V6 Body State(§50): 身体状态影响情绪/注意力/表达 ──────────
+    /** 困倦程度 0-1(凌晨 + 困 → 即使想聊也可能说"明天再聊") */
+    @Column(nullable = false, columnDefinition = "double precision default 0.1")
+    private double sleepiness = 0.1;
+
+    /** 饥饿程度 0-1 */
+    @Column(nullable = false, columnDefinition = "double precision default 0.1")
+    private double hunger = 0.1;
+
+    /** 身体不适 0-1(头疼/感冒等) */
+    @Column(name = "physical_discomfort", nullable = false, columnDefinition = "double precision default 0")
+    private double physicalDiscomfort = 0;
+
+    /** 专注度 0-1(工作中高, 深夜低) */
+    @Column(nullable = false, columnDefinition = "double precision default 0.6")
+    private double focus = 0.6;
+
+    /** V6 情绪叠加: 孤独感 0-1(与 warmth 并存: 可以既喜欢又孤独) */
+    @Column(nullable = false, columnDefinition = "double precision default 0")
+    private double loneliness = 0;
+
+    /** V6 情绪叠加: 愉悦/开心 0-1(与 hurt 并存) */
+    @Column(nullable = false, columnDefinition = "double precision default 0")
+    private double joy = 0;
+
+    /** V6 情绪叠加: 亲昵/喜爱 0-1 */
+    @Column(nullable = false, columnDefinition = "double precision default 0")
+    private double affection = 0;
+
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;

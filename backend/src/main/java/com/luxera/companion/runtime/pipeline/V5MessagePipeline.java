@@ -32,11 +32,13 @@ import com.luxera.companion.runtime.agent.emotion.EmotionAppraisalResult;
 import com.luxera.companion.runtime.agent.emotion.EmotionContext;
 import com.luxera.companion.runtime.agent.memory.MemoryAgent;
 import com.luxera.companion.runtime.agent.memory.MemoryRecallContext;
+import com.luxera.companion.runtime.agent.memory.MemoryRecallProbabilityService;
 import com.luxera.companion.runtime.agent.memory.MemoryRecallResult;
 import com.luxera.companion.state.AgentState;
 import com.luxera.companion.state.AgentStateService;
 import com.luxera.companion.state.AvailabilityService;
 import com.luxera.companion.state.CompanionAvailability;
+import com.luxera.companion.thought.ThoughtService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -87,6 +89,8 @@ public class V5MessagePipeline {
     private final CompanionEventBus eventBus;
     private final AgentTraceService traceService;
     private final ConversationService conversationService;
+    private final ThoughtService thoughtService;
+    private final MemoryRecallProbabilityService recallProbabilityService;
 
     public V5MessagePipeline(EmotionAgent emotionAgent, BrainAgent brainAgent, MemoryAgent memoryAgent,
                              AppraisalService appraisalService, AttentionService attentionService,
@@ -97,7 +101,8 @@ public class V5MessagePipeline {
                              MemoryService memoryService, MessageDeliveryService deliveryService,
                              PendingMessageService pendingMessageService, ScheduledActionService scheduledActionService,
                              CompanionEventBus eventBus, AgentTraceService traceService,
-                             ConversationService conversationService) {
+                             ConversationService conversationService, ThoughtService thoughtService,
+                             MemoryRecallProbabilityService recallProbabilityService) {
         this.emotionAgent = emotionAgent;
         this.brainAgent = brainAgent;
         this.memoryAgent = memoryAgent;
@@ -118,6 +123,8 @@ public class V5MessagePipeline {
         this.eventBus = eventBus;
         this.traceService = traceService;
         this.conversationService = conversationService;
+        this.thoughtService = thoughtService;
+        this.recallProbabilityService = recallProbabilityService;
     }
 
     /**
@@ -242,6 +249,8 @@ public class V5MessagePipeline {
                     || brainDecision.reasonFactors().isEmpty() ? "暂时不想回" : String.join(";", brainDecision.reasonFactors()), reviewAt);
             scheduledActionService.schedule(companionId, ScheduledActionService.RE_EVALUATE_MESSAGE,
                     reviewAt, Map.of("pendingMessageId", last.getId()));
+            // V6 §31 Unfinished Thought: "想回复但被打断/暂时没回" → 记入未完成想法, 稍后可能主动回来补
+            recordUnfinishedThought(companionId, decisionText, brainDecision);
             return new PipelineResult(PipelineResult.Outcome.DEFERRED, brainDecision, emotion,
                     recall, last, "看到了但不回, 稍后复查", attention);
         }
@@ -266,17 +275,22 @@ public class V5MessagePipeline {
         return 180;
     }
 
-    /** 记忆激活: 用 MemoryAgent 的结果重新排序(回退时保持原序) */
+    /** 记忆激活: 用 MemoryAgent 的结果重新排序 + V6 §19 召回概率阈值过滤(回退时保持原序) */
     private List<Memory> applyActivation(List<Memory> candidates, MemoryRecallResult recall) {
-        if (candidates == null || candidates.isEmpty() || recall == null
-                || recall.activations() == null || recall.activations().isEmpty()) {
-            return candidates;
+        if (candidates == null || candidates.isEmpty()) return candidates;
+
+        // V6 §19: 召回概率过滤 —— 只有"会被真正想起"的记忆才进入当前认知
+        List<Memory> aboveThreshold = recallProbabilityService.filterAboveThreshold(
+                candidates, recall, MemoryRecallProbabilityService.DEFAULT_THRESHOLD);
+
+        if (recall == null || recall.activations() == null || recall.activations().isEmpty()) {
+            return aboveThreshold;
         }
         Map<String, Double> activation = new HashMap<>();
         for (MemoryRecallResult.MemoryActivation a : recall.activations()) {
             activation.put(a.memoryId(), a.activation());
         }
-        List<Memory> sorted = new ArrayList<>(candidates);
+        List<Memory> sorted = new ArrayList<>(aboveThreshold);
         sorted.sort((x, y) -> Double.compare(
                 activation.getOrDefault(y.getId(), 0.0),
                 activation.getOrDefault(x.getId(), 0.0)));
@@ -298,6 +312,28 @@ public class V5MessagePipeline {
             out.add(prefix + m.getContent());
         }
         return out;
+    }
+
+    /** V6 §31: 延迟回复时记录"想回复但暂时没回"的未完成想法(由激活 Job 决定未来是否想起) */
+    private void recordUnfinishedThought(String companionId, String messageText, BrainDecision d) {
+        try {
+            String content = d != null && d.expressionGoal() != null && !d.expressionGoal().isBlank()
+                    ? "想回应那句「" + truncate(messageText, 30) + "」—— " + d.expressionGoal()
+                    : "还没回那句「" + truncate(messageText, 30) + "」, 等忙完想补一句";
+            double priority = d != null ? Math.max(0.3, d.priority()) : 0.4;
+            // 未完成想法有效期: 4~24h(太久就忘了)
+            java.time.LocalDateTime expiresAt = java.time.LocalDateTime.now()
+                    .plusHours((long) (4 + (1 - priority) * 20));
+            thoughtService.createUnfinished(companionId, content, "CONVERSATION",
+                    null, priority, expiresAt);
+        } catch (Exception ignored) {
+            // 未完成想法记录失败不影响主流程
+        }
+    }
+
+    private static String truncate(String s, int max) {
+        if (s == null) return null;
+        return s.length() > max ? s.substring(0, max) : s;
     }
 
     /** 手机通知触达(与 AttentionService 一致) */

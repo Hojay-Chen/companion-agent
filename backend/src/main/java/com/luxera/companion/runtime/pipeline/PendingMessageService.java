@@ -25,6 +25,16 @@ public class PendingMessageService {
     @Transactional
     public PendingMessageState defer(Message message, String companionId, String userId,
                                      String reason, LocalDateTime nextReviewAt) {
+        return defer(message, companionId, userId, reason, nextReviewAt, "SEEN_NO_REPLY");
+    }
+
+    /**
+     * 记录一条"已读但不回"的消息。
+     * V6 §54 Communication Friction: 摩擦类型标明"为什么不回" —— 看到了没回 / 想回忘了 / 回一半被打断。
+     */
+    @Transactional
+    public PendingMessageState defer(Message message, String companionId, String userId,
+                                     String reason, LocalDateTime nextReviewAt, String frictionType) {
         // 已有同消息记录 → 更新复查时间
         Optional<PendingMessageState> existing = repo.findByMessageIdAndStatus(message.getId(), PendingMessageState.STATUS_PENDING);
         if (existing.isPresent()) {
@@ -32,6 +42,7 @@ public class PendingMessageService {
             e.setNextReviewAt(nextReviewAt);
             e.setReason(reason);
             e.setReadAt(LocalDateTime.now());
+            if (frictionType != null) e.setFrictionType(frictionType);
             return repo.save(e);
         }
         PendingMessageState p = new PendingMessageState();
@@ -44,7 +55,31 @@ public class PendingMessageService {
         p.setReadAt(LocalDateTime.now());
         p.setNextReviewAt(nextReviewAt);
         p.setReason(reason);
+        p.setFrictionType(frictionType != null ? frictionType : "SEEN_NO_REPLY");
         return repo.save(p);
+    }
+
+    /**
+     * V6 §54: 记录"想回复但忘了"的摩擦 —— 复查时 Brain 想过要回但又被别的事打断。
+     * 这类消息值得更长的复查窗口(人真的会忘), 由复查 Job 调用。
+     */
+    @Transactional
+    public void noteWantedToReply(String pendingMessageId) {
+        repo.findById(pendingMessageId).ifPresent(p -> {
+            p.setFrictionType("WANTED_TO_REPLY_FORGOT");
+            p.setReviewCount(p.getReviewCount() + 1);
+            p.setNextReviewAt(LocalDateTime.now().plusHours(3));
+            repo.save(p);
+        });
+    }
+
+    /** 复查计数 +1 */
+    @Transactional
+    public void noteReviewed(String pendingMessageId) {
+        repo.findById(pendingMessageId).ifPresent(p -> {
+            p.setReviewCount(p.getReviewCount() + 1);
+            repo.save(p);
+        });
     }
 
     /** 到期的待复查消息(已读未回, 到复查点) */

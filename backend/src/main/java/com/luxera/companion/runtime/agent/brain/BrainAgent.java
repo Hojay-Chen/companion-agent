@@ -36,11 +36,14 @@ public class BrainAgent implements Agent<BrainContext, BrainDecision> {
     private final LlmRouter llm;
     private final AgentTraceService traceService;
     private final SkillPromptComposer skillPrompts;
+    private final DecisionValidator decisionValidator;
 
-    public BrainAgent(LlmRouter llm, AgentTraceService traceService, SkillPromptComposer skillPrompts) {
+    public BrainAgent(LlmRouter llm, AgentTraceService traceService, SkillPromptComposer skillPrompts,
+                      DecisionValidator decisionValidator) {
         this.llm = llm;
         this.traceService = traceService;
         this.skillPrompts = skillPrompts;
+        this.decisionValidator = decisionValidator;
     }
 
     @Override
@@ -51,13 +54,36 @@ public class BrainAgent implements Agent<BrainContext, BrainDecision> {
 
         BrainDecision llmDecision = tryLlm(ctx, traceId);
         if (llmDecision != null) {
-            trace(traceId, ctx, llmDecision, System.currentTimeMillis() - start, "success");
-            return llmDecision;
+            BrainDecision validated = applyValidation(llmDecision, ctx);
+            trace(traceId, ctx, validated, System.currentTimeMillis() - start, "success");
+            return validated;
         }
 
         BrainDecision fallback = mapBaseline(baseline, ctx);
-        trace(traceId, ctx, fallback, System.currentTimeMillis() - start, "fallback");
-        return fallback;
+        BrainDecision validatedFallback = applyValidation(fallback, ctx);
+        trace(traceId, ctx, validatedFallback, System.currentTimeMillis() - start, "fallback");
+        return validatedFallback;
+    }
+
+    /** V6 §44 一致性校验: 决策违反当前状态约束时, 修正为可接受的替代动作 */
+    private BrainDecision applyValidation(BrainDecision d, BrainContext ctx) {
+        if (decisionValidator == null) return d;
+        try {
+            DecisionValidator.ValidationResult vr = decisionValidator.validate(d.action(), ctx);
+            if (vr.valid() || vr.correctedAction() == null) return d;
+            return new BrainDecision(vr.correctedAction(), d.priority() * 0.9,
+                    concat(d.reasonFactors(), vr.reason()), d.expressionGoal(),
+                    d.confidence() * 0.8, d.fallback(), d.baseline());
+        } catch (Exception e) {
+            return d;
+        }
+    }
+
+    private static List<String> concat(List<String> list, String extra) {
+        List<String> out = new ArrayList<>();
+        if (list != null) out.addAll(list);
+        if (extra != null) out.add(extra);
+        return out;
     }
 
     /** 尝试 LLM 决策; 失败/Mock/低置信度返回 null */

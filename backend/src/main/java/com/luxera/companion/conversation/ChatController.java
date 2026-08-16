@@ -76,6 +76,10 @@ public class ChatController {
     private final V5MessagePipeline messagePipeline;
     private final ExpressionAgent expressionAgent;
     private final MessageDeliveryService deliveryService;
+    /** V6: 会话线程(话题状态) */
+    private final ConversationThreadService threadService;
+    /** V6: 行为模式学习 */
+    private final com.luxera.companion.behavior.BehaviorLearningService behaviorLearningService;
     /** 每会话一个锁, 串行化同会话的消息处理(消息归并 + 生成) */
     private final java.util.concurrent.ConcurrentHashMap<String, ReentrantLock> conversationLocks = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -88,7 +92,8 @@ public class ChatController {
                                                     CompanionEventBus eventBus, CompanionSchedule schedule,
                           CurrentUser currentUser, TaskExecutor taskExecutor,
                           V5MessagePipeline messagePipeline, ExpressionAgent expressionAgent,
-                          MessageDeliveryService deliveryService) {
+                          MessageDeliveryService deliveryService, ConversationThreadService threadService,
+                          com.luxera.companion.behavior.BehaviorLearningService behaviorLearningService) {
         this.conversationService = conversationService;
         this.companionService = companionService;
         this.runtime = runtime;
@@ -108,6 +113,8 @@ public class ChatController {
         this.messagePipeline = messagePipeline;
         this.expressionAgent = expressionAgent;
         this.deliveryService = deliveryService;
+        this.threadService = threadService;
+        this.behaviorLearningService = behaviorLearningService;
     }
 
     @GetMapping
@@ -200,6 +207,12 @@ public class ChatController {
                 workingMemory.record(companionId, conversationId,
                         new WorkingMemory.RecentLine("user", content, m.getCreatedAt()), perception);
                 userChatStyleService.record(companionId, userId, content, m.getCreatedAt());
+                // V6 §45/§46: 行为模式学习(深夜/工作时回复慢, 用户开心时她更主动)
+                try {
+                    behaviorLearningService.onUserMessage(companionId, now, perception.emotion());
+                } catch (Exception e) {
+                    log.warn("BehaviorPattern 学习失败: {}", e.getMessage());
+                }
                 // 事件流: 用户消息已送达(未读)
                 eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
                         Map.of("messageId", m.getId(), "status", "DELIVERED"));
@@ -211,6 +224,15 @@ public class ChatController {
             PerceptionEngine.Perception burstPerception = perceptionEngine.perceive(decisionText);
             V5MessagePipeline.PipelineResult pipelineResult = messagePipeline.process(
                     userId, companionId, conversationId, userMsgs, decisionText, burstPerception, now);
+
+            // V6 §30 Conversation Thread: 记录/复用当前话题线程(话题变化 → 旧线程 PAUSED, 开新线程)
+            try {
+                threadService.touch(conversationId, companionId, userId,
+                        burstPerception != null ? burstPerception.topic() : null,
+                        burstPerception != null ? burstPerception.emotion() : null, now);
+            } catch (Exception e) {
+                log.warn("ConversationThread touch 失败: {}", e.getMessage());
+            }
 
             // 3. 她根本没看到(静音/勿扰/在忙/分心)→ 保持未读(DELIVERED), 不打扰
             if (pipelineResult.isIgnored()) {

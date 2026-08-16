@@ -70,6 +70,15 @@ public class PendingMessageState {
     @Column(length = 500)
     private String reason;
 
+    // ── V6 §54 Communication Friction ──────────────
+    /** 摩擦类型: SEEN_NO_REPLY(看到了没回) / WANTED_TO_REPLY_FORGOT(想回忘了) / REPLIED_HALFWAY(回一半被打断) */
+    @Column(name = "friction_type", length = 32)
+    private String frictionType;
+
+    /** 复查次数(每次复查 +1; 多次仍不回 → 人偶尔会忘记) */
+    @Column(name = "review_count", nullable = false)
+    private int reviewCount = 0;
+
     @Column(nullable = false, length = 16)
     private String status = STATUS_PENDING;
 

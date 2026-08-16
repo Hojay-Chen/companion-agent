@@ -2,7 +2,79 @@
 
 > **不是 Chatbot**：拥有稳定人格、连续人生、持续记忆，随时间与用户建立关系，并在合适的时候主动找你。
 >
-> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime + V4 Continuous Human Runtime + **V5 Continuous Person Runtime**。当前完成 **V2.0(44/44) + V3 P0/P1/P2 + V4 P0/P1/P2/P3 + V5 P0~P8**。
+> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime + V4 Continuous Human Runtime + **V5 Continuous Person Runtime** + **V6 拟真人格与持续生活**。当前完成 **V2.0(44/44) + V3 P0/P1/P2 + V4 P0/P1/P2/P3 + V5 P0~P8 + V6 P0~P3**。
+
+---
+
+## V6 · 拟真人格与持续生活（2026-08）
+
+> **V5 是"持续运行的 Person Runtime"；V6 是"一个持续生活、拥有内部状态、偶尔主动联系你、会因为现实活动暂时无法回复、会产生情绪和记忆、并以符合人物个性的方式表达的人"。**
+>
+> 核心转变：不再是"等待用户输入的 AI 聊天机器人"，而是"一个拥有连续时间、生活、状态、记忆、关系、情绪、行为和表达能力的虚拟人物"。
+
+### V6 核心改造
+
+1. **Conversation Thread（§30）**：会话线程状态机（ACTIVE → PAUSED → RESUMABLE → ENDED → ABANDONED）。
+   真人经常"聊到一半去做别的事，过一段时间回来继续" —— 话题切换时旧线程暂停，回来时可恢复。
+   - 新表 `conversation_threads`
+   - `ThreadMaintenanceJob` 周期衰减（太久没聊 → RESUMABLE → 遗忘）
+   - 集成消息链路：用户消息自动 touch/切换线程
+2. **Unfinished Thought（§31）**：她想说没说完 / 想问忘了 / 回复被打断 → 记入未完成想法。
+   - `ThoughtService.createUnfinished`（优先级 + 过期时间）
+   - `UnfinishedThoughtActivationJob` 冷却期后重新激活 → 成为主动消息种子
+   - Brain DEFER 时自动记录"想回复但暂时没回"
+3. **Activity 具体化 + Interrupt（§6/§32）**：活动不再只是 SLEEP/WORK，而是具体场景。
+   - `LifeActivity` 增 `attentionDemand / interruptibility / phoneAvailability / moodEffect / progress`
+   - `ActivitySpecProvider` 按活动类型映射属性（会议注意力 0.92、可打断性 0.12；洗澡手机不可用）
+   - `LifeInterruptService` 支持"做饭 → 用户消息 → 看一眼回复 → 继续做饭"
+4. **Emotion Inertia + BodyState（§48/§49/§50）**：情绪不会因事件结束瞬间归零。
+   - 边际递减：已有情绪越高，新冲击影响越小
+   - 多维叠加：joy/loneliness/affection 与负面情绪并存（又开心又委屈）
+   - 身体状态：困倦/饥饿/不适放大负面、抑制正面
+5. **Memory Recall Probability（§19）**：记忆召回概率化。
+   - `recallProbability = 激活 × 显著性`，只有超过阈值才进入当前认知
+   - 检索回退：关键词匹配不到时回退最近记忆（她仍会"想起"近事）
+6. **Decision Validator（§44）**：每次 Brain 决策做一致性校验。
+   - 睡眠时不立即回复、开会忙时不回复、手机不在身边不查手机、没注意到不回复、冲突中不主动结束
+   - 违规 → 修正为可接受的替代动作
+7. **Behavior Pattern（§45/§46）**：人物逐渐形成习惯（非 Prompt，是数据）。
+   - 新表 `behavior_patterns`（模式/置信度/观察数/影响方向）
+   - 从真实互动学习：深夜消息→她回复慢、工作时段→不爱看手机、用户开心→她更主动
+8. **Expression 消息级时间模型（§56/§57）**：真人打字节奏。
+   - `TypingSimulationService`：短消息 0.8~2s、复杂 2~8s、多段每条间隔 0.8~4s
+   - `MessageSegment` 增 `typingDurationMs`
+9. **Communication Friction（§54）**：通信摩擦是特性不是 bug。
+   - `PendingMessageState` 增 `frictionType`（看到了没回/想回忘了/回一半被打断）+ `reviewCount`
+   - 复查时 Brain 想回又被打断 → 记录"想回忘了"并延后
+10. **Event Chain 因果链（§21）**：事件可连锁影响。
+    - `EventChainService`：出门吃饭 → 下雨 → 忘带伞 → 淋雨 → 心情下降 → 回忆 → 主动告诉用户
+    - `maxDepth = 3` 防无限剧情
+11. **Anti-AI Evaluation（§71/§72）**：检测"典型 AI 行为"。
+    - 秒回/从不忽略/从不主动结束/从不遗忘/主动轰炸/回复过长 → 真人感评分
+    - `GET /api/companions/{id}/v6/eval`
+
+### V6 新增数据表
+
+| 表 | 用途 |
+|----|------|
+| `conversation_threads` | 会话话题线程（状态机 + 情感基调 + 未解决意图） |
+| `behavior_patterns` | 行为模式学习（置信度 + 观察数） |
+
+### V6 新增列
+
+| 表 | 列 | 说明 |
+|----|-----|------|
+| `agent_states` | `sleepiness/hunger/physical_discomfort/focus` | 身体状态 |
+| `agent_states` | `loneliness/joy/affection` | 情绪叠加维度 |
+| `life_activities` | `attention_demand/interruptibility/phone_availability/mood_effect/progress` | 活动属性 |
+| `pending_message_states` | `friction_type/review_count` | 通信摩擦 |
+
+### V6 验收
+
+- `mvn clean test`：**81 个单元/集成测试全部通过**（16 测试类，含 V6 新增 10 类）
+- `scripts/v6_check.sh`：V6 表结构 + 线程 API + 行为模式 + 反 AI 评估
+- `scripts/v5_check.sh`：V5 回归通过
+- 新诊断端点：`GET /api/companions/{id}/v6/eval`
 
 ---
 

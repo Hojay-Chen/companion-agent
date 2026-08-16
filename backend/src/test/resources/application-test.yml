@@ -20,3 +20,5 @@ app:
     open-loop-cron: 0 0 0 1 1 *
     memory-consolidation-cron: 0 0 0 1 1 *
     event-simulation-cron: 0 0 0 1 1 *
+    thread-maintenance-cron: 0 0 0 1 1 *
+    unfinished-thought-cron: 0 0 0 1 1 *

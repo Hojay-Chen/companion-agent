@@ -154,7 +154,8 @@ public class PendingMessageReevaluationJob {
         if (decision.shouldReply()) {
             reply(p, userId, decision);
         } else if (decision.isDefer()) {
-            // 继续冷处理 → 再延后
+            // 继续冷处理 → 再延后; V6 §54: 她"想过要回但又被别的事打断" → 记录想回忘了的摩擦
+            pendingService.noteWantedToReply(p.getId());
             scheduledActionService.schedule(companionId, ScheduledActionService.RE_EVALUATE_MESSAGE,
                     LocalDateTime.now().plusHours(2), Map.of("pendingMessageId", p.getMessageId()));
         } else {

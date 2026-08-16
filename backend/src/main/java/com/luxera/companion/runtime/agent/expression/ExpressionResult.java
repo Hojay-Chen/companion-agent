@@ -18,7 +18,12 @@ public record ExpressionResult(
                 new ExpressionStrategy("natural", 0.5, 0.5, 0.3, 0.2);
     }
 
-    public record MessageSegment(String purpose, long delayMs, int maxChars) {
+    public record MessageSegment(String purpose, long delayMs, int maxChars, long typingDurationMs) {
+
+        /** V5 兼容构造(默认打字时长由 TypingSimulation 填充) */
+        public MessageSegment(String purpose, long delayMs, int maxChars) {
+            this(purpose, delayMs, maxChars, 0);
+        }
     }
 
     /** 单段回退(默认) */
