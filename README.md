@@ -23,6 +23,8 @@
    - Sleep Decision：SLEEP / STAY_AWAKE / DELAY_SLEEP / NAP
    - **意志克服睡意**：深夜聊天+重要话题 → 她会硬撑（"我其实已经有点困了哈哈"然后继续聊）
    - **午睡推迟当晚**：14:00-19:00 午睡 → 当晚 22:00 睡意低 → 自然晚睡（习惯从历史涌现）
+   - **新伴侣作息初始化**：新伴侣不是"刚出生"，而是"已生活了一段时间"——按 chronotype 假定起床时间，睡眠压力从起床自然积累；深夜创建的非夜班伴侣合理入睡（凌晨不再醒着秒回）
+   - **夜班 chronotype 感知**：persona 含酒吧/夜班设定 → 自动 LATE 型（深夜保持清醒上班），不靠哈希随机
 3. **通信解耦（§10-§21）**：
    - `POST /messages` **立即返回 DELIVERED（几十毫秒）**，不等待 Agent
    - Agent 完全异步处理，回复通过 `GET /events` 事件流推送
@@ -55,9 +57,10 @@
 
 ### V7 验收
 
-- `mvn clean test`：**115 个测试全绿**
-- `scripts/v7_check.sh`：通信解耦(POST /messages 25ms) / Sleep Runtime / Phone Notification / 行为熵
-- 端到端：POST /messages 立即返回 + Agent 异步回复
+- `mvn clean test`：**115 个测试全绿**（23 测试类，含 V7 新增 SleepModel/PhoneNotification/Intention/CognitiveWakeup/BehavioralEntropy/V7Message 等）
+- `scripts/v7_check.sh`：通信解耦(POST /messages 44ms) / Sleep Runtime / Phone Notification / 行为熵 / 端到端
+- `scripts/v5_check.sh` + `scripts/v6_check.sh`：V5/V6 回归通过
+- 端到端：POST /messages 立即返回 + Agent 异步回复；深夜新伴侣合理入睡；酒吧夜班伴侣深夜保持清醒上班
 
 ---
 
