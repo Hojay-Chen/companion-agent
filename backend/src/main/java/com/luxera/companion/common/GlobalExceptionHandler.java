@@ -41,6 +41,19 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(e.getStatus()).body(new ApiError(e.getMessage(), e.getHint()));
     }
 
+    @ExceptionHandler(org.springframework.security.authentication.BadCredentialsException.class)
+    public ResponseEntity<ApiError> handleBadCredentials(org.springframework.security.authentication.BadCredentialsException e) {
+        // 用户名或密码错误 → 401 清晰提示, 而不是"服务器内部错误"
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(new ApiError("用户名或密码错误", null));
+    }
+
+    @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+    public ResponseEntity<ApiError> handleAccessDenied(org.springframework.security.access.AccessDeniedException e) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(new ApiError("没有权限访问", null));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> handleGeneric(Exception e) {
         log.error("Unhandled exception", e);

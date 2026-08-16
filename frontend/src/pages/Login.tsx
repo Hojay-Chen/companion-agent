@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/auth'
 import AuthShell from '@/components/AuthShell'
 
@@ -46,12 +46,6 @@ export default function Login() {
         <button className="btn-primary w-full" disabled={loading}>
           {loading ? '登录中…' : '登录'}
         </button>
-        <p className="text-center text-sm text-cocoa-400">
-          还没有账号?
-          <Link to="/register" className="ml-1 text-ember-soft hover:underline">
-            注册
-          </Link>
-        </p>
       </form>
     </AuthShell>
   )

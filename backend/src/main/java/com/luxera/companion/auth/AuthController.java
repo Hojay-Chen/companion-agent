@@ -26,7 +26,9 @@ public class AuthController {
     @PostMapping("/register")
     @ResponseStatus(HttpStatus.CREATED)
     public AuthService.AuthResponse register(@Valid @RequestBody AuthService.RegisterRequest req) {
-        return authService.register(req);
+        throw new com.luxera.companion.common.BusinessException(
+                org.springframework.http.HttpStatus.FORBIDDEN,
+                "注册功能已关闭", "账号由管理员创建, 如需开通请联系管理员");
     }
 
     @PostMapping("/login")

@@ -1,7 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuthStore } from '@/stores/auth'
 import Login from '@/pages/Login'
-import Register from '@/pages/Register'
 import Companions from '@/pages/Companions'
 import CompanionCreate from '@/pages/CompanionCreate'
 import Chat from '@/pages/Chat'
@@ -18,7 +17,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/register" element={<Register />} />
+      {/* 注册功能已关闭: /register 重定向到登录 */}
+      <Route path="/register" element={<Navigate to="/login" replace />} />
 
       <Route
         path="/"
