@@ -70,7 +70,7 @@ public class CompanionSchedule {
      */
     public Activity activityFor(String companionId, LocalDateTime now) {
         // V7: 睡眠是 emergent —— 由 SleepModel 决定, 不是时刻表
-        if (sleepModel.isSleeping(companionId, now)) {
+        if (sleepModel.currentSleeping(companionId, now)) {
             return Activity.SLEEP;
         }
         Schedule s = scheduleFor(companionId);
@@ -145,7 +145,7 @@ public class CompanionSchedule {
 
     /** 此刻她在做什么(注入 Prompt) */
     public String describe(String companionId, String name, LocalDateTime now) {
-        if (sleepModel.isSleeping(companionId, now)) {
+        if (sleepModel.currentSleeping(companionId, now)) {
             return String.format("现在是%s %s,%s正在睡觉。",
                     weekName(now), now.format(DateTimeFormatter.ofPattern("HH:mm")), name);
         }
@@ -187,7 +187,7 @@ public class CompanionSchedule {
 
     /** 主动消息倾向: 睡眠中为 0, 忙时低, 休闲高 */
     public double proactiveFactor(String companionId, LocalDateTime now) {
-        if (sleepModel.isSleeping(companionId, now)) return 0.0;
+        if (sleepModel.currentSleeping(companionId, now)) return 0.0;
         return switch (activityFor(companionId, now)) {
             case SLEEP -> 0.0;
             case WORK_BUSY, WORK_AFTERNOON -> 0.35;

@@ -4,6 +4,7 @@ import com.luxera.companion.persona.Companion;
 import com.luxera.companion.persona.CompanionRepository;
 import com.luxera.companion.persona.Persona;
 import com.luxera.companion.persona.PersonaService;
+import com.luxera.companion.sleep.CircadianStateRepository;
 import com.luxera.companion.sleep.SleepModel;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,6 +39,8 @@ class NightWorkerScheduleTest {
     PersonaService personaService;
     @Autowired
     SleepModel sleepModel;
+    @Autowired
+    CircadianStateRepository circadianRepo;
 
     private String nightCompanionId;
     private String dayCompanionId;
@@ -105,12 +108,15 @@ class NightWorkerScheduleTest {
 
     @Test
     void dayWorkerSleepIsEmergentNotScheduled() {
-        // 白班伴侣 23 点: 不一定返回 SLEEP —— 取决于 SleepModel(睡眠压力是否足够)
-        // 初始无压力 → 不应强制睡眠(V7 关键: 不是"22 点必睡")
+        // 白班伴侣 23 点: 睡眠由 SleepModel 决定(压力/节律/动机), 不是固定"22 点必睡"
         LocalDateTime nightTime = LocalDateTime.of(2026, 8, 16, 23, 0);
-        // 未初始化 SleepModel → isSleeping false → 返回 LATE_NIGHT 而非硬编码 SLEEP
+        // 显式设为"醒着但压力低"(模拟刚睡醒或午睡后) → 23 点不应强制 SLEEP
+        var c = sleepModel.getOrCreate(dayCompanionId, nightTime);
+        c.setSleeping(false);
+        c.setSleepPressure(0.2);   // 低压力
+        circadianRepo.save(c);
         assertNotEquals(CompanionSchedule.Activity.SLEEP, schedule.activityFor(dayCompanionId, nightTime),
-                "V7: 无睡眠压力时不强制睡眠");
+                "V7: 睡眠压力低时不应强制睡眠(emergent)");
     }
 
     @Test

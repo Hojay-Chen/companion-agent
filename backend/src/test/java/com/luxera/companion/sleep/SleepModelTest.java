@@ -72,6 +72,7 @@ class SleepModelTest {
     @Test
     void highSleepinessWithStrongMotivationStaysAwake() {
         CircadianState c = sleepModel.getOrCreate(companionId, LocalDateTime.of(2026, 8, 16, 23, 0));
+        c.setSleeping(false);   // 深夜初始化可能已入睡; 这里模拟"她醒着但很困"
         c.setSleepPressure(0.9);   // 高睡意
         c.setLastWakeAt(LocalDateTime.of(2026, 8, 16, 8, 0));
         circadianRepo.save(c);
@@ -126,6 +127,10 @@ class SleepModelTest {
 
     @Test
     void sleepSessionRecorded() {
+        // 深夜初始化可能已入睡; 先确保醒着, 再手动入睡
+        CircadianState init = sleepModel.getOrCreate(companionId, LocalDateTime.of(2026, 8, 16, 23, 0));
+        init.setSleeping(false);
+        circadianRepo.save(init);
         sleepModel.fallAsleep(companionId, LocalDateTime.of(2026, 8, 16, 23, 0), "NATURAL");
         var c = circadianRepo.findByCompanionId(companionId).orElseThrow();
         sleepModel.wakeUp(c, LocalDateTime.of(2026, 8, 17, 7, 0), "NATURAL");

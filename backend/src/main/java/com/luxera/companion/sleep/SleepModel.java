@@ -42,13 +42,16 @@ public class SleepModel {
     private final CircadianStateRepository circadianRepo;
     private final SleepSessionRepository sleepRepo;
     private final AgentStateService agentStateService;
+    private final com.luxera.companion.persona.PersonaService personaService;
 
     public SleepModel(CircadianStateRepository circadianRepo,
                       SleepSessionRepository sleepRepo,
-                      AgentStateService agentStateService) {
+                      AgentStateService agentStateService,
+                      com.luxera.companion.persona.PersonaService personaService) {
         this.circadianRepo = circadianRepo;
         this.sleepRepo = sleepRepo;
         this.agentStateService = agentStateService;
+        this.personaService = personaService;
     }
 
     /**
@@ -61,8 +64,6 @@ public class SleepModel {
             CircadianState c = new CircadianState();
             c.setCompanionId(companionId);
             c.setChronotype(chronotypeFor(companionId));
-            c.setSleepPressure(0.25);
-            c.setSleepDebt(0.1);
             // LATE 型生物钟偏晚 +1~2h
             double shift = switch (c.getChronotype()) {
                 case "EARLY" -> -1.0;
@@ -70,16 +71,65 @@ public class SleepModel {
                 default -> 0.0;
             };
             c.setCircadianPhaseShift(shift);
-            c.setLastWakeAt(now);
-            c.setSleeping(false);
+            // V7: 新伴侣不是"刚出生", 而是"已生活了一段时间"。
+            // 按 chronotype 假定今天已醒来(起床时间), 让睡眠压力从起床起自然积累:
+            // 深夜创建的新伴侣也会有合理睡意(而非凌晨还精神)。
+            int wakeHour = switch (c.getChronotype()) {
+                case "EARLY" -> 6;
+                case "LATE" -> 10;
+                default -> 7;
+            };
+            LocalDateTime todayWake = now.toLocalDate().atTime(wakeHour, 0);
+            LocalDateTime lastWake = todayWake.isAfter(now) ? todayWake.minusDays(1) : todayWake;
+            c.setLastWakeAt(lastWake);
+            // 从起床到当前已醒时长 → 初始睡眠压力(指数模型, 上限不高)
+            double awakeHours = java.time.Duration.between(lastWake, now).toMinutes() / 60.0;
+            double initialPressure = 0.2 + Math.min(0.5, awakeHours / 24.0 * 0.6);
+            c.setSleepPressure(Math.max(0.15, Math.min(0.7, initialPressure)));
+            c.setSleepDebt(0.1);
+            // 深夜创建的新伴侣: 假定她已生活到今天并入睡(而非凌晨还醒着)。
+            // 这是"新伴侣已存在一段时间"的初始化, 不违反 emergent —— 后续由 SleepModel 演化。
+            // 注意: LATE(夜班/酒吧)类型深夜应保持清醒(她要上班)。
+            int hour = now.getHour();
+            boolean deepNight = hour >= 22 || hour < 6;
+            if (deepNight && c.getSleepPressure() >= 0.45 && !"LATE".equals(c.getChronotype())) {
+                c.setSleeping(true);
+                c.setSleepStartedAt(now.minusHours(2));   // 已睡约 2 小时
+            } else {
+                c.setSleeping(false);
+            }
             return circadianRepo.save(c);
         });
     }
 
     /** chronotype: LATE 型伴侣天然倾向晚睡(酒吧夜班), 其余按 id 哈希 */
-    private static String chronotypeFor(String companionId) {
+    private String chronotypeFor(String companionId) {
+        // 夜班工作者(酒吧/夜班 persona) → 天然 LATE(晚睡晚起)
+        if (companionId != null && isNightWorkerPersona(companionId)) {
+            return "LATE";
+        }
         int h = Math.floorMod(companionId == null ? 0 : companionId.hashCode(), 1000);
         return h % 10 < 3 ? "LATE" : (h % 10 < 5 ? "EARLY" : "NORMAL");
+    }
+
+    /** 通过 persona 判断是否夜班工作者(酒吧/夜班/晚班) */
+    private boolean isNightWorkerPersona(String companionId) {
+        try {
+            var persona = personaService.getActive(companionId);
+            if (persona == null) return false;
+            StringBuilder text = new StringBuilder();
+            if (persona.getPersonality() != null && persona.getPersonality().getSummary() != null) {
+                text.append(persona.getPersonality().getSummary()).append(' ');
+            }
+            if (persona.getLife() != null && persona.getLife().getBackground() != null) {
+                text.append(persona.getLife().getBackground()).append(' ');
+            }
+            String s = text.toString();
+            return s.contains("酒吧") || s.contains("夜班") || s.contains("晚班")
+                    || s.contains("夜场") || s.contains("夜店") || s.contains("通宵");
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**
@@ -114,6 +164,16 @@ public class SleepModel {
     public boolean isSleeping(String companionId, LocalDateTime now) {
         CircadianState c = circadianRepo.findByCompanionId(companionId).orElse(null);
         return c != null && c.isSleeping();
+    }
+
+    /**
+     * 当前是否在睡眠中(首次访问会初始化)。
+     * 供活动判定使用 —— 新伴侣首次访问时初始化生物钟状态(含深夜入睡判定)。
+     */
+    @Transactional
+    public boolean currentSleeping(String companionId, LocalDateTime now) {
+        CircadianState c = getOrCreate(companionId, now);
+        return c.isSleeping();
     }
 
     /**
