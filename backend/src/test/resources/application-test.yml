@@ -4,6 +4,11 @@ spring:
     url: jdbc:postgresql://127.0.0.1:5432/companion_test
     username: admin
     password: shared-secret
+    # 限制测试连接池: 多个 @SpringBootTest context 各建池, 避免超过 PG max_connections
+    hikari:
+      maximum-pool-size: 3
+      minimum-idle: 1
+      connection-timeout: 30000
   jpa:
     hibernate:
       ddl-auto: update
@@ -22,3 +27,5 @@ app:
     event-simulation-cron: 0 0 0 1 1 *
     thread-maintenance-cron: 0 0 0 1 1 *
     unfinished-thought-cron: 0 0 0 1 1 *
+    sleep-tick-cron: 0 0 0 1 1 *
+    phone-tick-cron: 0 0 0 1 1 *

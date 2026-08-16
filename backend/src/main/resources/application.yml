@@ -93,6 +93,10 @@ app:
     thread-maintenance-cron: 0 */20 * * * *
     # V6: 未完成想法激活检查
     unfinished-thought-cron: 0 */15 * * * *
+    # V7: 睡眠模型推进(Coarse Tick, 每2分钟) — 睡眠压力/节律演化 + 睡眠决策
+    sleep-tick-cron: 0 */2 * * * *
+    # V7: 手机通知生命周期推进
+    phone-tick-cron: 0 * * * * *
 
   # 主动消息打断控制
   proactive:

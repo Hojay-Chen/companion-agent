@@ -10,7 +10,7 @@ import {
   Sparkles,
   Sun,
 } from 'lucide-react'
-import { api, openEventStream, streamPost } from '@/api/client'
+import { api, openEventStream } from '@/api/client'
 import CompanionAvatar from '@/components/CompanionAvatar'
 import ChatBubble from '@/components/ChatBubble'
 import Drawer from '@/components/Drawer'
@@ -214,34 +214,16 @@ export default function Chat() {
     setStreamingText('')
     setTyping(false)
 
+    // V7 §12/§19 通信解耦: POST /messages 立即返回, 不阻塞等待 Agent。
+    // Agent 的回复通过 GET /events 推送(companion_message / companion_typing)。
     try {
-      await streamPost(
-        `/api/companions/${companionId}/conversations/${activeConvId}/chat`,
+      await api.post(
+        `/api/companions/${companionId}/conversations/${activeConvId}/messages`,
         { messages: batch.map((c) => ({ content: c })) },
-        (event, data) => {
-          const d = data as Record<string, unknown>
-          if (event === 'token') {
-            setStreamingText((t) => t + String(d.delta ?? ''))
-          } else if (event === 'replace') {
-            setStreamingText(String(d.content ?? ''))
-          } else if (event === 'typing_start') {
-            setTyping(true)
-          } else if (event === 'typing_stop') {
-            setTyping(false)
-          } else if (event === 'message') {
-            // V3 P1 ResponsePlan: 她隔一下又补了一句 → 重载消息(新气泡)
-            loadMessages(activeConvId)
-          } else if (event === 'error') {
-            setError(String(d.message ?? '生成失败'))
-          }
-          // meta / boundary / done(skipped/ignored) 无需特判, done 后统一重载
-        },
       )
-      await loadMessages(activeConvId)
-      await refreshConversations()
+      // 发送成功; 本地即时消息已上屏, 回复由事件流到达后重载
     } catch (err) {
       setError((err as Error).message)
-      await loadMessages(activeConvId)
     } finally {
       setStreaming(false)
       setStreamingText('')

@@ -2,11 +2,67 @@
 
 > **不是 Chatbot**：拥有稳定人格、连续人生、持续记忆，随时间与用户建立关系，并在合适的时候主动找你。
 >
-> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime + V4 Continuous Human Runtime + **V5 Continuous Person Runtime** + **V6 拟真人格与持续生活**。当前完成 **V2.0(44/44) + V3 P0/P1/P2 + V4 P0/P1/P2/P3 + V5 P0~P8 + V6 P0~P3**。
+> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime + V4 Continuous Human Runtime + **V5 Continuous Person Runtime** + **V6 拟真人格与持续生活** + **V7 Human Runtime**。当前完成 **V2.0(44/44) + V3 P0/P1/P2 + V4 P0/P1/P2/P3 + V5 P0~P8 + V6 P0~P3 + V7 P0~P7**。
+
+---
+
+## V7 · Human Runtime（2026-08）
+
+> **V6 是"让 AI 拥有生活"，V7 是"让生活产生 AI 的行为"。**
+>
+> 核心目标：让用户无法仅通过聊天行为判断对方是 AI。核心原则：**Chat App 是应用，Agent 是人。**
+> 用户只是这个数字人的一个重要社会关系，而不是它的全部世界。
+
+### V7 核心改造
+
+1. **取消固定作息（§1/§2）**：彻底删除 `if time>=sleepTime → SLEEP`。
+   睡眠是 **Emergent Behavior**，由睡眠压力(Process S) + 昼夜节律(Process C) + 身体 + 环境 + 动机综合决定。
+2. **Sleep Model（§3-§9）**：
+   - `circadian_states`：chronotype / sleep_pressure / sleep_debt / 节律偏移
+   - `sleep_sessions`：每次睡眠的时长/质量/类型/原因（"昨天睡了多久"）
+   - Sleep Decision：SLEEP / STAY_AWAKE / DELAY_SLEEP / NAP
+   - **意志克服睡意**：深夜聊天+重要话题 → 她会硬撑（"我其实已经有点困了哈哈"然后继续聊）
+   - **午睡推迟当晚**：14:00-19:00 午睡 → 当晚 22:00 睡意低 → 自然晚睡（习惯从历史涌现）
+3. **通信解耦（§10-§21）**：
+   - `POST /messages` **立即返回 DELIVERED（几十毫秒）**，不等待 Agent
+   - Agent 完全异步处理，回复通过 `GET /events` 事件流推送
+   - **Agent Runtime 任何异常都不能阻塞消息发送**
+   - 前端 Chat 改用 `POST /messages` + `GET /events`
+4. **Phone Runtime（§14-§17）**：`phone_notifications` 生命周期
+   - 通知 → 听到(heard) → 看到(seen) → 打开(opened) → 阅读(read)，每步都不必然
+   - 洗澡=没听到；客厅=听到但没拿手机；刷手机=看到→打开→读
+5. **Cognitive Wakeup（§22-§23）**：事件驱动认知分级
+   - NO_WAKE / MICRO_WAKE / ATTENTION / DELIBERATION / DEEP_THINKING
+   - "哈哈"→MICRO_WAKE（不打扰）；"被裁了"→DEEP_THINKING
+   - 用户消息绝不 NO_WAKE（真人收到消息至少会知道）
+6. **Activity 惯性（§29）**：看剧被消息打断→"等这集看完再看"，洗澡→洗完才看
+7. **Intention Runtime（§35-§36）**：`intentions` 意图记忆
+   - "等下我要告诉他一件事"不是普通记忆，是未来行为的潜在触发器
+   - 激活概率随时间演化，过期→FORGOTTEN（真人会忘）
+   - "忙完忘了回复"是自然过程，不是 bug
+8. **Behavioral Entropy（§50-§51）**：`BehavioralEntropyEvaluator`
+   - 规律是统计规律：她通常 23:30 左右睡，不是每天 23:30 睡
+   - 检测睡眠/回复/主动消息分布是否过于固定
+
+### V7 新增数据表
+
+| 表 | 用途 |
+|----|------|
+| `circadian_states` | 生物钟状态（chronotype/睡眠压力/睡眠债/节律偏移） |
+| `sleep_sessions` | 睡眠历史（时长/质量/类型/原因） |
+| `phone_notifications` | 手机通知生命周期（heard/seen/opened/read） |
+| `intentions` | 意图记忆（未来行为的潜在触发器） |
+
+### V7 验收
+
+- `mvn clean test`：**115 个测试全绿**
+- `scripts/v7_check.sh`：通信解耦(POST /messages 25ms) / Sleep Runtime / Phone Notification / 行为熵
+- 端到端：POST /messages 立即返回 + Agent 异步回复
 
 ---
 
 ## V6 · 拟真人格与持续生活（2026-08）
+
 
 > **V5 是"持续运行的 Person Runtime"；V6 是"一个持续生活、拥有内部状态、偶尔主动联系你、会因为现实活动暂时无法回复、会产生情绪和记忆、并以符合人物个性的方式表达的人"。**
 >

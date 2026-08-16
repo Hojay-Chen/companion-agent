@@ -128,9 +128,18 @@ class LifeInterruptTest {
                 .findByCompanionIdAndPlannedStartGreaterThanEqualAndPlannedStartLessThanOrderByPlannedStartAsc(
                         companionId, NOW.toLocalDate().atStartOfDay(), NOW.toLocalDate().plusDays(1).atStartOfDay());
         assertFalse(acts.isEmpty(), "应生成一天的活动");
-        LifeActivity sleep = acts.stream().filter(a -> "SLEEP".equals(a.getType())).findFirst().orElse(null);
-        assertNotNull(sleep);
-        assertTrue(sleep.getAttentionDemand() > 0.9, "睡觉注意力占用应接近 1");
-        assertTrue(sleep.getInterruptibility() < 0.1, "睡觉可打断性应极低");
+        // V7: 不再生成固定 SLEEP 块(睡眠是 emergent); 验证社会活动 spec 正确
+        LifeActivity work = acts.stream().filter(a -> "WORK".equals(a.getType())).findFirst().orElse(null);
+        if (work != null) {
+            assertTrue(work.getAttentionDemand() >= 0.8, "工作注意力占用应高");
+            assertTrue(work.getInterruptibility() <= 0.25, "工作可打断性应低");
+        }
+        LifeActivity leisure = acts.stream().filter(a -> "LEISURE".equals(a.getType())).findFirst().orElse(null);
+        if (leisure != null) {
+            assertTrue(leisure.getAttentionDemand() <= 0.3, "休闲注意力占用应低");
+            assertTrue(leisure.getInterruptibility() >= 0.7, "休闲可打断性应高");
+        }
+        assertTrue(acts.stream().noneMatch(a -> "SLEEP".equals(a.getType())),
+                "V7: 睡眠不应作为固定排程活动");
     }
 }

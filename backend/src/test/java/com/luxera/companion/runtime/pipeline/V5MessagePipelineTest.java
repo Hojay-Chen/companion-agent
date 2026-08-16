@@ -42,7 +42,9 @@ import static org.junit.jupiter.api.Assertions.*;
         "app.scheduler.daily-reflection-cron=0 0 0 1 1 *",
         "app.scheduler.weekly-reflection-cron=0 0 0 1 1 *",
         "app.scheduler.birthday-cron=0 0 0 1 1 *",
-        "app.scheduler.open-loop-cron=0 0 0 1 1 *"
+        "app.scheduler.open-loop-cron=0 0 0 1 1 *",
+        "app.scheduler.sleep-tick-cron=0 0 0 1 1 *",
+        "app.scheduler.phone-tick-cron=0 0 0 1 1 *"
 })
 class V5MessagePipelineTest {
 
@@ -68,6 +70,8 @@ class V5MessagePipelineTest {
     com.luxera.companion.agent.CompanionRuntime runtime;
     @Autowired
     com.luxera.companion.runtime.agent.expression.ExpressionAgent expressionAgent;
+    @Autowired
+    com.luxera.companion.sleep.SleepModel sleepModel;
 
     /** 周日 20:00 —— 周末休闲, 手机在手 */
     private static final LocalDateTime DAYTIME = LocalDateTime.of(2026, 8, 16, 20, 0);
@@ -125,11 +129,14 @@ class V5MessagePipelineTest {
 
     @Test
     void nightMessageIsNotNoticed() {
+        // V7: 睡眠是 emergent —— 先让她入睡(睡眠压力累积 + 手动入睡), 再验证消息不被注意到
+        LocalDateTime nightTime = NIGHT;
+        sleepModel.fallAsleep(companionId, nightTime.minusMinutes(10), "NATURAL");
         Message m = send("在吗?我有话想跟你说");
         V5MessagePipeline.PipelineResult r = pipeline.process(userId, companionId, conversationId,
-                List.of(m), m.getContent(), perceptionEngine.perceive(m.getContent()), NIGHT);
+                List.of(m), m.getContent(), perceptionEngine.perceive(m.getContent()), nightTime);
         assertEquals(V5MessagePipeline.PipelineResult.Outcome.IGNORE_NOT_NOTICED, r.outcome(),
-                "夜间睡觉+勿扰 → 她根本没注意到");
+                "睡着+勿扰 → 她根本没注意到");
     }
 
     @Test

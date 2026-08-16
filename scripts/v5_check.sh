@@ -33,9 +33,10 @@ done
 
 # ── 测试 2: Agent 注册 ──
 note "测试2: Agent 注册(诊断端点)"
-U="v5_$(date +%s)"
-TOKEN=$(curl -s -X POST "$BASE/api/auth/register" -H 'Content-Type: application/json' \
-  -d "{\"username\":\"$U\",\"password\":\"test123456\"}" | $PY -c "import sys,json;print(json.load(sys.stdin)['token'])")
+V7_USER="${V7_USER:-haojie.chen.njau@gmail.com}"
+V7_PASS="${V7_PASS:-20040719chj}"
+TOKEN=$(curl -s -m 15 -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$V7_USER\",\"password\":\"$V7_PASS\"}" | $PY -c "import sys,json;print(json.load(sys.stdin)['token'])")
 PERSONA=$(curl -s -X POST "$BASE/api/companions/compile" -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"description":"一个温柔独立的女生,叫小满,比我成熟一点,我难过时先陪我"}' \
