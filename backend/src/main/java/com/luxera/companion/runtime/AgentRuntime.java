@@ -235,8 +235,10 @@ public class AgentRuntime {
                         Map.of("messageId", last.getId(), "status", "DELIVERED", "action", "IGNORE"));
                 return;
             }
-            // 4. 看到了但不回(DEFER) → 已读, 后续复查; 但被连发催问时, 真人会被催着回
+            // 4. 看到了但不回(DEFER) → 已读(整个会话), 后续复查; 但被连发催问时, 真人会被催着回
             if (pipelineResult.isDeferred() && !urged) {
+                // 她看到了全部未读消息 → 全部已读, 但决定稍后回
+                markAllConversationRead(companionId, conversationId, userMessages, now);
                 eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
                         Map.of("messageId", last.getId(), "status", "READ", "action", "DEFER"));
                 // §35-§36: 创建意图"该回复他" → 之后可能突然想起(Intention Activation)
@@ -272,9 +274,8 @@ public class AgentRuntime {
             // 已读延迟(忙/疲劳 → 慢)
             long readDelay = attention != null ? attention.inspectDelayMs() : 0;
             if (readDelay > 0) sleep(readDelay);
-            for (Message um : userMessages) {
-                deliveryService.read(companionId, um.getId());
-            }
+            // 她拿起手机看到整个会话 → 本批次 + 该会话其余未读用户消息全部变已读(真人行为)
+            markAllConversationRead(companionId, conversationId, userMessages, now);
             // 通知标记已读
             if (phoneNotif != null) {
                 try {
@@ -392,6 +393,28 @@ public class AgentRuntime {
             return true;
         }
         return false;
+    }
+
+    /**
+     * 她拿起手机看到整个会话 → 该会话全部未读用户消息一并变已读(真人行为, 不是只读最新一条)。
+     * 逐条 deliveryService.read(会发布 message_read 事件, 前端实时更新勾勾)。
+     */
+    private void markAllConversationRead(String companionId, String conversationId,
+                                         List<Message> userMessages, LocalDateTime now) {
+        try {
+            for (Message m : conversationService.messages(conversationId)) {
+                if (!"user".equals(m.getSenderType())) continue;
+                if (m.getDeliveryStatus() == null
+                        || "READ".equals(m.getDeliveryStatus())
+                        || "IGNORED".equals(m.getDeliveryStatus())) continue;  // 已读/已忽略跳过
+                deliveryService.read(companionId, m.getId());
+                try {
+                    phoneNotificationService.markRead(m.getId(), now);
+                } catch (Exception ignored) { }
+            }
+        } catch (Exception e) {
+            log.debug("[AgentRuntime] 批量已读失败: {}", e.getMessage());
+        }
     }
 
     private static boolean containsAny(String s, String... keys) {
