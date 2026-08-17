@@ -1,5 +1,6 @@
 package com.luxera.companion.runtime.agent.brain;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -12,6 +13,7 @@ import java.util.List;
  * 优先轻量 Schema Validation + State Constraint(不额外调 LLM):
  * 用规则校验显而易见的矛盾, 只有复杂冲突才考虑 LLM(当前阶段全规则)。
  */
+@Slf4j
 @Component
 public class DecisionValidator {
 
@@ -59,7 +61,8 @@ public class DecisionValidator {
         }
 
         // 约束 4: 消息完全没被注意到(noticeProbability≈0)时, 不应 REPLY(她根本没看到)
-        if (ctx.noticeProbability() < 0.1
+        // 排除被吵醒场景: 被重要消息吵醒 = 她醒了看到了, notice 低只是"睡着的注意力", 不适用
+        if (!isWokenUp(ctx) && ctx.noticeProbability() < 0.1
                 && (BrainDecision.REPLY.equals(decision) || BrainDecision.SHORT_ACK.equals(decision)
                     || BrainDecision.CHECK_PHONE_FIRST.equals(decision))) {
             violations.add("根本没注意到消息, 不应回复");
@@ -73,8 +76,28 @@ public class DecisionValidator {
             corrected = corrected == null ? BrainDecision.READ_NO_REPLY : corrected;
         }
 
+        // 约束 6: 被重要消息吵醒(深夜急事)时, 必须回应 —— 真人被吵醒会回一句(优先级最高, 强制覆盖)
+        // 检查"最终动作"(原决策或被前面约束修正后的动作): 只要是不回应/先看手机, 一律改为 SHORT_ACK
+        String finalAction = corrected != null ? corrected : decision;
+        if (isWokenUp(ctx)
+                && (BrainDecision.IGNORE.equals(finalAction) || BrainDecision.READ_NO_REPLY.equals(finalAction)
+                    || BrainDecision.CHECK_PHONE_FIRST.equals(finalAction))) {
+            violations.add("被重要消息吵醒, 应至少回应一下");
+            corrected = BrainDecision.SHORT_ACK;   // 强制: 前面的约束不得覆盖
+        }
+
+        log.debug("[DecisionValidator] decision={} wokenUp={} actDesc={} avail={} → corrected={}",
+                decision, isWokenUp(ctx), ctx.activityDesc(), ctx.availability(), corrected);
         if (violations.isEmpty()) return ValidationResult.ok();
         return ValidationResult.invalid(String.join("; ", violations), corrected);
+    }
+
+    /** 被重要消息吵醒: activityDesc 含"吵醒" 且 availability=DISTRACTED */
+    private static boolean isWokenUp(BrainContext ctx) {
+        if (ctx.activityDesc() == null) return false;
+        String desc = ctx.activityDesc().toLowerCase();
+        return desc.contains("吵醒") && ctx.availability() != null
+                && ctx.availability().equalsIgnoreCase("DISTRACTED");
     }
 
     /** 睡觉: activityDesc 包含"休息"且 availability=SLEEP 是强信号 */

@@ -50,6 +50,8 @@ class BehaviorEngineTest {
     ConversationRepository conversationRepository;
     @Autowired
     SleepModel sleepModel;
+    @Autowired
+    com.luxera.companion.sleep.CircadianStateRepository circadianRepository;
 
     private String companionId;
     private String userId = "be-user";
@@ -74,6 +76,13 @@ class BehaviorEngineTest {
         conv.setCompanionId(companionId);
         conv.setTitle("测试");
         conversationRepository.save(conv);
+
+        // 固定 circadian 为"醒着 + 低睡眠压力", 让测试不受运行时刻影响(深夜跑也不会被初始化成睡着)
+        var circ = sleepModel.getOrCreate(companionId, LocalDateTime.now());
+        circ.setSleeping(false);
+        circ.setSleepPressure(0.3);
+        circ.setSleepStartedAt(null);
+        circadianRepository.save(circ);
     }
 
     private Relationship relationship(boolean intimate, double lastInteractionHoursAgo) {

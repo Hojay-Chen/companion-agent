@@ -137,6 +137,19 @@ public class MessagePipeline {
     public PipelineResult process(String userId, String companionId, String conversationId,
                                   List<Message> userMessages, String decisionText,
                                   PerceptionEngine.Perception perception, LocalDateTime now) {
+        return process(userId, companionId, conversationId, userMessages, decisionText, perception, now, false);
+    }
+
+    /**
+     * 处理一批用户消息(带"强制注意到"支持)。
+     * @param forceNoticed 为 true 时, 即使注意力模型判定"没看到"(睡着/在忙), 也视为已注意到
+     *                     —— 用于"重要消息把她吵醒"的场景(真人深夜会被重要消息吵醒)。
+     */
+    @Transactional
+    public PipelineResult process(String userId, String companionId, String conversationId,
+                                  List<Message> userMessages, String decisionText,
+                                  PerceptionEngine.Perception perception, LocalDateTime now,
+                                  boolean forceNoticed) {
         Message last = userMessages.get(userMessages.size() - 1);
         AgentState state = agentStateService.get(companionId);
         PhoneState phone = phoneStateService.current(companionId, now);
@@ -154,11 +167,15 @@ public class MessagePipeline {
 
         // 1. EmotionAgent: 消息先改变内部状态
         List<String> recent = summarizeRecent(conversationService.recentMessages(conversationId, 10));
-        CompanionAvailability availabilityNow = availabilityService.current(companionId, now, state);
+        // 被吵醒(forceNoticed): 她刚被消息弄醒, 不是 SLEEPING —— 用 DISTRACTED(迷迷糊糊但醒着)
+        CompanionAvailability availabilityNow = forceNoticed
+                ? CompanionAvailability.DISTRACTED : availabilityService.current(companionId, now, state);
+        String activityDesc = forceNoticed
+                ? "刚被消息吵醒,还没完全清醒" : schedule.describe(companionId, companion.getName(), now);
         EmotionAppraisalResult emotion = emotionAgent.execute(new EmotionContext(
                 companionId, userId, last.getId(), decisionText, recent,
                 relationshipStage, closeness, rel != null ? rel.getTrust() : 0,
-                state, schedule.describe(companionId, companion.getName(), now),
+                state, activityDesc,
                 availabilityNow.name(), 0.6, 0.4, personality,
                 retrieveMemories(userId, companionId, decisionText),
                 perception != null ? perception.intent() : null,
@@ -171,7 +188,13 @@ public class MessagePipeline {
                 schedule.activityFor(companionId, now), state, phone, salience);
         double notificationFactor = phoneNotificationFactor(phone);
         boolean notified = notificationFactor > 0;
-        boolean noticed = notified && attention.noticeProbability() >= NOTICE_THRESHOLD;
+        double noticeProb = attention.noticeProbability();
+        // 早期关系(刚认识, 消息很少): 用户发来的消息会更重视 —— 保底注意(真人刚认识时会看消息)
+        if (rel != null && rel.getMessageCount() < 8) {
+            noticeProb = Math.max(noticeProb, 0.55);
+        }
+        // forceNoticed(被重要消息吵醒): 即使手机静音/勿扰/放别的房间, 她也会醒来去拿手机
+        boolean noticed = forceNoticed || (notified && noticeProb >= NOTICE_THRESHOLD);
 
         if (!noticed) {
             // 她根本没看到(静音/勿扰/手机不在身边/在忙)—— 保持 DELIVERED, 不打扰
@@ -201,7 +224,8 @@ public class MessagePipeline {
                 emotion.appraisal() != null ? emotion.appraisal().expectationViolation() : 0,
                 emotion.delta().warmth() > 0 ? 0.2 : (emotion.delta().hurt() + emotion.delta().anger()) > 0.3 ? -0.2 : 0,
                 Math.abs(emotion.delta().hurt()) + Math.abs(emotion.delta().anger()) + Math.abs(emotion.delta().sadness()));
-        CompanionAvailability availability = availabilityService.current(companionId, now, state);
+        CompanionAvailability availability = forceNoticed
+                ? CompanionAvailability.DISTRACTED : availabilityService.current(companionId, now, state);
         boolean intimate = rel != null && List.of("close", "deeply_connected").contains(rel.getRelationshipStage());
         boolean busy = schedule.activityFor(companionId, now) == CompanionSchedule.Activity.WORK_BUSY
                 || schedule.activityFor(companionId, now) == CompanionSchedule.Activity.WORK_AFTERNOON;
@@ -223,7 +247,7 @@ public class MessagePipeline {
         // 6. Brain 最终决策
         BrainDecision brainDecision = brainAgent.execute(new BrainContext(
                 companionId, userId, last.getId(), decisionText, recent,
-                schedule.describe(companionId, companion.getName(), now),
+                forceNoticed ? "刚被消息吵醒,还没完全清醒" : schedule.describe(companionId, companion.getName(), now),
                 availability.name(), state != null ? state.getEnergy() : 0.6,
                 state != null ? state.getStress() : 0.3,
                 state != null ? state.getSocialEnergy() : 0.6,

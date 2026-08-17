@@ -22,6 +22,7 @@ import com.luxera.companion.phone.PhoneNotification;
 import com.luxera.companion.phone.PhoneNotificationService;
 import com.luxera.companion.runtime.agent.expression.ExpressionAgent;
 import com.luxera.companion.runtime.agent.expression.ExpressionContext;
+import com.luxera.companion.runtime.agent.brain.BrainDecision;
 import com.luxera.companion.runtime.agent.expression.ExpressionResult;
 import com.luxera.companion.relationship.Relationship;
 import com.luxera.companion.relationship.RelationshipService;
@@ -159,10 +160,49 @@ public class AgentRuntime {
                 } catch (Exception ignored) { }
             }
 
-            // 2. 消息流水线
+            // 2. 唤醒评估(前置): 决定"睡着时是否被重要消息吵醒" + 低价值消息不打扰。
+            // 关系权重: 亲密的人发来的消息 → 更敏感(关系影响认知)。
             PerceptionEngine.Perception burstPerception = perceptionEngine.perceive(decisionText);
+            Relationship wakeRel = relationshipService.find(userId, companionId);
+            double relWeight = wakeRel != null
+                    ? (wakeRel.getIntimacy() * 0.6 + wakeRel.getAffection() * 0.4) : 0.3;
+            boolean sleeping = schedule.activityFor(companionId, now) == CompanionSchedule.Activity.SLEEP;
+            boolean urged = beingUrged(conversationId, now, decisionText);   // 追问词/连发(被催问)
+            boolean emotionalSignal = burstPerception != null && burstPerception.emotion() != null
+                    && !List.of("neutral", "calm", "happy").contains(burstPerception.emotion());
+            double wakeImportance = 0.35 + (urged ? 0.25 : 0) + (emotionalSignal ? 0.2 : 0);
+            CognitiveWakeupService.WakeLevel wake = cognitiveWakeupService.evaluate(
+                    new CognitiveWakeupService.WakeupInput(
+                            "MESSAGE", decisionText, wakeImportance, 0.5,
+                            emotionalSignal ? 0.4 : 0.1, 0.3, 0.5), relWeight);
+            // 被连发催问 → 认真对待(真人被连着问会坐不住)
+            if (urged && wake == CognitiveWakeupService.WakeLevel.ATTENTION) {
+                wake = CognitiveWakeupService.WakeLevel.DELIBERATION;
+            }
+
+            boolean forceNoticed = false;
+            if (sleeping) {
+                if (wake == CognitiveWakeupService.WakeLevel.DELIBERATION
+                        || wake == CognitiveWakeupService.WakeLevel.DEEP_THINKING) {
+                    // 重要消息(深夜的"在吗"/连发催问/情绪强烈)→ 她会被吵醒, 强制造注到
+                    forceNoticed = true;
+                } else {
+                    // 睡着且不是重要消息 → 不打扰(保持未读), 符合真人
+                    eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
+                            Map.of("messageId", last.getId(), "status", "DELIVERED", "action", "ASLEEP"));
+                    log.info("[AgentRuntime] {} 睡着且消息不紧急, 不打扰 (wake={})", companionId, wake);
+                    return;
+                }
+            }
+            log.info("[AgentRuntime] {} sleeping={} urged={} wake={} forceNoticed={} text={}",
+                    companionId, sleeping, urged, wake, forceNoticed, truncate(decisionText, 20));
+
+            // 3. 消息流水线(forceNoticed: 被吵醒时跳过"没看到"判定)
             MessagePipeline.PipelineResult pipelineResult = messagePipeline.process(
-                    userId, companionId, conversationId, userMessages, decisionText, burstPerception, now);
+                    userId, companionId, conversationId, userMessages, decisionText, burstPerception, now,
+                    forceNoticed);
+            log.info("[AgentRuntime] {} pipeline outcome={} reason={}", companionId,
+                    pipelineResult.outcome(), pipelineResult.reason());
 
             // §15-§17 Phone Notification: 消息到达 → 手机通知 → heard/seen/opened/read 逐步推进
             PhoneNotification phoneNotif = null;
@@ -181,23 +221,7 @@ public class AgentRuntime {
                         burstPerception != null ? burstPerception.emotion() : null, now);
             } catch (Exception ignored) { }
 
-            // §22-§23 + §三十二 Cognitive Wakeup: 低价值消息不唤醒 LLM 认知。
-            // 关系权重: 亲密的人发来的消息 → 更敏感(关系影响认知)。
-            Relationship wakeRel = relationshipService.find(userId, companionId);
-            double relWeight = wakeRel != null
-                    ? (wakeRel.getIntimacy() * 0.6 + wakeRel.getAffection() * 0.4) : 0.3;
-            CognitiveWakeupService.WakeLevel wake = cognitiveWakeupService.evaluate(
-                    new CognitiveWakeupService.WakeupInput(
-                            "MESSAGE", decisionText,
-                            pipelineResult.emotion() != null
-                                    ? Math.abs(pipelineResult.emotion().delta().hurt())
-                                    + Math.abs(pipelineResult.emotion().delta().anger()) + 0.3 : 0.3,
-                            0.5,
-                            pipelineResult.emotion() != null
-                                    ? Math.abs(pipelineResult.emotion().delta().hurt())
-                                    + Math.abs(pipelineResult.emotion().delta().anger())
-                                    + Math.abs(pipelineResult.emotion().delta().sadness()) : 0,
-                            0.3, 0.5), relWeight);
+            // 低价值消息(前置评估的 wake 已含关系权重与催问信号)→ 不唤醒认知
             if (!cognitiveWakeupService.requiresCognition(wake)) {
                 // 低价值消息(如"哈哈"): 消息已入库, 但不打断她的生活 → 不生成回复
                 eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
@@ -205,14 +229,14 @@ public class AgentRuntime {
                 return;
             }
 
-            // 3. 没看到 → 保持未读
-            if (pipelineResult.isIgnored()) {
+            // 3. 没看到 → 保持未读(被催问时不算"没看到": 真人被催问会看一眼)
+            if (pipelineResult.isIgnored() && !urged) {
                 eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
                         Map.of("messageId", last.getId(), "status", "DELIVERED", "action", "IGNORE"));
                 return;
             }
-            // 4. 看到了但不回(DEFER) → 已读, 后续复查
-            if (pipelineResult.isDeferred()) {
+            // 4. 看到了但不回(DEFER) → 已读, 后续复查; 但被连发催问时, 真人会被催着回
+            if (pipelineResult.isDeferred() && !urged) {
                 eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
                         Map.of("messageId", last.getId(), "status", "READ", "action", "DEFER"));
                 // §35-§36: 创建意图"该回复他" → 之后可能突然想起(Intention Activation)
@@ -225,9 +249,13 @@ public class AgentRuntime {
                 return;
             }
 
-            // 5. 回复路径
-            InteractionDecision decision = pipelineResult.brainDecision() != null
-                    ? pipelineResult.brainDecision().baseline() : null;
+            // 5. 回复路径(被催问的 IGNORE/DEFER 也落在这里: 用交互策略重新决策)
+            InteractionDecision decision = null;
+            if (pipelineResult.brainDecision() != null
+                    && !pipelineResult.brainDecision().isDefer()
+                    && !BrainDecision.IGNORE.equals(pipelineResult.brainDecision().action())) {
+                decision = pipelineResult.brainDecision().baseline();
+            }
             if (decision == null) {
                 decision = interactionPolicy.decide(buildInteractionInput(userId, companionId, decisionText, now, pipelineResult));
             }
@@ -355,6 +383,22 @@ public class AgentRuntime {
     private static String truncate(String s, int max) {
         if (s == null) return null;
         return s.length() > max ? s.substring(0, max) : s;
+    }
+
+    /** 是否被催问: 消息含追问词(在吗/怎么不回/回我/醒了吗/急事… —— 真人被催着回) */
+    private boolean beingUrged(String conversationId, LocalDateTime now, String decisionText) {
+        if (decisionText != null && containsAny(decisionText,
+                "在吗", "怎么不", "不回", "回我", "理我", "醒了吗", "忙吗", "看到吗", "看见吗", "人呢", "急事", "紧急")) {
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean containsAny(String s, String... keys) {
+        for (String k : keys) {
+            if (s.contains(k)) return true;
+        }
+        return false;
     }
 
     private static List<String> splitReply(String reply) {

@@ -102,11 +102,15 @@ public class SleepModel {
         });
     }
 
-    /** chronotype: LATE 型伴侣天然倾向晚睡(酒吧夜班), 其余按 id 哈希 */
+    /** chronotype: 夜班 persona → LATE; 白天作息 persona → NORMAL; 其余按 id 哈希 */
     private String chronotypeFor(String companionId) {
         // 夜班工作者(酒吧/夜班 persona) → 天然 LATE(晚睡晚起)
         if (companionId != null && isNightWorkerPersona(companionId)) {
             return "LATE";
+        }
+        // 白天作息(朝九晚五/上班族/早起 persona) → 天然 NORMAL(早睡早起), 不被哈希随机成夜猫子
+        if (companionId != null && isDayWorkerPersona(companionId)) {
+            return "NORMAL";
         }
         int h = Math.floorMod(companionId == null ? 0 : companionId.hashCode(), 1000);
         return h % 10 < 3 ? "LATE" : (h % 10 < 5 ? "EARLY" : "NORMAL");
@@ -127,6 +131,27 @@ public class SleepModel {
             String s = text.toString();
             return s.contains("酒吧") || s.contains("夜班") || s.contains("晚班")
                     || s.contains("夜场") || s.contains("夜店") || s.contains("通宵");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 通过 persona 判断是否白天作息工作者(朝九晚五/上班族/早起) */
+    private boolean isDayWorkerPersona(String companionId) {
+        try {
+            var persona = personaService.getActive(companionId);
+            if (persona == null) return false;
+            StringBuilder text = new StringBuilder();
+            if (persona.getPersonality() != null && persona.getPersonality().getSummary() != null) {
+                text.append(persona.getPersonality().getSummary()).append(' ');
+            }
+            if (persona.getLife() != null && persona.getLife().getBackground() != null) {
+                text.append(persona.getLife().getBackground()).append(' ');
+            }
+            String s = text.toString();
+            return s.contains("朝九晚五") || s.contains("早九晚六") || s.contains("上班族")
+                    || s.contains("白班") || s.contains("早起") || s.contains("正常作息")
+                    || s.contains("工作日") || s.contains("朝九晚六");
         } catch (Exception e) {
             return false;
         }

@@ -31,6 +31,32 @@ class DecisionValidatorTest {
     }
 
     @Test
+    void wokenUpShouldNotIgnore() {
+        // 被重要消息吵醒(activityDesc 含"吵醒" + DISTRACTED) → IGNORE/READ_NO_REPLY 修正为 SHORT_ACK
+        var r1 = validator.validate(BrainDecision.IGNORE, ctx("刚被消息吵醒,还没完全清醒", "DISTRACTED",
+                false, 0.2, 0.1, 0.1));
+        assertFalse(r1.valid());
+        assertEquals(BrainDecision.SHORT_ACK, r1.correctedAction());
+        var r2 = validator.validate(BrainDecision.READ_NO_REPLY, ctx("刚被消息吵醒,还没完全清醒", "DISTRACTED",
+                false, 0.2, 0.1, 0.1));
+        assertEquals(BrainDecision.SHORT_ACK, r2.correctedAction());
+        // 未被吵醒时不受此约束
+        var r3 = validator.validate(BrainDecision.IGNORE, ctx("在悠闲地享受自己的时间", "DISTRACTED",
+                false, 0.2, 0.1, 0.1));
+        assertTrue(r3.valid());
+    }
+
+    @Test
+    void wokenUpForcesShortAckEvenWhenPhoneFar() {
+        // 被吵醒 + 手机不在身边: CHECK_PHONE_FIRST 本会被约束3 修正为 READ_NO_REPLY,
+        // 但约束6 必须强制为 SHORT_ACK(被吵醒优先)
+        var r = validator.validate(BrainDecision.CHECK_PHONE_FIRST, ctx("刚被消息吵醒,还没完全清醒", "DISTRACTED",
+                false, 0.2, 0.1, 0.1));
+        assertFalse(r.valid());
+        assertEquals(BrainDecision.SHORT_ACK, r.correctedAction(), "被吵醒时手机远也必须回应");
+    }
+
+    @Test
     void consistentDecisionIsOk() {
         var r = validator.validate(BrainDecision.REPLY, ctx("在悠闲地享受自己的时间", "LEISURE",
                 true, 0.8, 0.1, 0.1));
