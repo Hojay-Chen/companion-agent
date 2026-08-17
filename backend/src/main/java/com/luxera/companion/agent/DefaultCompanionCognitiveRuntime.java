@@ -82,6 +82,17 @@ public class DefaultCompanionCognitiveRuntime implements CompanionCognitiveRunti
                                               List<Message> recentMessages, Consumer<String> onDelta,
                                               com.luxera.companion.interaction.InteractionDecision interaction,
                                               String expressionHint) {
+        return processUserMessage(userId, companionId, conversationId, userMessageId, userText,
+                recentMessages, onDelta, interaction, expressionHint, CompanionCognitiveRuntime.PATH_DEEP);
+    }
+
+    /** V9: 带认知路径的处理(FAST 轻量上下文 / DEEP 完整上下文) */
+    @Override
+    public CognitiveResult processUserMessage(String userId, String companionId, String conversationId,
+                                              String userMessageId, String userText,
+                                              List<Message> recentMessages, Consumer<String> onDelta,
+                                              com.luxera.companion.interaction.InteractionDecision interaction,
+                                              String expressionHint, String path) {
         // 1. 感知(质量优先: 同步 LLM 精炼, 失败回退启发式)
         PerceptionEngine.Perception heuristic = perceptionEngine.perceive(userText);
         PerceptionEngine.Perception perception = perceptionRefiner.refineNow(
@@ -92,17 +103,19 @@ public class DefaultCompanionCognitiveRuntime implements CompanionCognitiveRunti
                 ? reminderPlanner.tryCreateFromMessage(userId, companionId, userText)
                 : null;
 
-        // 3. 加载统一上下文
+        // 3. 加载统一上下文(V9 §9/§14: FAST 路径跳过重检索 —— 记忆/用户模型按需加载)
+        boolean deep = !CompanionCognitiveRuntime.PATH_FAST.equals(path);
         CompanionContext ctx = contextLoader.load(userId, companionId, conversationId, recentMessages,
-                perception, toolResult);
+                perception, toolResult, deep);
 
         // 4. 行为策略: Runtime 决定"现在应该做什么"
         BehaviorDecision decision = behaviorPolicyEngine.decide(ctx);
 
-        // 5. 上下文编译: 压缩为 LLM 可消费的提示(带回复预算; 带表达策略)
+        // 5. V9 §7 分层编译: L0 稳定前缀 + L1 会话 + L2 动态 + L3 当前轮(带 hashes 供观测)
         com.luxera.companion.interaction.ResponseBudget budget =
                 interaction != null ? interaction.budget : null;
-        String system = contextCompiler.buildSystem(ctx, decision, budget, expressionHint);
+        CompiledContext compiled = contextCompiler.compile(ctx, decision, budget, expressionHint);
+        String system = compiled.fullText();
 
         // 6. 组装消息
         List<LlmMessage> messages = new ArrayList<>();
@@ -112,12 +125,17 @@ public class DefaultCompanionCognitiveRuntime implements CompanionCognitiveRunti
             messages.add(new LlmMessage(role, m.getContent()));
         }
 
-        // 7. 流式生成
+        // 7. 流式生成(V9 §22: LLM Call 观测 —— context hashes 记录, 供缓存命中推断)
         StringBuilder raw = new StringBuilder();
-        Map<String, String> meta = Map.of(
-                "companionName", ctx.companion.getName(),
-                "intent", perception.intent(),
-                "emotion", perception.emotion());
+        Map<String, String> meta = new java.util.HashMap<>();
+        meta.put("companionId", companionId);
+        meta.put("companionName", ctx.companion.getName());
+        meta.put("intent", perception.intent());
+        meta.put("emotion", perception.emotion());
+        meta.put("path", path);
+        meta.put("stableHash", compiled.stableHash());
+        meta.put("sessionHash", compiled.sessionHash());
+        meta.put("dynamicHash", compiled.dynamicHash());
         Consumer<String> stream = delta -> {
             raw.append(delta);
             if (onDelta != null) onDelta.accept(delta);

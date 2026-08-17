@@ -42,6 +42,8 @@ public class ContextLoader {
     private final LifeContextProvider lifeContextProvider;
     private final CompanionSchedule schedule;
     private final com.luxera.companion.config.AppProperties props;
+    private final com.luxera.companion.cognitive.CognitiveSessionService cognitiveSessionService;
+    private final com.luxera.companion.plan.PlanService planService;
 
     public ContextLoader(CompanionService companionService, CompanionLifeService lifeService,
                          AgentStateService agentStateService, AvailabilityService availabilityService,
@@ -51,7 +53,9 @@ public class ContextLoader {
                          com.luxera.companion.memory.MemoryEntityService entityService,
                          RelationshipService relationshipService, MemoryService memoryService,
                          WorkingMemory workingMemory, LifeContextProvider lifeContextProvider,
-                         CompanionSchedule schedule, com.luxera.companion.config.AppProperties props) {
+                         CompanionSchedule schedule, com.luxera.companion.config.AppProperties props,
+                         com.luxera.companion.cognitive.CognitiveSessionService cognitiveSessionService,
+                         com.luxera.companion.plan.PlanService planService) {
         this.companionService = companionService;
         this.lifeService = lifeService;
         this.agentStateService = agentStateService;
@@ -69,11 +73,21 @@ public class ContextLoader {
         this.lifeContextProvider = lifeContextProvider;
         this.schedule = schedule;
         this.props = props;
+        this.cognitiveSessionService = cognitiveSessionService;
+        this.planService = planService;
     }
 
     public CompanionContext load(String userId, String companionId, String conversationId,
                                  List<Message> recentMessages,
                                  PerceptionEngine.Perception perception, String toolResult) {
+        return load(userId, companionId, conversationId, recentMessages, perception, toolResult, true);
+    }
+
+    /** V9 §9/§14: 分级检索 —— deep=false(FAST 路径)跳过记忆/用户模型/实体的重检索, 降低延迟与成本 */
+    public CompanionContext load(String userId, String companionId, String conversationId,
+                                 List<Message> recentMessages,
+                                 PerceptionEngine.Perception perception, String toolResult,
+                                 boolean deep) {
         var companion = companionService.requireOwned(userId, companionId);
         var persona = companionService.getPersona(companionId);
         var life = lifeService.getOrCreate(companionId);
@@ -84,17 +98,46 @@ public class ContextLoader {
         var thoughts = thoughtService.activeThoughts(companionId);
         var loops = openLoopService.activeLoops(companionId);
         var selfModel = selfModelService.get(companionId);
-        var userModel = userModelService.summary(userId, companionId);
+        // V9: FAST 路径只加载轻量上下文(关系/风格), 不检索记忆/用户模型/实体
+        var userModel = deep ? userModelService.summary(userId, companionId) : null;
         var userChatStyle = userChatStyleService.get(companionId);
-        var entities = entityService.recent(userId, companionId, 8);
+        var entities = deep ? entityService.recent(userId, companionId, 8)
+                : java.util.List.<com.luxera.companion.memory.MemoryEntity>of();
         var relationship = relationshipService.find(userId, companionId);
         String query = recentMessages.isEmpty() ? "" : recentMessages.get(recentMessages.size() - 1).getContent();
-        var memories = memoryService.retrieve(userId, companionId, query, props.getAgent().getMemoryTopN());
+        var memories = deep
+                ? memoryService.retrieve(userId, companionId, query, props.getAgent().getMemoryTopN())
+                : java.util.List.<Memory>of();
         var wm = conversationId != null ? workingMemory.get(companionId, conversationId) : null;
         String scheduleDesc = schedule.describe(companionId, companion.getName(), now);
+
+        // V9: 认知摘要 + 进行中的计划 + 用户追问旧计划时的因果解释(Reality Ledger)
+        String cognitiveDesc = null;
+        try {
+            cognitiveDesc = cognitiveSessionService.describe(companionId);
+        } catch (Exception ignored) { }
+        java.util.List<java.util.Map<String, Object>> activePlans = null;
+        try {
+            activePlans = planService.planBriefs(companionId);
+        } catch (Exception ignored) { }
+        String planExplain = null;
+        try {
+            if (asksAboutPlan(query)) {
+                planExplain = planService.recentExplanation(companionId, now);
+            }
+        } catch (Exception ignored) { }
+
         return new CompanionContext(companion, persona, life, state, availability, episodes, thoughts, loops,
                 selfModel, userModel, userChatStyle, entities, relationship, memories, recentMessages, wm, perception,
-                scheduleDesc, toolResult, now);
+                scheduleDesc, toolResult, now, cognitiveDesc, activePlans, planExplain);
+    }
+
+    /** 用户消息是否在追问旧计划("你不是说…吗/不是要…吗/说好的…呢") */
+    private static boolean asksAboutPlan(String query) {
+        if (query == null || query.isBlank()) return false;
+        return query.contains("不是说") || query.contains("不是要") || query.contains("说好")
+                || query.contains("答应") || query.contains("计划") || query.contains("打算")
+                || query.contains("怎么没") || query.contains("不是说好");
     }
 
     /** 加载学习上下文(设计文档 §29): 供反思/记忆/人格学习使用 */

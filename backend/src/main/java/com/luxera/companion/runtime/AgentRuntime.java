@@ -78,6 +78,8 @@ public class AgentRuntime {
     private final CompanionSchedule schedule;
     private final CompanionRuntime runtime;
     private final TaskExecutor taskExecutor;
+    private final com.luxera.companion.cognitive.CognitiveSessionService cognitiveSessionService;
+    /** V9: per-agent 单写者锁(同 agent 的写入串行, 防止并发覆盖状态) */
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.locks.ReentrantLock> locks =
             new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -91,7 +93,8 @@ public class AgentRuntime {
                           RelationshipService relationshipService, PhoneNotificationService phoneNotificationService,
                           CognitiveWakeupService cognitiveWakeupService, IntentionService intentionService,
                           CompanionEventBus eventBus, CompanionSchedule schedule, CompanionRuntime runtime,
-                          TaskExecutor taskExecutor) {
+                          TaskExecutor taskExecutor,
+                          com.luxera.companion.cognitive.CognitiveSessionService cognitiveSessionService) {
         this.conversationService = conversationService;
         this.perceptionEngine = perceptionEngine;
         this.workingMemory = workingMemory;
@@ -114,6 +117,7 @@ public class AgentRuntime {
         this.schedule = schedule;
         this.runtime = runtime;
         this.taskExecutor = taskExecutor;
+        this.cognitiveSessionService = cognitiveSessionService;
     }
 
     /**
@@ -135,7 +139,8 @@ public class AgentRuntime {
     /** Agent 异步处理已入库的用户消息(完整认知链) */
     public void process(String userId, String companionId, String conversationId, List<Message> userMessages) {
         if (userMessages == null || userMessages.isEmpty()) return;
-        var lock = locks.computeIfAbsent(conversationId, k -> new java.util.concurrent.locks.ReentrantLock());
+        // V9 §17: per-agent 单写者队列
+        var lock = locks.computeIfAbsent(companionId, k -> new java.util.concurrent.locks.ReentrantLock());
         lock.lock();
         try {
             LocalDateTime now = LocalDateTime.now();
@@ -179,6 +184,23 @@ public class AgentRuntime {
             if (urged && wake == CognitiveWakeupService.WakeLevel.ATTENTION) {
                 wake = CognitiveWakeupService.WakeLevel.DELIBERATION;
             }
+
+            // V9 §4.3: 更新连续心智 —— 他刚才在说什么, 我心里在想什么(不打断处理主流程)
+            try {
+                String focus = burstPerception != null && burstPerception.topic() != null
+                        ? burstPerception.topic() : truncate(decisionText, 30);
+                String thought = emotionalSignal
+                        ? "他好像不太对劲,想多陪陪他"
+                        : (urged ? "他连着找我,是不是有什么事" : "他刚说起" + focus);
+                cognitiveSessionService.touchOnMessage(companionId, focus, thought,
+                        emotionalSignal ? "有点担心他" : null);
+            } catch (Exception ignored) { }
+
+            // V9 §14: Fast/Deep 路径 —— 重要消息(DELIBERATION+)走 Deep 完整上下文, 其余走 Fast 轻量
+            String path = (wake == CognitiveWakeupService.WakeLevel.DELIBERATION
+                    || wake == CognitiveWakeupService.WakeLevel.DEEP_THINKING)
+                    ? com.luxera.companion.agent.CompanionCognitiveRuntime.PATH_DEEP
+                    : com.luxera.companion.agent.CompanionCognitiveRuntime.PATH_FAST;
 
             boolean forceNoticed = false;
             if (sleeping) {
@@ -308,7 +330,7 @@ public class AgentRuntime {
             // 生成
             String expressionHint = describeExpression(expression);
             CompanionRuntime.ChatOutcome outcome = runtime.generate(userId, companionId, conversationId,
-                    last.getId(), decisionText, recent, null, decision, expressionHint);
+                    last.getId(), decisionText, recent, null, decision, expressionHint, path);
             String reply = outcome.reply();
             if (reply == null || reply.isBlank()) return;
 
@@ -373,7 +395,28 @@ public class AgentRuntime {
         return new ExpressionContext(
                 companionId, userId, decisionText, "respond", mood, null, "close", 0.5,
                 schedule.describe(companionId, "她", now),
-                List.of("用户: " + decisionText), 0.6, 0.4, decision);
+                List.of("用户: " + decisionText), 0.6, 0.4, decision,
+                describeResponseIntent(pr));
+    }
+
+    /** V9 §11: Brain 的回应意图 → Expression(Brain 决定想多长/拆几条/节奏, Expression 决定怎么说) */
+    private static String describeResponseIntent(MessagePipeline.PipelineResult pr) {
+        var bd = pr == null ? null : pr.brainDecision();
+        if (bd == null) return null;
+        java.util.List<String> parts = new java.util.ArrayList<>();
+        if (bd.messageCount() > 0) {
+            parts.add("想拆 " + bd.messageCount() + " 条消息");
+        }
+        if (bd.desiredLength() > 0) {
+            parts.add("期望约 " + bd.desiredLength() + " 字");
+        }
+        if (bd.delayHint() != null && !bd.delayHint().isBlank()) {
+            parts.add("节奏:" + bd.delayHint());
+        }
+        if (bd.styleHint() != null && !bd.styleHint().isBlank()) {
+            parts.add("语气:" + bd.styleHint());
+        }
+        return parts.isEmpty() ? null : String.join(";", parts);
     }
 
     private static String describeExpression(ExpressionResult e) {

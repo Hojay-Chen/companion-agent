@@ -488,7 +488,8 @@ public class ChatController {
                 recentLines(recent),
                 state != null ? state.getEnergy() : 0.6,
                 emotionalImpact,
-                decision);
+                decision,
+                null);
     }
 
     /** 把表达策略转成给生成阶段的提示(自然地说, 不要说破) */

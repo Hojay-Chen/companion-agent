@@ -29,11 +29,17 @@ public class DiagnosticController {
     private final PendingMessageService pendingMessageService;
     private final WorldEventLogService worldEventLogService;
     private final AgentRegistry agentRegistry;
+    private final com.luxera.companion.llm.LlmCallRepository llmCallRepository;
+    private final com.luxera.companion.cognitive.CognitiveSessionRepository cognitiveSessionRepository;
+    private final com.luxera.companion.plan.PlanRepository planRepository;
 
     public DiagnosticController(CurrentUser currentUser, CompanionService companionService,
                                   AgentTraceService traceService, ScheduledActionService scheduledActionService,
                                   PendingMessageService pendingMessageService,
-                                  WorldEventLogService worldEventLogService, AgentRegistry agentRegistry) {
+                                  WorldEventLogService worldEventLogService, AgentRegistry agentRegistry,
+                                  com.luxera.companion.llm.LlmCallRepository llmCallRepository,
+                                  com.luxera.companion.cognitive.CognitiveSessionRepository cognitiveSessionRepository,
+                                  com.luxera.companion.plan.PlanRepository planRepository) {
         this.currentUser = currentUser;
         this.companionService = companionService;
         this.traceService = traceService;
@@ -41,6 +47,9 @@ public class DiagnosticController {
         this.pendingMessageService = pendingMessageService;
         this.worldEventLogService = worldEventLogService;
         this.agentRegistry = agentRegistry;
+        this.llmCallRepository = llmCallRepository;
+        this.cognitiveSessionRepository = cognitiveSessionRepository;
+        this.planRepository = planRepository;
     }
 
     private void requireOwned(String userId, String companionId) {
@@ -112,4 +121,5 @@ public class DiagnosticController {
             return m;
         }).collect(Collectors.toList());
     }
+
 }

@@ -7,6 +7,39 @@
 
 ---
 
+## V9 · 连续心智与事实一致（2026-08）
+
+> **V8 解决"Agent 能不能回答"；V9 解决"这个 Agent 在这一刻为什么会这样回答，而且下一刻它仍然是同一个人？"**
+>
+> 核心：模型不是 Agent 的全部，模型只是 Agent 的认知器官。事实由 Reality 层保证，连续心智由 Cognitive Session 保存，表达与决策解耦，稳定上下文可缓存。
+
+### V9 核心升级
+
+1. **Cognitive Session（连续心智）**：`cognitive_sessions` 保存 current_focus / current_thought / current_intention / active_plans / emotion_summary，带 `state_version` 乐观锁 —— 用户消息与主动事件并发写入不互相覆盖。她知道自己上一刻在想什么、正在关注什么，而不是每轮重新猜。
+2. **Reality Ledger + Plan 状态机**：`plans`（概率性计划：confidence/flexibility/expected_time）+ `plan_revisions`（变更因果链）——计划可以没有、可以改变，改变必须有原因；突发事件按权重打断低优先级计划（SUPERSEDED）；用户追问"你不是说要去跑步吗"时沿 revision 链自然解释（"本来是打算去的，后来朋友喊我吃饭就没去成"），不硬圆。
+3. **Cache-aware Context Compiler**：分层编译 L0 稳定前缀（身份/人格/行为准则，版本化 hash 稳定 → provider prefix cache 命中）/ L1 会话前缀（关系/用户模型）/ L2 动态（活动/情绪/想法/计划/记忆）/ L3 当前轮（行为意图/预算/表达提示）。稳定内容永远靠前，动态内容靠后。
+4. **LLM Call 可观测性**：`llm_calls` 记录每次调用的 model/token/latency/路径/上下文 hash；prefix cache 命中估计（同 agent 同 stableHash 连续调用）。`GET /api/companions/{id}/v9/metrics` 查看。
+5. **Brain → ResponseIntent → Expression 解耦**：Brain 输出回应意图（期望长度/拆几条/节奏/语气），Expression 只决定怎么说 —— 表达不得改变 Brain 已确认的事实。
+6. **Fast / Deep 路径调度**：普通寒暄走 FAST（跳过记忆/用户模型重检索，轻量上下文）；重要消息（DELIBERATION+）走 DEEP 完整上下文。降低延迟与成本。
+7. **per-agent 单写者锁**：同 agent 的消息/主动事件/后台任务串行写入，防止并发覆盖状态。
+
+### V9 新增数据表
+
+| 表 | 用途 |
+|----|------|
+| `cognitive_sessions` | 连续心智（当前关注/想法/计划摘要 + state_version 乐观锁） |
+| `plans` | 概率性计划（confidence/flexibility/expected_time/触发条件） |
+| `plan_revisions` | 计划变更因果链（创建/激活/完成/取消/打断，带原因） |
+| `llm_calls` | LLM 调用观测（model/token/latency/路径/上下文 hash/缓存估计） |
+
+### V9 验收
+
+- `mvn clean test`：**全部测试全绿**（含 CognitiveSession / PlanService / ContextLayer 新增测试）
+- `scripts/check.sh`：表结构 + 认知会话 + LLM 观测端点
+- 端到端：连续聊天心智不漂移（认知焦点持续）；计划被突发事件打断后追问可自然解释；短消息走 FAST、重要消息走 DEEP
+
+---
+
 ## 当前版本 · Digital Person
 
 > **核心目标：让用户无法仅通过聊天行为判断对方是 AI。**

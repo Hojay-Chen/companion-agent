@@ -40,8 +40,18 @@ public class CompanionRuntime {
                                 String userText, List<Message> recentMessages, Consumer<String> onDelta,
                                 com.luxera.companion.interaction.InteractionDecision interaction,
                                 String expressionHint) {
+        return generate(userId, companionId, conversationId, userMessageId, userText, recentMessages,
+                onDelta, interaction, expressionHint, CompanionCognitiveRuntime.PATH_DEEP);
+    }
+
+    /** V9: 带认知路径的生成(FAST 轻量上下文 / DEEP 完整上下文) */
+    public ChatOutcome generate(String userId, String companionId, String conversationId, String userMessageId,
+                                String userText, List<Message> recentMessages, Consumer<String> onDelta,
+                                com.luxera.companion.interaction.InteractionDecision interaction,
+                                String expressionHint, String path) {
         CognitiveResult result = cognitiveRuntime.processUserMessage(
-                userId, companionId, conversationId, userMessageId, userText, recentMessages, onDelta, interaction, expressionHint);
+                userId, companionId, conversationId, userMessageId, userText, recentMessages, onDelta,
+                interaction, expressionHint, path);
         return new ChatOutcome(result.reply(), result.rawReply(), result.perception(), result.context());
     }
 

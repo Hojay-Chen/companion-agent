@@ -20,5 +20,6 @@ public record ExpressionContext(
         List<String> recentConversation,
         double energy,
         double urgency,
-        InteractionDecision baseline) {
+        InteractionDecision baseline,
+        String responseIntent) {
 }

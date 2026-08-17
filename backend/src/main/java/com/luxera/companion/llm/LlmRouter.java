@@ -19,15 +19,18 @@ public class LlmRouter implements LlmGateway {
     private final OpenAiCompatibleGateway openAi;
     private final AnthropicGateway anthropic;
     private final MockLlmGateway mock;
+    private final LlmCallService llmCallService;
 
     private LlmGateway active;
 
     public LlmRouter(AppProperties props, OpenAiCompatibleGateway openAi,
-                     AnthropicGateway anthropic, MockLlmGateway mock) {
+                     AnthropicGateway anthropic, MockLlmGateway mock,
+                     LlmCallService llmCallService) {
         this.props = props;
         this.openAi = openAi;
         this.anthropic = anthropic;
         this.mock = mock;
+        this.llmCallService = llmCallService;
     }
 
     @PostConstruct
@@ -68,19 +71,38 @@ public class LlmRouter implements LlmGateway {
 
     @Override
     public ChatResult chat(ChatRequest request) {
-        return active.chat(request);
+        long t0 = System.currentTimeMillis();
+        ChatResult r = active.chat(request);
+        llmCallService.record("chat", r.getProvider(), r.getModel(),
+                r.getPromptTokens(), r.getCompletionTokens(),
+                System.currentTimeMillis() - t0, "success", request.getMetadata());
+        return r;
     }
 
     @Override
     public void chatStream(ChatRequest request, Consumer<String> onDelta) {
-        active.chatStream(request, onDelta);
+        // 流式: 结束后记录(流式接口不返回 token 用量, 记录延迟/路径/hash 用于观测)
+        long t0 = System.currentTimeMillis();
+        try {
+            active.chatStream(request, onDelta);
+            llmCallService.record("chat_stream", active.name(), active.name(),
+                    null, null, System.currentTimeMillis() - t0, "success", request.getMetadata());
+        } catch (Exception e) {
+            llmCallService.record("chat_stream", active.name(), active.name(),
+                    null, null, System.currentTimeMillis() - t0, "error", request.getMetadata());
+            throw e;
+        }
     }
 
     @Override
     public StructuredResult structured(StructuredRequest request) {
         // 模型用途路由(设计文档 §25): 按 task 指定模型/温度, 缺省用 chat-model
         StructuredRequest routed = applyPurpose(request);
-        return active.structured(routed);
+        long t0 = System.currentTimeMillis();
+        StructuredResult r = active.structured(routed);
+        llmCallService.record("structured", active.name(), routed.getModel() != null ? routed.getModel() : active.name(),
+                null, null, System.currentTimeMillis() - t0, "success", request.getMetadata());
+        return r;
     }
 
     /** 按任务类型应用用途路由(感知/抽取用轻模型, 反思/演化用强模型等) */

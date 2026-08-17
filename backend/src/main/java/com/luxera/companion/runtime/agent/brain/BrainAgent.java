@@ -73,7 +73,8 @@ public class BrainAgent implements Agent<BrainContext, BrainDecision> {
             if (vr.valid() || vr.correctedAction() == null) return d;
             return new BrainDecision(vr.correctedAction(), d.priority() * 0.9,
                     concat(d.reasonFactors(), vr.reason()), d.expressionGoal(),
-                    d.confidence() * 0.8, d.fallback(), d.baseline());
+                    d.confidence() * 0.8, d.fallback(), d.baseline(),
+                    d.desiredLength(), d.messageCount(), d.delayHint(), d.styleHint());
         } catch (Exception e) {
             return d;
         }
@@ -94,7 +95,9 @@ public class BrainAgent implements Agent<BrainContext, BrainDecision> {
                     .system(buildSystem(ctx))
                     .user(buildUser(ctx))
                     .task("brain-decision")
-                    .schemaHint("{\"action\":\"\",\"priority\":0,\"reasonFactors\":[],\"expressionIntent\":{\"goal\":\"\"},\"confidence\":0}")
+                    .schemaHint("{\"action\":\"\",\"priority\":0,\"reasonFactors\":[],"
+                            + "\"expressionIntent\":{\"goal\":\"\",\"desiredLength\":0,\"messageCount\":0,"
+                            + "\"delayHint\":\"\",\"styleHint\":\"\"},\"confidence\":0}")
                     .build());
             return parse(result.getRaw(), ctx);
         } catch (Exception e) {
@@ -114,9 +117,15 @@ public class BrainAgent implements Agent<BrainContext, BrainDecision> {
             List<String> factors = new ArrayList<>();
             for (JsonNode f : n.path("reasonFactors")) factors.add(f.asText());
             String goal = n.path("expressionIntent").path("goal").asText("respond");
+            // V9 §11 ResponseIntent: 表达意图(想多长/拆几条/节奏/语气)
+            int desiredLength = n.path("expressionIntent").path("desiredLength").asInt(0);
+            int messageCount = n.path("expressionIntent").path("messageCount").asInt(0);
+            String delayHint = n.path("expressionIntent").path("delayHint").asText("");
+            String styleHint = n.path("expressionIntent").path("styleHint").asText("");
 
             return new BrainDecision(action, n.path("priority").asDouble(0.5), factors,
-                    goal, confidence, false, ctx.baseline());
+                    goal, confidence, false, ctx.baseline(),
+                    desiredLength, messageCount, delayHint, styleHint);
         } catch (Exception e) {
             return null;
         }
@@ -139,7 +148,7 @@ public class BrainAgent implements Agent<BrainContext, BrainDecision> {
         }
         return new BrainDecision(brainAction, baseline.confidence,
                 List.of(baseline.reason == null ? "规则决策" : baseline.reason),
-                "respond", baseline.confidence, true, baseline);
+                "respond", baseline.confidence, true, baseline, 0, 0, null, null);
     }
 
     private static boolean isValidAction(String a) {
@@ -183,7 +192,11 @@ public class BrainAgent implements Agent<BrainContext, BrainDecision> {
                 + "你的决策不允许直接生成用户可见文本。\n"
                 + "action 可选: REPLY / SHORT_ACK / CHECK_PHONE_FIRST / READ_NO_REPLY / IGNORE / END_CONVERSATION\n"
                 + "输出 JSON: {\"action\":\"...\",\"priority\":0.0,\"reasonFactors\":[],"
-                + "\"expressionIntent\":{\"goal\":\"...\"},\"confidence\":0.0}";
+                + "\"expressionIntent\":{\"goal\":\"...\",\"desiredLength\":0,\"messageCount\":0,"
+                + "\"delayHint\":\"...\",\"styleHint\":\"...\"},\"confidence\":0.0}\n"
+                + "expressionIntent 是你的回应意图(不直接生成文本): desiredLength 期望字数(0=自然), "
+                + "messageCount 拆几条消息(0=自然), delayHint 节奏提示(如\"先缓一下\"/\"马上回\"), "
+                + "styleHint 语气提示(如\"轻松一点\"/\"认真一点\")。";
         return skillBase == null ? taskPrompt
                 : skillBase + "\n\n" + taskPrompt;
     }

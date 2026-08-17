@@ -148,6 +148,9 @@ public class ExpressionAgent implements Agent<ExpressionContext, ExpressionResul
         StringBuilder sb = new StringBuilder();
         sb.append("用户在说: ").append(ctx.messageText()).append("\n");
         sb.append("你想表达的目标: ").append(ctx.expressionGoal() == null ? "respond" : ctx.expressionGoal()).append("\n");
+        if (ctx.responseIntent() != null && !ctx.responseIntent().isBlank()) {
+            sb.append("你的回应意图(Brain 已确认,不要改变): ").append(ctx.responseIntent()).append("\n");
+        }
         sb.append("你当前情绪: ").append(ctx.emotionSummary()).append("\n");
         if (ctx.personalitySummary() != null && !ctx.personalitySummary().isBlank()) {
             sb.append("你的性格: ").append(ctx.personalitySummary()).append("\n");

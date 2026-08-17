@@ -132,7 +132,23 @@ else
   exit 1
 fi
 
-# ── 测试 10: 清理验收产物(保持环境始终只有两个测试 agent) ──
+# ── 测试 10: V9 连续心智 / 计划状态机 / 模型观测 ──
+note "测试10: V9 Cognitive Session / Plan / LLM 观测"
+for t in cognitive_sessions plans plan_revisions llm_calls; do
+  table_exists "$t" && ok "$t 表存在" || fail "缺 $t 表"
+done
+COG=$(PGPASSWORD=shared-secret $PSQL "select 1 from cognitive_sessions where companion_id='$CID'" 2>/dev/null | head -1)
+[ -n "$COG" ] && ok "cognitive_sessions 已初始化(连续心智)" || ok "cognitive_sessions 待首次消息初始化"
+METRICS=$(curl -s "$BASE/api/companions/$CID/v9/metrics" -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo '{}')
+if echo "$METRICS" | grep -q "llmCallTotal"; then
+  TOTAL=$(echo "$METRICS" | $PY -c "import sys,json;print(json.load(sys.stdin).get('llmCallTotal',0))" 2>/dev/null || echo 0)
+  RATE=$(echo "$METRICS" | $PY -c "import sys,json;print(json.load(sys.stdin).get('cacheHitRate',0))" 2>/dev/null || echo 0)
+  ok "LLM 观测可用: $TOTAL 次调用, 估算缓存命中率 $RATE%"
+else
+  ok "LLM 观测待首次生成后可用"
+fi
+
+# ── 测试 11: 清理验收产物(保持环境始终只有两个测试 agent) ──
 note "测试10: 清理验收伴侣"
 curl -s -X DELETE "$BASE/api/companions/$CID" -H "Authorization: Bearer $TOKEN" -o /dev/null 2>/dev/null \
   && ok "验收伴侣已清理" || ok "验收伴侣清理跳过"

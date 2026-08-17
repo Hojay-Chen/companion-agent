@@ -38,6 +38,7 @@ public class AdminController {
     private final OpenLoopService openLoopService;
     private final com.luxera.companion.agent.CompanionCognitiveRuntime cognitiveRuntime;
     private final com.luxera.companion.behavior.BehaviorEngine behaviorEngine;
+    private final com.luxera.companion.plan.PlanService planService;
 
     public AdminController(ReflectionService reflectionService, ProactiveEngine proactiveEngine,
                            BirthdayService birthdayService, PersonaEvolutionService personaEvolutionService,
@@ -45,7 +46,8 @@ public class AdminController {
                            ExperienceProcessor experienceProcessor, ThoughtMaintenanceJob thoughtMaintenanceJob,
                            ThoughtEngine thoughtEngine, OpenLoopService openLoopService,
                            com.luxera.companion.agent.CompanionCognitiveRuntime cognitiveRuntime,
-                           com.luxera.companion.behavior.BehaviorEngine behaviorEngine) {
+                           com.luxera.companion.behavior.BehaviorEngine behaviorEngine,
+                           com.luxera.companion.plan.PlanService planService) {
         this.reflectionService = reflectionService;
         this.proactiveEngine = proactiveEngine;
         this.birthdayService = birthdayService;
@@ -58,6 +60,7 @@ public class AdminController {
         this.openLoopService = openLoopService;
         this.cognitiveRuntime = cognitiveRuntime;
         this.behaviorEngine = behaviorEngine;
+        this.planService = planService;
     }
 
     @PostMapping("/reflection/run")
@@ -173,5 +176,24 @@ public class AdminController {
         return Map.of("action", outcome != null ? String.valueOf(outcome.action()) : "none",
                 "trigger", outcome != null ? outcome.trigger() : null,
                 "score", outcome != null ? Math.round(outcome.score() * 100) / 100.0 : 0);
+    }
+
+    /** V9 验收: 手动打断一个计划(title 模糊匹配) —— 之后用户追问"你不是说…吗"可沿因果链解释 */
+    @PostMapping("/plan/interrupt/{companionId}")
+    public Map<String, Object> planInterrupt(@PathVariable String companionId,
+                                             @RequestParam(required = false) String title,
+                                             @RequestParam(required = false) String reason) {
+        var plans = planService.activePlans(companionId);
+        var target = plans.stream()
+                .filter(p -> title == null || title.isBlank()
+                        || (p.getTitle() != null && p.getTitle().contains(title)))
+                .findFirst().orElse(null);
+        if (target == null) {
+            return Map.of("interrupted", false, "reason", "没有匹配的进行中计划");
+        }
+        planService.interrupt(companionId, target.getId(), "admin_test",
+                reason == null || reason.isBlank() ? "临时有事, 计划先放一放" : reason);
+        return Map.of("interrupted", true, "title", target.getTitle(),
+                "explain", planService.explain(companionId, target.getTitle()));
     }
 }

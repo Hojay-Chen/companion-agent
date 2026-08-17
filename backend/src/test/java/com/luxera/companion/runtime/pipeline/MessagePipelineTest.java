@@ -224,7 +224,7 @@ class MessagePipelineTest {
         var expr = expressionAgent.execute(new com.luxera.companion.runtime.agent.expression.ExpressionContext(
                 companionId, userId, m.getContent(), "respond", "有点难过",
                 "温柔独立", "close", 0.5, "休闲",
-                List.of("用户: " + m.getContent()), 0.6, 0.4, decision));
+                List.of("用户: " + m.getContent()), 0.6, 0.4, decision, null));
         String hint = "语气 " + expr.strategy().tone() + ", 直接 " + Math.round(expr.strategy().directness() * 100) + "%";
         var outcome = runtime.generate(userId, companionId, conversationId, m.getId(),
                 m.getContent(), conversationService.recentMessages(conversationId, 30), null, decision, hint);

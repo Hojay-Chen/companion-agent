@@ -27,16 +27,19 @@ public class LifeRuntime {
     private final CompanionSchedule schedule;
     private final ExperienceProcessor experienceProcessor;
     private final WorldEventEngine worldEventEngine;
+    private final com.luxera.companion.plan.PlanService planService;
 
     public LifeRuntime(CompanionLifeService lifeService, LifeSimulationService simulation,
                        LifeActivityRepository activityRepo, CompanionSchedule schedule,
-                       ExperienceProcessor experienceProcessor, WorldEventEngine worldEventEngine) {
+                       ExperienceProcessor experienceProcessor, WorldEventEngine worldEventEngine,
+                       com.luxera.companion.plan.PlanService planService) {
         this.lifeService = lifeService;
         this.simulation = simulation;
         this.activityRepo = activityRepo;
         this.schedule = schedule;
         this.experienceProcessor = experienceProcessor;
         this.worldEventEngine = worldEventEngine;
+        this.planService = planService;
     }
 
     /** 推进一个伴侣的连续生活 */
@@ -99,6 +102,48 @@ public class LifeRuntime {
                 a.setStatus(newStatus);
                 activityRepo.save(a);
             }
+            // V9 §5: 生活活动 ↔ Reality 计划状态机(计划是概率性的, 改变有原因)
+            syncPlan(companionId, a, a.getStatus(), now);
+        }
+    }
+
+    /** V9: 活动与计划双向同步 —— 计划成为可被打断/可解释的生活时间轴 */
+    private void syncPlan(String companionId, LifeActivity a, String status, LocalDateTime now) {
+        try {
+            String title = a.getTitle() == null || a.getTitle().isBlank()
+                    ? (a.getType() == null ? "活动" : a.getType()) : a.getTitle();
+            var active = planService.activePlans(companionId);
+            boolean exists = active.stream()
+                    .anyMatch(p -> p.getTitle() != null && p.getTitle().contains(title));
+            switch (status == null ? "" : status) {
+                case "PLANNED" -> {
+                    // 规划时就建立计划(概率性: 她打算做, 但可能不去)
+                    if (!exists) {
+                        planService.create(companionId, "ACTIVITY", title, 0.6, 0.5,
+                                a.getPlannedStart(), null, null);
+                    }
+                }
+                case "ACTIVE" -> {
+                    if (!exists) {
+                        planService.create(companionId, "ACTIVITY", title, 0.85, 0.4,
+                                a.getPlannedStart(), null, null);
+                    }
+                    // 活动开始 = 计划落地
+                    active.stream()
+                            .filter(p -> p.getTitle() != null && p.getTitle().contains(title))
+                            .findFirst()
+                            .ifPresent(p -> planService.activate(companionId, p.getId(), "开始做了"));
+                }
+                case "DONE" -> {
+                    active.stream()
+                            .filter(p -> p.getTitle() != null && p.getTitle().contains(title))
+                            .findFirst()
+                            .ifPresent(p -> planService.complete(companionId, p.getId(), "做完了"));
+                }
+                default -> { }
+            }
+        } catch (Exception e) {
+            // 计划同步失败不影响生活主流程
         }
     }
 

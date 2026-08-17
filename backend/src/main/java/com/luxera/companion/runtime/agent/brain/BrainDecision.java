@@ -15,7 +15,11 @@ public record BrainDecision(
         String expressionGoal,
         double confidence,
         boolean fallback,
-        InteractionDecision baseline) {
+        InteractionDecision baseline,
+        int desiredLength,
+        int messageCount,
+        String delayHint,
+        String styleHint) {
 
     public static final String REPLY = "REPLY";
     public static final String SHORT_ACK = "SHORT_ACK";

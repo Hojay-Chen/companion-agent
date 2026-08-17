@@ -120,7 +120,8 @@ public class ProactiveEngine {
 
             // 主动意愿: 由"自然频率"决定, 不再有硬性上限/间隔
             Message lastProactive = messageRepo
-                    .findFirstByCompanionIdAndMessageKindOrderByCreatedAtDesc(c.getId(), "PROACTIVE")
+                    .findRecentByCompanionIdAndMessageKind(c.getId(), "PROACTIVE",
+                        org.springframework.data.domain.PageRequest.of(0, 1)).stream().findFirst()
                     .orElse(null);
 
             Relationship rel = relationshipRepo.findByUserIdAndCompanionId(userId, c.getId()).orElse(null);
@@ -237,7 +238,8 @@ public class ProactiveEngine {
         }).count();
         boolean alreadyMentioned = false;
         Message lastP = messageRepo
-                .findFirstByCompanionIdAndMessageKindOrderByCreatedAtDesc(c.getId(), "PROACTIVE")
+                .findRecentByCompanionIdAndMessageKind(c.getId(), "PROACTIVE",
+                        org.springframework.data.domain.PageRequest.of(0, 1)).stream().findFirst()
                 .orElse(null);
         if (lastP != null) alreadyMentioned = lastP.getContent() != null && lastP.getContent().contains("忙到很晚");
         if (lateCount >= 3 && !alreadyMentioned) {
@@ -370,7 +372,8 @@ public class ProactiveEngine {
     /** 该未完成事项是否已经被主动跟进过 */
     private boolean loopFollowedUp(String companionId, String title) {
         Message last = messageRepo
-                .findFirstByCompanionIdAndMessageKindOrderByCreatedAtDesc(companionId, "PROACTIVE")
+                .findRecentByCompanionIdAndMessageKind(companionId, "PROACTIVE",
+                        org.springframework.data.domain.PageRequest.of(0, 1)).stream().findFirst()
                 .orElse(null);
         if (last == null) return false;
         String content = last.getContent();
@@ -418,7 +421,8 @@ public class ProactiveEngine {
     /** 上次主动消息(BehaviorEngine 候选生成用) */
     public Message lastProactive(String companionId) {
         return messageRepo
-                .findFirstByCompanionIdAndMessageKindOrderByCreatedAtDesc(companionId, "PROACTIVE")
+                .findRecentByCompanionIdAndMessageKind(companionId, "PROACTIVE",
+                        org.springframework.data.domain.PageRequest.of(0, 1)).stream().findFirst()
                 .orElse(null);
     }
 

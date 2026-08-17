@@ -16,4 +16,7 @@ public class StructuredRequest {
     private final Double temperature;
     /** 模型覆盖(由 LlmRouter 按用途路由填充, 缺省用 chat-model) */
     private final String model;
+
+    /** V9: 观测元数据(companionId/path/hashes) */
+    private final java.util.Map<String, String> metadata;
 }

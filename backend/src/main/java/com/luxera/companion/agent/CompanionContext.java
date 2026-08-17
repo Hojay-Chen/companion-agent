@@ -43,6 +43,13 @@ public class CompanionContext {
     public final String toolResult;
     public final LocalDateTime now;
 
+    /** V9: 认知摘要(正关注什么/心里想什么) */
+    public final String cognitiveDesc;
+    /** V9: 进行中的计划摘要 */
+    public final java.util.List<java.util.Map<String, Object>> activePlans;
+    /** V9: 用户追问旧计划时的因果解释(可空) */
+    public final String planExplain;
+
     public CompanionContext(Companion companion, Persona persona,
                             com.luxera.companion.life.CompanionLife life, AgentState state,
                             CompanionAvailability availability,
@@ -54,7 +61,10 @@ public class CompanionContext {
                             List<Memory> memories, List<Message> recentMessages,
                             WorkingMemory.WorkingContext workingMemory,
                             PerceptionEngine.Perception perception, String scheduleDesc,
-                            String toolResult, LocalDateTime now) {
+                            String toolResult, LocalDateTime now,
+                            String cognitiveDesc,
+                            java.util.List<java.util.Map<String, Object>> activePlans,
+                            String planExplain) {
         this.companion = companion;
         this.persona = persona;
         this.life = life;
@@ -75,6 +85,9 @@ public class CompanionContext {
         this.scheduleDesc = scheduleDesc;
         this.toolResult = toolResult;
         this.now = now;
+        this.cognitiveDesc = cognitiveDesc;
+        this.activePlans = activePlans;
+        this.planExplain = planExplain;
     }
 }
 

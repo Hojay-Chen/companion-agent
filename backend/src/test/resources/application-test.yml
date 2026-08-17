@@ -6,7 +6,7 @@ spring:
     password: shared-secret
     # 限制测试连接池: 多个 @SpringBootTest context 各建池, 避免超过 PG max_connections
     hikari:
-      maximum-pool-size: 3
+      maximum-pool-size: 5
       minimum-idle: 1
       connection-timeout: 30000
   jpa:

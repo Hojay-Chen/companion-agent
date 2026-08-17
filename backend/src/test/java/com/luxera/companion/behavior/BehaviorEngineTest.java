@@ -97,10 +97,12 @@ class BehaviorEngineTest {
         return relationshipRepository.save(r);
     }
 
+    private static final LocalDateTime TEST_NOON = LocalDateTime.of(2026, 8, 18, 15, 0);
+
     @Test
     void evaluateAlwaysProducesDecision() {
         relationship(false, 3);
-        BehaviorOutcome outcome = behaviorEngine.evaluate(companionId, LocalDateTime.now(), "TEST");
+        BehaviorOutcome outcome = behaviorEngine.evaluate(companionId, TEST_NOON, "TEST");
         assertNotNull(outcome);
         assertNotNull(outcome.action());
         assertTrue(outcome.decidedAt() != null);
@@ -112,7 +114,7 @@ class BehaviorEngineTest {
         relationship(true, 60);
         Set<BehaviorAction> seen = new HashSet<>();
         for (int i = 0; i < 40; i++) {
-            BehaviorOutcome o = behaviorEngine.evaluate(companionId, LocalDateTime.now(), "TEST");
+            BehaviorOutcome o = behaviorEngine.evaluate(companionId, TEST_NOON, "TEST");
             seen.add(o.action());
         }
         // 主动联系出现过(不是每次都发, 也不是从不发)

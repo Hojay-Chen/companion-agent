@@ -65,6 +65,7 @@ public class BehaviorEngine {
     private final LifeRuntime lifeRuntime;
     private final WorldEventEngine worldEventEngine;
     private final AvailabilityService availabilityService;
+    private final com.luxera.companion.plan.PlanService planService;
     private final Random random = new Random();
 
     public BehaviorEngine(CompanionRepository companionRepo, PersonaService personaService,
@@ -72,7 +73,8 @@ public class BehaviorEngine {
                           SleepModel sleepModel, CompanionSchedule schedule, ProactiveEngine proactiveEngine,
                           PhoneStateService phoneStateService, PhoneNotificationRepository phoneNotificationRepo,
                           MessageRepository messageRepo, LifeRuntime lifeRuntime,
-                          WorldEventEngine worldEventEngine, AvailabilityService availabilityService) {
+                          WorldEventEngine worldEventEngine, AvailabilityService availabilityService,
+                          com.luxera.companion.plan.PlanService planService) {
         this.companionRepo = companionRepo;
         this.personaService = personaService;
         this.agentStateService = agentStateService;
@@ -86,6 +88,7 @@ public class BehaviorEngine {
         this.lifeRuntime = lifeRuntime;
         this.worldEventEngine = worldEventEngine;
         this.availabilityService = availabilityService;
+        this.planService = planService;
     }
 
     /** 对所有伴侣做一次行为评估(行为 Tick) */
@@ -254,6 +257,14 @@ public class BehaviorEngine {
                 worldEventEngine.publish(companionId, WorldEventEngine.TYPE_CONTACT_OTHER_PERSON,
                         WorldEvent.SRC_SOCIAL, companionId, null,
                         Map.of("activity", "和朋友们见面/聊天"), 0.35);
+                // V9: 突发事件打断最近的低优先级计划(朋友喊我吃饭 → 计划顺延)
+                try {
+                    var latest = planService.activePlans(companionId).stream()
+                            .filter(p -> p.getFlexibility() > 0.3)
+                            .findFirst();
+                    latest.ifPresent(p -> planService.interrupt(companionId, p.getId(),
+                            "friend_meetup", "朋友突然喊我出去, 就先没顾上" + p.getTitle()));
+                } catch (Exception ignored) { }
                 AgentState st = agentStateService.getOrCreate(companionId);
                 st.setSocialEnergy(Math.min(1.0, st.getSocialEnergy() + 0.06));
                 st.setLoneliness(Math.max(0, st.getLoneliness() - 0.1));

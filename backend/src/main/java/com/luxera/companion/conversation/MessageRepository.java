@@ -32,8 +32,9 @@ public interface MessageRepository extends JpaRepository<Message, String> {
     @Query("select m from Message m where m.messageKind = :kind "
             + "and m.conversationId in (select c.id from Conversation c where c.companionId = :companionId) "
             + "order by m.createdAt desc")
-    Optional<Message> findFirstByCompanionIdAndMessageKindOrderByCreatedAtDesc(
-            @Param("companionId") String companionId, @Param("kind") String kind);
+    List<Message> findRecentByCompanionIdAndMessageKind(
+            @Param("companionId") String companionId, @Param("kind") String kind,
+            org.springframework.data.domain.Pageable pageable);
 
     @Query("select count(m) from Message m where m.messageKind = :kind "
             + "and m.conversationId in (select c.id from Conversation c where c.companionId = :companionId) "
