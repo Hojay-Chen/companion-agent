@@ -40,6 +40,7 @@ public class AgentPostProcessor {
     private final PromiseService promiseService;
     private final com.luxera.companion.persona.CompanionService companionService;
     private final AgentStateService agentStateService;
+    private final com.luxera.companion.conversation.SessionSummaryService sessionSummaryService;
 
     public AgentPostProcessor(ExperienceProcessor experienceProcessor, ThoughtEngine thoughtEngine,
                               EmotionEngine emotionEngine, MemoryExtractor memoryExtractor,
@@ -47,7 +48,8 @@ public class AgentPostProcessor {
                               RelationshipEngine relationshipEngine, RelationshipService relationshipService,
                               RelationshipThreadService threadService, PromiseService promiseService,
                               com.luxera.companion.persona.CompanionService companionService,
-                              AgentStateService agentStateService) {
+                              AgentStateService agentStateService,
+                           com.luxera.companion.conversation.SessionSummaryService sessionSummaryService) {
         this.experienceProcessor = experienceProcessor;
         this.thoughtEngine = thoughtEngine;
         this.emotionEngine = emotionEngine;
@@ -60,6 +62,7 @@ public class AgentPostProcessor {
         this.promiseService = promiseService;
         this.companionService = companionService;
         this.agentStateService = agentStateService;
+        this.sessionSummaryService = sessionSummaryService;
     }
 
     @Async
@@ -112,6 +115,11 @@ public class AgentPostProcessor {
         } catch (Exception e) {
             log.warn("对话后处理失败: {}", e.getMessage());
         }
+
+            // V9 §20: Session Rolling Summary(异步) —— 长会话早期消息压缩为分节摘要
+            try {
+                sessionSummaryService.maybeSummarize(conversationId);
+            } catch (Exception ignored) { }
     }
 
     private static String topicFrom(String text) {

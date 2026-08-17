@@ -79,6 +79,7 @@ public class AgentRuntime {
     private final CompanionRuntime runtime;
     private final TaskExecutor taskExecutor;
     private final com.luxera.companion.cognitive.CognitiveSessionService cognitiveSessionService;
+    private final com.luxera.companion.reality.RealityConsistencyChecker realityChecker;
     /** V9: per-agent 单写者锁(同 agent 的写入串行, 防止并发覆盖状态) */
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.locks.ReentrantLock> locks =
             new java.util.concurrent.ConcurrentHashMap<>();
@@ -94,7 +95,8 @@ public class AgentRuntime {
                           CognitiveWakeupService cognitiveWakeupService, IntentionService intentionService,
                           CompanionEventBus eventBus, CompanionSchedule schedule, CompanionRuntime runtime,
                           TaskExecutor taskExecutor,
-                          com.luxera.companion.cognitive.CognitiveSessionService cognitiveSessionService) {
+                          com.luxera.companion.cognitive.CognitiveSessionService cognitiveSessionService,
+                          com.luxera.companion.reality.RealityConsistencyChecker realityChecker) {
         this.conversationService = conversationService;
         this.perceptionEngine = perceptionEngine;
         this.workingMemory = workingMemory;
@@ -118,6 +120,7 @@ public class AgentRuntime {
         this.runtime = runtime;
         this.taskExecutor = taskExecutor;
         this.cognitiveSessionService = cognitiveSessionService;
+        this.realityChecker = realityChecker;
     }
 
     /**
@@ -333,6 +336,32 @@ public class AgentRuntime {
                     last.getId(), decisionText, recent, null, decision, expressionHint, path);
             String reply = outcome.reply();
             if (reply == null || reply.isBlank()) return;
+
+            // V9 §10: Reality 一致性校验 —— 表达与当前现实冲突(编造事实)时禁止直接发送
+            String conflict = null;
+            try {
+                conflict = realityChecker.check(reply, companionId,
+                        schedule.describe(companionId, "她", now), now);
+                if (conflict != null) {
+                    // 重新生成一次, 提示冲突(最多一次)
+                    outcome = runtime.generate(userId, companionId, conversationId,
+                            last.getId(), decisionText, recent, null, decision,
+                            expressionHint + " 注意:" + conflict, path);
+                    reply = outcome.reply();
+                    conflict = reply == null || reply.isBlank() ? null
+                            : realityChecker.check(reply, companionId,
+                                    schedule.describe(companionId, "她", now), now);
+                }
+            } catch (Exception ignored) { }
+            if (reply == null || reply.isBlank()) return;
+            if (conflict != null) {
+                // 与事实冲突的文本不发送 —— 像真人一样"没说出口", 保持 Reality 一致
+                eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
+                        Map.of("messageId", last.getId(), "status", "READ", "action", "REALITY_CONFLICT",
+                                "reason", conflict));
+                log.info("[AgentRuntime] {} 回复与 Reality 冲突, 未发送: {}", companionId, conflict);
+                return;
+            }
 
             // 拆分回复段
             List<String> chunks = splitReply(reply);

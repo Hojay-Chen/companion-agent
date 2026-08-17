@@ -56,6 +56,11 @@ app:
     temperature: 0.9
     structured-temperature: 0.3
     max-tokens: 2048
+    # V9 §20: 会话摘要用轻量模型(异步路径, 不阻塞主链路)
+    purpose:
+      summary:
+        model: ${LLM_CHAT_MODEL:deepseek-chat}
+        temperature: 0.2
     timeout-seconds: ${LLM_TIMEOUT_SECONDS:120}
     mock-fallback: ${LLM_MOCK_FALLBACK:true}
 

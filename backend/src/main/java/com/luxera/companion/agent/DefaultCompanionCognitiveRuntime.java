@@ -37,10 +37,12 @@ public class DefaultCompanionCognitiveRuntime implements CompanionCognitiveRunti
     private final AgentPostProcessor postProcessor;
     private final LifeRuntime lifeRuntime;
     private final AppProperties props;
+    private final com.luxera.companion.runtime.skill.SkillSelector skillSelector;
 
     public DefaultCompanionCognitiveRuntime(PerceptionEngine perceptionEngine, PerceptionRefiner perceptionRefiner,
                                             ContextLoader contextLoader, BehaviorPolicyEngine behaviorPolicyEngine,
                                             ContextCompiler contextCompiler, ReminderPlanner reminderPlanner,
+                                            com.luxera.companion.runtime.skill.SkillSelector skillSelector,
                                             LlmRouter llm, NaturalnessEngine naturalnessEngine,
                                             AgentPostProcessor postProcessor, LifeRuntime lifeRuntime,
                                             AppProperties props) {
@@ -55,6 +57,7 @@ public class DefaultCompanionCognitiveRuntime implements CompanionCognitiveRunti
         this.postProcessor = postProcessor;
         this.lifeRuntime = lifeRuntime;
         this.props = props;
+        this.skillSelector = skillSelector;
     }
 
     @Override
@@ -114,7 +117,14 @@ public class DefaultCompanionCognitiveRuntime implements CompanionCognitiveRunti
         // 5. V9 §7 分层编译: L0 稳定前缀 + L1 会话 + L2 动态 + L3 当前轮(带 hashes 供观测)
         com.luxera.companion.interaction.ResponseBudget budget =
                 interaction != null ? interaction.budget : null;
-        CompiledContext compiled = contextCompiler.compile(ctx, decision, budget, expressionHint);
+        // V9 §21: Skill 按需加载 —— 按感知 Intent 选技能, 注入当前轮(L3, 不破坏 L0 稳定前缀)
+        String skillHint = null;
+        try {
+            skillHint = skillSelector.composeForIntent(perception.intent());
+        } catch (Exception ignored) { }
+        CompiledContext compiled = contextCompiler.compile(ctx, decision, budget,
+                skillHint == null ? expressionHint
+                        : (expressionHint == null ? "" : expressionHint + "\n") + "【此刻用得上的一些体会】" + skillHint);
         String system = compiled.fullText();
 
         // 6. 组装消息

@@ -46,7 +46,7 @@ class ContextLayerTest {
         return new CompanionContext(
                 companion, null, null, null, null, List.of(), List.of(), List.of(), null, null, null,
                 List.of(), null, List.of(), List.of(), null, null, "现在是周一 20:00,小满在悠闲地休息。",
-                null, java.time.LocalDateTime.now(), null, List.of(), null);
+                null, java.time.LocalDateTime.now(), null, null, List.of(), null);
     }
 
     @Test

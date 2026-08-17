@@ -156,6 +156,18 @@ public class PlanService {
         return "还想着" + p.getTitle();
     }
 
+    /** 最近被打断的计划(Reality Consistency 校验用) */
+    @Transactional(readOnly = true)
+    public List<Plan> supersededRecently(String companionId, LocalDateTime since) {
+        List<Plan> out = new ArrayList<>();
+        for (Plan p : planRepo.findByCompanionIdAndStatusOrderByExpectedTimeAsc(companionId, Plan.STATUS_SUPERSEDED)) {
+            if (p.getUpdatedAt() != null && p.getUpdatedAt().isAfter(since)) {
+                out.add(p);
+            }
+        }
+        return out;
+    }
+
     /** 最近一次计划变更的解释(用户追问"你不是说…吗"时注入; 无变更返回 null) */
     @Transactional(readOnly = true)
     public String recentExplanation(String companionId, LocalDateTime now) {

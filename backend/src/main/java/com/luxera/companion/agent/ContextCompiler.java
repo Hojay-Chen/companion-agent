@@ -80,6 +80,12 @@ public class ContextCompiler {
     private String buildL1(CompanionContext ctx) {
         StringBuilder sb = new StringBuilder();
 
+        // L1-0. Session Rolling Summary(早期事实, 远期摘要化)
+        if (ctx.sessionSummary != null && !ctx.sessionSummary.isBlank()) {
+            sb.append("【之前聊过的】").append(ctx.sessionSummary)
+                    .append("(这些是你们过去聊天的沉淀,自然地记得,不要逐条复述)\n\n");
+        }
+
         // L1-1. Relationship
         sb.append("【你们的关系】")
                 .append(com.luxera.companion.agent.ContextBuilder.relationshipSummary(ctx.relationship)).append("\n\n");

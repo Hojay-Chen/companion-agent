@@ -130,6 +130,7 @@ public class LlmRouter implements LlmGateway {
             case "persona-compile" -> "extraction";
             case "memory-extraction", "user-model-extraction", "self-model-extraction",
                  "relationship-narrative", "reminder-extraction" -> "extraction";
+            case "session-summary" -> "summary";
             default -> "extraction";
         };
     }

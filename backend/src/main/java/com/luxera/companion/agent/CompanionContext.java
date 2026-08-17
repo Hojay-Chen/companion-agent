@@ -43,6 +43,8 @@ public class CompanionContext {
     public final String toolResult;
     public final LocalDateTime now;
 
+    /** V9: 会话滚动摘要(早期事实, 远期摘要化) */
+    public final String sessionSummary;
     /** V9: 认知摘要(正关注什么/心里想什么) */
     public final String cognitiveDesc;
     /** V9: 进行中的计划摘要 */
@@ -62,6 +64,7 @@ public class CompanionContext {
                             WorkingMemory.WorkingContext workingMemory,
                             PerceptionEngine.Perception perception, String scheduleDesc,
                             String toolResult, LocalDateTime now,
+                            String sessionSummary,
                             String cognitiveDesc,
                             java.util.List<java.util.Map<String, Object>> activePlans,
                             String planExplain) {
@@ -85,6 +88,7 @@ public class CompanionContext {
         this.scheduleDesc = scheduleDesc;
         this.toolResult = toolResult;
         this.now = now;
+        this.sessionSummary = sessionSummary;
         this.cognitiveDesc = cognitiveDesc;
         this.activePlans = activePlans;
         this.planExplain = planExplain;

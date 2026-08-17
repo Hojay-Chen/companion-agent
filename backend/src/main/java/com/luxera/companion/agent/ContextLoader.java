@@ -44,6 +44,7 @@ public class ContextLoader {
     private final com.luxera.companion.config.AppProperties props;
     private final com.luxera.companion.cognitive.CognitiveSessionService cognitiveSessionService;
     private final com.luxera.companion.plan.PlanService planService;
+    private final com.luxera.companion.conversation.SessionSummaryRepository sessionSummaryRepository;
 
     public ContextLoader(CompanionService companionService, CompanionLifeService lifeService,
                          AgentStateService agentStateService, AvailabilityService availabilityService,
@@ -55,7 +56,8 @@ public class ContextLoader {
                          WorkingMemory workingMemory, LifeContextProvider lifeContextProvider,
                          CompanionSchedule schedule, com.luxera.companion.config.AppProperties props,
                          com.luxera.companion.cognitive.CognitiveSessionService cognitiveSessionService,
-                         com.luxera.companion.plan.PlanService planService) {
+                         com.luxera.companion.plan.PlanService planService,
+                         com.luxera.companion.conversation.SessionSummaryRepository sessionSummaryRepository) {
         this.companionService = companionService;
         this.lifeService = lifeService;
         this.agentStateService = agentStateService;
@@ -75,6 +77,7 @@ public class ContextLoader {
         this.props = props;
         this.cognitiveSessionService = cognitiveSessionService;
         this.planService = planService;
+        this.sessionSummaryRepository = sessionSummaryRepository;
     }
 
     public CompanionContext load(String userId, String companionId, String conversationId,
@@ -127,9 +130,20 @@ public class ContextLoader {
             }
         } catch (Exception ignored) { }
 
+        // V9 §20: 会话滚动摘要(早期事实)
+        String sessionSummary = null;
+        try {
+            if (conversationId != null) {
+                var summary = sessionSummaryRepository.findByConversationId(conversationId).orElse(null);
+                if (summary != null && summary.getSummaryText() != null && !summary.getSummaryText().isBlank()) {
+                    sessionSummary = summary.getSummaryText();
+                }
+            }
+        } catch (Exception ignored) { }
+
         return new CompanionContext(companion, persona, life, state, availability, episodes, thoughts, loops,
                 selfModel, userModel, userChatStyle, entities, relationship, memories, recentMessages, wm, perception,
-                scheduleDesc, toolResult, now, cognitiveDesc, activePlans, planExplain);
+                scheduleDesc, toolResult, now, sessionSummary, cognitiveDesc, activePlans, planExplain);
     }
 
     /** 用户消息是否在追问旧计划("你不是说…吗/不是要…吗/说好的…呢") */

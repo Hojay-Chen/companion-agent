@@ -23,6 +23,11 @@
 6. **Fast / Deep 路径调度**：普通寒暄走 FAST（跳过记忆/用户模型重检索，轻量上下文）；重要消息（DELIBERATION+）走 DEEP 完整上下文。降低延迟与成本。
 7. **per-agent 单写者锁**：同 agent 的消息/主动事件/后台任务串行写入，防止并发覆盖状态。
 
+7. **Session Rolling Summary**：`session_summaries` —— 会话达 40 条后早期消息压缩为分节摘要（facts/unresolved/relationship/plans），每 20 条增量重写；近期原文保留，远期摘要化；异步生成（轻模型）不阻塞主链路。
+8. **醒来补处理**：她睡着时收到的消息，醒来后自动补处理（`WakeupCatchUpService`）——真人睡醒拿起手机看到全部夜间消息，已读/回复闭环。
+9. **Reality 一致性校验**：`RealityConsistencyChecker` —— 表达与当前现实冲突（"忙工作时说在休息"/"已被打断的计划还要去"）禁止直接发送，重新生成一次，仍冲突则不说出口。
+10. **Skill 按需加载**：按感知 Intent 选技能（难过→陪伴/安抚，规划→事件模拟），注入当前轮（L3），不破坏 L0 稳定前缀缓存。
+
 ### V9 新增数据表
 
 | 表 | 用途 |
@@ -31,6 +36,7 @@
 | `plans` | 概率性计划（confidence/flexibility/expected_time/触发条件） |
 | `plan_revisions` | 计划变更因果链（创建/激活/完成/取消/打断，带原因） |
 | `llm_calls` | LLM 调用观测（model/token/latency/路径/上下文 hash/缓存估计） |
+| `session_summaries` | 会话滚动摘要（早期事实分节沉淀，远期摘要化） |
 
 ### V9 验收
 

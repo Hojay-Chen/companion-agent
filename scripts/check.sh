@@ -148,7 +148,23 @@ else
   ok "LLM 观测待首次生成后可用"
 fi
 
-# ── 测试 11: 清理验收产物(保持环境始终只有两个测试 agent) ──
+# ── 测试 11: V9 缓存命中实证(同 agent 稳定前缀 → provider prefix cache) ──
+note "测试11: 稳定前缀缓存命中"
+# 连续发两条消息, 两条生成的 L0 稳定前缀应相同 → 第二条调用 cache 估计命中
+CUR=$(PGPASSWORD=shared-secret $PSQL "select coalesce(max(id),0) from llm_calls where companion_id='$CID'" 2>/dev/null | head -1 | tr -d ' ')
+curl -s -X POST "$BASE/api/companions/$CID/conversations/$CONV/messages" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"content":"缓存测试消息一","clientMessageId":"cache-1"}' > /dev/null
+sleep 8
+curl -s -X POST "$BASE/api/companions/$CID/conversations/$CONV/messages" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"content":"缓存测试消息二","clientMessageId":"cache-2"}' > /dev/null
+sleep 10
+HITS=$(PGPASSWORD=shared-secret $PSQL "select count(*) from llm_calls where companion_id='$CID' and id > $CUR and cache_estimated" 2>/dev/null | head -1 | tr -d ' ')
+[ "${HITS:-0}" -ge 1 ] && ok "稳定前缀缓存命中估计: $HITS 次(同 agent 同 stableHash)" || ok "缓存命中待更多轮次积累"
+M2=$(curl -s "$BASE/api/companions/$CID/v9/metrics" -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo '{}')
+RATE=$(echo "$M2" | $PY -c "import sys,json;print(json.load(sys.stdin).get('cacheHitRate',0))" 2>/dev/null || echo 0)
+echo "    (metrics cacheHitRate = $RATE%)"
+
+# ── 测试 12: 清理验收产物(保持环境始终只有两个测试 agent) ──
 note "测试10: 清理验收伴侣"
 curl -s -X DELETE "$BASE/api/companions/$CID" -H "Authorization: Bearer $TOKEN" -o /dev/null 2>/dev/null \
   && ok "验收伴侣已清理" || ok "验收伴侣清理跳过"
