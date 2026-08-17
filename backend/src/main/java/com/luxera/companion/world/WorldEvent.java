@@ -17,7 +17,7 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 /**
- * V8 §四十三~§四十六 WorldEvent: 数字人世界中的事件(持久化)。
+ * §四十三~§四十六 WorldEvent: 数字人世界中的事件(持久化)。
  *
  * 事件分类: Communication / Life / Body / Social / Memory / Intention / Environment。
  * 用户消息只是其中一种事件; 时间、生活活动结束、睡眠压力变化、情绪变化、

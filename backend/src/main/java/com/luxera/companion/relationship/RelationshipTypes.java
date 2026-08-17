@@ -3,7 +3,7 @@ package com.luxera.companion.relationship;
 import java.util.Map;
 
 /**
- * V8 §六~§七 关系类型: 创建伴侣时用户选择"你们是什么关系", 这是 Agent 世界中的真实关系状态,
+ * §六~§七 关系类型: 创建伴侣时用户选择"你们是什么关系", 这是 Agent 世界中的真实关系状态,
  * 不是 Prompt。不同类型 → 不同的初始关系维度(熟悉/信任/亲密/好感/张力/双向性/依赖)。
  */
 public final class RelationshipTypes {

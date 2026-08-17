@@ -15,12 +15,12 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * V5 诊断端点(只读): 观察运行时内部 —— Agent 痕迹 / 排程动作 / 待复查消息 / 世界事件 / 已注册 Agent。
+ * 诊断端点(只读): 观察运行时内部 —— Agent 痕迹 / 排程动作 / 待复查消息 / 世界事件 / 已注册 Agent。
  * 用于验证与调试, 不影响主流程。
  */
 @RestController
 @RequestMapping("/api/companions/{companionId}/v5")
-public class V5DiagnosticController {
+public class DiagnosticController {
 
     private final CurrentUser currentUser;
     private final CompanionService companionService;
@@ -30,7 +30,7 @@ public class V5DiagnosticController {
     private final WorldEventLogService worldEventLogService;
     private final AgentRegistry agentRegistry;
 
-    public V5DiagnosticController(CurrentUser currentUser, CompanionService companionService,
+    public DiagnosticController(CurrentUser currentUser, CompanionService companionService,
                                   AgentTraceService traceService, ScheduledActionService scheduledActionService,
                                   PendingMessageService pendingMessageService,
                                   WorldEventLogService worldEventLogService, AgentRegistry agentRegistry) {

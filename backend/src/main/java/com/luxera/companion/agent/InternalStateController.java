@@ -15,7 +15,7 @@ import java.util.List;
 
 /**
  * 内部状态读取(用户视角, 不暴露数值面板, 不暴露内部想法)。
- * 设计文档 V2.0 §30/§31: 用户看到"她最近怎么样/未完成的事/经历", 而不是 mood=0.63 或 Internal Thought。
+ * 设计文档 §30/§31: 用户看到"她最近怎么样/未完成的事/经历", 而不是 mood=0.63 或 Internal Thought。
  */
 @RestController
 @RequestMapping("/api/companions/{companionId}")

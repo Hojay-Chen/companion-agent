@@ -79,7 +79,7 @@ public class RelationshipController {
         return sharedRepo.findByRelationshipIdOrderByOccurredAtDesc(r.getId());
     }
 
-    // ── V2.0 Relationship 2.0 ───────────────────
+    // ── Relationship 2.0 ───────────────────
 
     @GetMapping("/threads")
     public List<RelationshipThread> threads(@PathVariable String companionId) {
@@ -105,7 +105,7 @@ public class RelationshipController {
         return promiseService.openPromises(r.getId());
     }
 
-    /** V8 §七: 用户可调整关系类型 —— 关系是真实状态, 可以改变 */
+    /** §七: 用户可调整关系类型 —— 关系是真实状态, 可以改变 */
     @PutMapping("/type")
     public Relationship changeType(@PathVariable String companionId,
                                    @RequestBody ChangeTypeRequest req) {

@@ -17,7 +17,7 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 /**
- * V8 §17 事件日志(SSE 游标 + 世界事件骨架):
+ * §17 事件日志(SSE 游标 + 世界事件骨架):
  * 每次 {@link CompanionEventBus#publish} 落一条(除心跳/打字等瞬态事件)。
  * id 单调递增 → 前端 Last-Event-ID 断线重连后回放, 消息永不丢。
  * 同时是 WorldEventEngine 的持久化基础(事件溯源)。

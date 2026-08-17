@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V7 §22-§23 Cognitive Wakeup 测试:
+ * §22-§23 Cognitive Wakeup 测试:
  * - 普通消息("哈哈") → MICRO_WAKE(不调 LLM)
  * - 强烈情绪(被裁/难过) → DELIBERATION/DEEP_THINKING
  * - 低价值通知 → NO_WAKE

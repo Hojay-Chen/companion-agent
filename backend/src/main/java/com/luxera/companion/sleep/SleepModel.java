@@ -10,7 +10,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 
 /**
- * V7 §3-§9 Sleep Model: 睡眠是 Emergent Behavior, 不是 Schedule。
+ * §3-§9 Sleep Model: 睡眠是 Emergent Behavior, 不是 Schedule。
  *
  * 彻底取消 "if time >= sleepTime → sleeping" 的硬规则。
  * 睡眠由四层决定:
@@ -55,7 +55,7 @@ public class SleepModel {
     }
 
     /**
-     * 获取/初始化生物钟状态。chronotype 由 companionId 确定性派生(同 V6 作息).
+     * 获取/初始化生物钟状态。chronotype 由 companionId 确定性派生(同 作息).
      * LATE 类型天然倾向晚睡晚起。
      */
     @Transactional
@@ -71,7 +71,7 @@ public class SleepModel {
                 default -> 0.0;
             };
             c.setCircadianPhaseShift(shift);
-            // V7: 新伴侣不是"刚出生", 而是"已生活了一段时间"。
+            // 新伴侣不是"刚出生", 而是"已生活了一段时间"。
             // 按 chronotype 假定今天已醒来(起床时间), 让睡眠压力从起床起自然积累:
             // 深夜创建的新伴侣也会有合理睡意(而非凌晨还精神)。
             int wakeHour = switch (c.getChronotype()) {

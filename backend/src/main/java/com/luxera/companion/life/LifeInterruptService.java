@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * V6 §32 Interrupt System: 生活不是串行任务。
+ * §32 Interrupt System: 生活不是串行任务。
  * 支持 Activity A → Interrupt B → Return to A。
  *
  * 例如: 做饭 → 用户消息 → 看消息回复一句 → 继续做饭。
@@ -90,7 +90,7 @@ public class LifeInterruptService {
     }
 
     /**
-     * V7 §29 Activity Inertia: 活动惯性。
+     * §29 Activity Inertia: 活动惯性。
      * 她正在看剧/切菜时, 用户消息到达 → 她不会立刻看手机, 而是"把手头这阶段做完"再看。
      * 返回"她大概多久后才可能拿起手机"(毫秒)。
      *

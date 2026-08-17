@@ -32,7 +32,7 @@ import java.util.Map;
 import java.util.Random;
 
 /**
- * V8 §三十四~§四十一 BehaviorEngine: 数字人的中央行为选择器。
+ * §三十四~§四十一 BehaviorEngine: 数字人的中央行为选择器。
  *
  * 世界每时每刻都在发生事件(时间/生活/身体/关系/记忆/意图/外界),
  * BehaviorEngine 每隔一段时间或收到事件时问: "现在我最可能做什么?"
@@ -94,7 +94,7 @@ public class BehaviorEngine {
         for (Companion c : companionRepo.findAll()) {
             if (c.getDeletedAt() != null) continue;
             try {
-                // V8 §三十九: 关系维护压力随沉默上升(驱动主动联系候选)
+                // §三十九: 关系维护压力随沉默上升(驱动主动联系候选)
                 if (c.getUserId() != null) {
                     relationshipService.decayConnectionPressure(c.getUserId(), c.getId(), now);
                 }
@@ -274,7 +274,7 @@ public class BehaviorEngine {
         return decision;
     }
 
-    /** V8 §二十九: 睡眠决策也应考虑"正在陪你聊" —— 供 SleepTickJob 使用 */
+    /** §二十九: 睡眠决策也应考虑"正在陪你聊" —— 供 SleepTickJob 使用 */
     @Transactional
     public SleepModel.SleepDecision sleepDecision(String companionId, LocalDateTime now) {
         boolean engaged = recentlyEngaged(companionId, now);

@@ -13,7 +13,7 @@ import javax.persistence.Table;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-/** 对话边界(设计文档 V3 §二十四): SOFT_END/HARD_END/PAUSE/BUSY/SLEEP/DISTRACTED/RETURN_LATER */
+/** 对话边界(设计文档 §二十四): SOFT_END/HARD_END/PAUSE/BUSY/SLEEP/DISTRACTED/RETURN_LATER */
 @Entity
 @Table(name = "conversation_boundaries", indexes = @Index(name = "idx_boundary_conv", columnList = "conversation_id"))
 @Getter

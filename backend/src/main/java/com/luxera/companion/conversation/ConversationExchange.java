@@ -13,7 +13,7 @@ import javax.persistence.Table;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-/** 一次自然互动(设计文档 V3 §二十三): 用户连发多条+回复=一个 Exchange */
+/** 一次自然互动(设计文档 §二十三): 用户连发多条+回复=一个 Exchange */
 @Entity
 @Table(name = "conversation_exchanges", indexes = @Index(name = "idx_exchange_session", columnList = "session_id"))
 @Getter

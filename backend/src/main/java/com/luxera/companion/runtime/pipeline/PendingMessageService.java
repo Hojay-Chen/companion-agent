@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * 未回复消息服务(V5 §79/§81): "不回复"也是状态 —— 保存已读未回 + 下次复查时间。
+ * 未回复消息服务(§79/§81): "不回复"也是状态 —— 保存已读未回 + 下次复查时间。
  * 到点由 {@code PendingMessageReevaluationJob} 唤醒 Brain 重新评估。
  */
 @Service
@@ -30,7 +30,7 @@ public class PendingMessageService {
 
     /**
      * 记录一条"已读但不回"的消息。
-     * V6 §54 Communication Friction: 摩擦类型标明"为什么不回" —— 看到了没回 / 想回忘了 / 回一半被打断。
+     * §54 Communication Friction: 摩擦类型标明"为什么不回" —— 看到了没回 / 想回忘了 / 回一半被打断。
      */
     @Transactional
     public PendingMessageState defer(Message message, String companionId, String userId,
@@ -60,7 +60,7 @@ public class PendingMessageService {
     }
 
     /**
-     * V6 §54: 记录"想回复但忘了"的摩擦 —— 复查时 Brain 想过要回但又被别的事打断。
+     * §54: 记录"想回复但忘了"的摩擦 —— 复查时 Brain 想过要回但又被别的事打断。
      * 这类消息值得更长的复查窗口(人真的会忘), 由复查 Job 调用。
      */
     @Transactional

@@ -78,7 +78,7 @@ public class LlmRouter implements LlmGateway {
 
     @Override
     public StructuredResult structured(StructuredRequest request) {
-        // 模型用途路由(设计文档 V2.0 §25): 按 task 指定模型/温度, 缺省用 chat-model
+        // 模型用途路由(设计文档 §25): 按 task 指定模型/温度, 缺省用 chat-model
         StructuredRequest routed = applyPurpose(request);
         return active.structured(routed);
     }

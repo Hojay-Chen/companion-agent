@@ -13,7 +13,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * Agent 运行痕迹(V5 §60): 每次 Agent 调用产生一条记录。
+ * Agent 运行痕迹(§60): 每次 Agent 调用产生一条记录。
  * 不记录完整内部思维链, 只记录 输入摘要 + 结构化结果 + 状态变化 + 耗时 + token。
  * 用于回答"为什么她突然不理我"这类问题(回放事件链)。
  */

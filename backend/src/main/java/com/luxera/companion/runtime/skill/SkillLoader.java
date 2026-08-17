@@ -11,7 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 技能加载器(V5 §50): 从 classpath skills 目录下的 SKILL.md 文件加载技能。
+ * 技能加载器(§50): 从 classpath skills 目录下的 SKILL.md 文件加载技能。
  * id 为相对路径, 如 emotion.appraisal。
  */
 @Slf4j

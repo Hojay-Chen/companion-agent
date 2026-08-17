@@ -1,7 +1,7 @@
 package com.luxera.companion.runtime;
 
 /**
- * 世界事件类型(V5 §62): 进入世界状态的事件。
+ * 世界事件类型(§62): 进入世界状态的事件。
  * 由 Runtime 产生并广播, 认知层按需响应(不是每个事件都唤醒所有 Agent)。
  */
 public final class WorldEventType {

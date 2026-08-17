@@ -6,7 +6,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * V6 §45/§46 Behavior Pattern 学习服务: 从真实互动中观测行为模式。
+ * §45/§46 Behavior Pattern 学习服务: 从真实互动中观测行为模式。
  * 每次用户消息到达时, 根据时间/情境观测一次模式(支持或反例)。
  *
  * 例如:

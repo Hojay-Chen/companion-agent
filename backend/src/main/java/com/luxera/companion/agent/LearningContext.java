@@ -6,7 +6,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 学习上下文(设计文档 V2.0 §29): 供后台反思/记忆/人格学习使用的独立上下文, 与 Prompt Context 分离。
+ * 学习上下文(设计文档 §29): 供后台反思/记忆/人格学习使用的独立上下文, 与 Prompt Context 分离。
  */
 public record LearningContext(
         String companionId,

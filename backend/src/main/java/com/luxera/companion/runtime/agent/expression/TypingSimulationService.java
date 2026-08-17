@@ -3,7 +3,7 @@ package com.luxera.companion.runtime.agent.expression;
 import org.springframework.stereotype.Component;
 
 /**
- * V6 §57 Typing Simulation: 模拟真人打字节奏。
+ * §57 Typing Simulation: 模拟真人打字节奏。
  * 第一阶段不模拟逐字符输入, 只模拟 typingDuration / messageGap / typingPause。
  *
  * - 短消息: 0.8~2.0s

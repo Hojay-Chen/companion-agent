@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * 消息评估(V4 §十): 一条用户消息对 Agent 内部状态的意义。
+ * 消息评估(§十): 一条用户消息对 Agent 内部状态的意义。
  * 消息不是直接触发回复, 而是先改变内部状态(Appraisal), 再由 Drives 竞争产生行为。
  */
 @Entity

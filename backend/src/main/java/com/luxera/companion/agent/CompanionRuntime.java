@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * 伴侣运行时(V2.0 Strangler Pattern): 委托给统一认知内核 CompanionCognitiveRuntime。
+ * 伴侣运行时(Strangler Pattern): 委托给统一认知内核 CompanionCognitiveRuntime。
  * 旧模块退化为薄门面, 保留对外签名以兼容 ChatController。
  */
 @Slf4j
@@ -27,7 +27,7 @@ public class CompanionRuntime {
         return generate(userId, companionId, conversationId, userMessageId, userText, recentMessages, onDelta, null);
     }
 
-    /** V3: 带交互决策(预算)的生成 */
+    /** 带交互决策(预算)的生成 */
     public ChatOutcome generate(String userId, String companionId, String conversationId, String userMessageId,
                                 String userText, List<Message> recentMessages, Consumer<String> onDelta,
                                 com.luxera.companion.interaction.InteractionDecision interaction) {
@@ -35,7 +35,7 @@ public class CompanionRuntime {
                 onDelta, interaction, null);
     }
 
-    /** V5: 带表达策略提示的生成(ExpressionAgent 决定"怎么说") */
+    /** 带表达策略提示的生成(ExpressionAgent 决定"怎么说") */
     public ChatOutcome generate(String userId, String companionId, String conversationId, String userMessageId,
                                 String userText, List<Message> recentMessages, Consumer<String> onDelta,
                                 com.luxera.companion.interaction.InteractionDecision interaction,

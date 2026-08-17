@@ -10,7 +10,7 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
- * 用户聊天习惯学习(V3 P1 §四十七~四十八): 增量统计用户的消息习惯。
+ * 用户聊天习惯学习(P1 §四十七~四十八): 增量统计用户的消息习惯。
  * 在 ChatController 每条用户消息入库后调用。轻量启发式, 不调用 LLM。
  * 用途: ①注入 ContextCompiler 让回复匹配节奏(不模仿); ②供 InteractionPolicy 微调预算。
  */

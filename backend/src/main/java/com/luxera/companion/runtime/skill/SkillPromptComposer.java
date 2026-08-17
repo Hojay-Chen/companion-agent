@@ -5,7 +5,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * 技能提示组合器(V5 §54): 按推荐顺序组合 Agent 的 system prompt:
+ * 技能提示组合器(§54): 按推荐顺序组合 Agent 的 system prompt:
  * Agent Role → Core Identity → Personality → Relationship → Agent Skill → Context → Task。
  * 防止"一个巨大 prompt"。
  */

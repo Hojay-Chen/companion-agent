@@ -39,7 +39,7 @@ public class ThoughtService {
     }
 
     /**
-     * V6 §31 Unfinished Thought: 创建"想说但没说完 / 想问但忘了 / 回复被打断"的未完成想法。
+     * §31 Unfinished Thought: 创建"想说但没说完 / 想问但忘了 / 回复被打断"的未完成想法。
      * 这类想法不会自动展示, 而是被 Runtime 在未来重新激活(由激活 Job 决定时机)。
      *
      * @param priority   想法优先级 0-1(决定是否值得在未来重新激活)
@@ -69,7 +69,7 @@ public class ThoughtService {
     }
 
     /**
-     * V6 §31 激活未完成想法: 冷却期过后 + 优先级达标时, 把 ACTIVE 的 UNFINISHED 想法提升为
+     * §31 激活未完成想法: 冷却期过后 + 优先级达标时, 把 ACTIVE 的 UNFINISHED 想法提升为
      * 可被 ProactiveEngine 采样的强度(通过 boost strength)。由激活 Job 调用。
      * 激活门槛用优先级(importance)而非 strength —— 因为 strength 受时效衰减影响,
      * 而"是否值得回来补一句"主要由想法本身的重要性决定。

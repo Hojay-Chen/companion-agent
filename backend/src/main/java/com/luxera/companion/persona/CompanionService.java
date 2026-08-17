@@ -54,7 +54,7 @@ public class CompanionService {
         return create(userId, persona, null);
     }
 
-    /** V8: 创建伴侣 —— 同时建立 Person 身份层 + 按关系类型初始化真实关系状态 */
+    /** 创建伴侣 —— 同时建立 Person 身份层 + 按关系类型初始化真实关系状态 */
     @Transactional
     public Companion create(String userId, Persona persona, String relationshipType) {
         compiler.fillDefaults(persona);
@@ -67,11 +67,11 @@ public class CompanionService {
         personaService.saveInitial(c.getId(), p);
         seedLifeEvents(c.getId(), p);
 
-        // V8 §四/§七: Person 身份层(用户与 Agent 都是 Person)
+        // §四/§七: Person 身份层(用户与 Agent 都是 Person)
         personService.getOrCreateUser(userId);
         personService.getOrCreateAgent(c);
 
-        // V8 §五/§六: 关系 —— 用户选择的关系类型是 Agent 世界的真实状态
+        // §五/§六: 关系 —— 用户选择的关系类型是 Agent 世界的真实状态
         Relationship rel = new Relationship();
         rel.setUserId(userId);
         rel.setCompanionId(c.getId());
@@ -132,7 +132,7 @@ public class CompanionService {
         return personaService.history(companionId);
     }
 
-    /** 用户分享的真实生活事件(设计文档 V2.0 §33: USER_SHARED_EVENT 来源) */
+    /** 用户分享的真实生活事件(设计文档 §33: USER_SHARED_EVENT 来源) */
     @Transactional
     public void recordUserSharedLifeEvent(String companionId, String title, String description) {
         if (title == null || title.isBlank()) return;

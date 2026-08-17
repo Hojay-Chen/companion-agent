@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * V6 §45/§46 Behavior Pattern: 人物逐渐形成的习惯行为模式。
+ * §45/§46 Behavior Pattern: 人物逐渐形成的习惯行为模式。
  * 这些不是 Prompt —— 而是随着互动更新、可被 Brain 参考的行为倾向。
  *
  * 例如: "用户晚上发消息 → 经常第二天回复"(work_hours_low_response),

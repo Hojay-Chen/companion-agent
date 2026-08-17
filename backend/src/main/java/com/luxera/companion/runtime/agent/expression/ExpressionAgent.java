@@ -17,7 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Expression Agent(V5 §32-§35, P5): 决定"怎么说/说几条/什么时候发/什么时候停"。
+ * Expression Agent(§32-§35, P5): 决定"怎么说/说几条/什么时候发/什么时候停"。
  * 不是把完整回答拆句 —— 而是先有 communication intent, 再表达策略, 再消息计划。
  * Brain 决定"我要说", Expression 决定"我怎么说"。
  * 回退: 单段(默认自然表达)。
@@ -52,7 +52,7 @@ public class ExpressionAgent implements Agent<ExpressionContext, ExpressionResul
             return llmPlan;
         }
 
-        // V6 §57 回退: 单段 + 打字时长由 TypingSimulation 估算
+        // §57 回退: 单段 + 打字时长由 TypingSimulation 估算
         ExpressionResult fallback = ExpressionResult.single(true);
         long typingMs = typing.typingDurationMs(ctx.messageText(), ctx.urgency());
         ExpressionResult timed = new ExpressionResult(fallback.strategy(),

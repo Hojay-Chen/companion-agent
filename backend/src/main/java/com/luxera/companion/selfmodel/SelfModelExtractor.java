@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 自我模型抽取(设计文档 V2.0 §9 / Phase 2): 反思后从经历中提炼"她此刻觉得自己怎样"。
+ * 自我模型抽取(设计文档 §9 / Phase 2): 反思后从经历中提炼"她此刻觉得自己怎样"。
  * Persona 与 SelfModel 严格分离。
  */
 @Slf4j

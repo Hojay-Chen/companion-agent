@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * V8 §四十三~§四十七 WorldEventEngine: 数字人世界的事件基础设施。
+ * §四十三~§四十七 WorldEventEngine: 数字人世界的事件基础设施。
  *
  * 所有"世界上发生的事"统一经过这里: 时间推进、生活活动、身体状态、
  * 社会关系、记忆激活、意图激活、外界事件、通信事件。

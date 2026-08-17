@@ -16,7 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Event Simulation Agent(V5 §26-§31, P6): 根据生活活动/状态/环境/历史经验生成少量可能发生的事件候选。
+ * Event Simulation Agent(§26-§31, P6): 根据生活活动/状态/环境/历史经验生成少量可能发生的事件候选。
  * 不是"每 10 分钟一个剧情" —— NORMAL/NOTHING HAPPENS 拥有最高基础概率。
  */
 @Slf4j
@@ -86,7 +86,7 @@ public class EventSimulationAgent implements Agent<EventSimulationContext, Event
         }
     }
 
-    /** 默认候选: 正常/无事发生 最高基础概率(V5 §29) */
+    /** 默认候选: 正常/无事发生 最高基础概率(§29) */
     static EventSimulationResult defaultCandidates() {
         List<EventSimulationResult.EventCandidate> list = List.of(
                 new EventSimulationResult.EventCandidate(EventSimulationResult.NORMAL, 0.82, "", List.of()),

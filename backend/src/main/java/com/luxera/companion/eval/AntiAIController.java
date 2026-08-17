@@ -16,7 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * V6 §71/§72 Anti-AI Evaluation 诊断端点:
+ * §71/§72 Anti-AI Evaluation 诊断端点:
  * 统计该伴侣的行为指标并评估是否存在反 AI 模式。
  * 用于开发/验收时观察"真人感"。
  */

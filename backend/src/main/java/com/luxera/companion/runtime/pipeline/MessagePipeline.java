@@ -50,8 +50,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * V5 消息流水线(P1): 用户消息 → WorldEvent → Emotion → Attention → Brain → (DEFER | REPLY)。
- * 这是 V5 最重要的流程。消息不再"直接进入 Brain"。
+ * 消息流水线(P1): 用户消息 → WorldEvent → Emotion → Attention → Brain → (DEFER | REPLY)。
+ * 这是 最重要的流程。消息不再"直接进入 Brain"。
  *
  * 流水线:
  * 1. EmotionAgent 评估(状态经 Reducer 更新)
@@ -62,7 +62,7 @@ import java.util.Map;
  */
 @Slf4j
 @Service
-public class V5MessagePipeline {
+public class MessagePipeline {
 
     /** 注意概率阈值(低于 → 她根本没看到) */
     private static final double NOTICE_THRESHOLD = 0.3;
@@ -92,7 +92,7 @@ public class V5MessagePipeline {
     private final ThoughtService thoughtService;
     private final MemoryRecallProbabilityService recallProbabilityService;
 
-    public V5MessagePipeline(EmotionAgent emotionAgent, BrainAgent brainAgent, MemoryAgent memoryAgent,
+    public MessagePipeline(EmotionAgent emotionAgent, BrainAgent brainAgent, MemoryAgent memoryAgent,
                              AppraisalService appraisalService, AttentionService attentionService,
                              PhoneStateService phoneStateService, AgentStateService agentStateService,
                              AvailabilityService availabilityService, RelationshipService relationshipService,
@@ -249,7 +249,7 @@ public class V5MessagePipeline {
                     || brainDecision.reasonFactors().isEmpty() ? "暂时不想回" : String.join(";", brainDecision.reasonFactors()), reviewAt);
             scheduledActionService.schedule(companionId, ScheduledActionService.RE_EVALUATE_MESSAGE,
                     reviewAt, Map.of("pendingMessageId", last.getId()));
-            // V6 §31 Unfinished Thought: "想回复但被打断/暂时没回" → 记入未完成想法, 稍后可能主动回来补
+            // §31 Unfinished Thought: "想回复但被打断/暂时没回" → 记入未完成想法, 稍后可能主动回来补
             recordUnfinishedThought(companionId, decisionText, brainDecision);
             return new PipelineResult(PipelineResult.Outcome.DEFERRED, brainDecision, emotion,
                     recall, last, "看到了但不回, 稍后复查", attention);
@@ -275,11 +275,11 @@ public class V5MessagePipeline {
         return 180;
     }
 
-    /** 记忆激活: 用 MemoryAgent 的结果重新排序 + V6 §19 召回概率阈值过滤(回退时保持原序) */
+    /** 记忆激活: 用 MemoryAgent 的结果重新排序 + §19 召回概率阈值过滤(回退时保持原序) */
     private List<Memory> applyActivation(List<Memory> candidates, MemoryRecallResult recall) {
         if (candidates == null || candidates.isEmpty()) return candidates;
 
-        // V6 §19: 召回概率过滤 —— 只有"会被真正想起"的记忆才进入当前认知
+        // §19: 召回概率过滤 —— 只有"会被真正想起"的记忆才进入当前认知
         List<Memory> aboveThreshold = recallProbabilityService.filterAboveThreshold(
                 candidates, recall, MemoryRecallProbabilityService.DEFAULT_THRESHOLD);
 
@@ -314,7 +314,7 @@ public class V5MessagePipeline {
         return out;
     }
 
-    /** V6 §31: 延迟回复时记录"想回复但暂时没回"的未完成想法(由激活 Job 决定未来是否想起) */
+    /** §31: 延迟回复时记录"想回复但暂时没回"的未完成想法(由激活 Job 决定未来是否想起) */
     private void recordUnfinishedThought(String companionId, String messageText, BrainDecision d) {
         try {
             String content = d != null && d.expressionGoal() != null && !d.expressionGoal().isBlank()

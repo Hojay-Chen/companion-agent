@@ -32,7 +32,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 已读不回复查 Job(V5 §79/§80): 到复查点的消息唤醒 Brain 重新评估。
+ * 已读不回复查 Job(§79/§80): 到复查点的消息唤醒 Brain 重新评估。
  * 可能回复 / 继续冷处理 / 放下这件事 —— 这就是行为连续性。
  */
 @Slf4j
@@ -154,7 +154,7 @@ public class PendingMessageReevaluationJob {
         if (decision.shouldReply()) {
             reply(p, userId, decision);
         } else if (decision.isDefer()) {
-            // 继续冷处理 → 再延后; V6 §54: 她"想过要回但又被别的事打断" → 记录想回忘了的摩擦
+            // 继续冷处理 → 再延后; §54: 她"想过要回但又被别的事打断" → 记录想回忘了的摩擦
             pendingService.noteWantedToReply(p.getId());
             scheduledActionService.schedule(companionId, ScheduledActionService.RE_EVALUATE_MESSAGE,
                     LocalDateTime.now().plusHours(2), Map.of("pendingMessageId", p.getMessageId()));

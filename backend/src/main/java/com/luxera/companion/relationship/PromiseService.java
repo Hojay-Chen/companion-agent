@@ -31,7 +31,7 @@ public class PromiseService {
         return repo.save(p);
     }
 
-    /** 从对话识别承诺(设计文档 V2.0 §10.2) */
+    /** 从对话识别承诺(设计文档 §10.2) */
     @Transactional
     public Promise maybeExtractFromText(String relationshipId, String userText) {
         if (userText == null) return null;

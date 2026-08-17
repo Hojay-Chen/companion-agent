@@ -1,7 +1,7 @@
 package com.luxera.companion.interaction;
 
 /**
- * 回复预算(设计文档 V3 §八/十/十一): 长度是行为结果, 不是 Prompt 固定。
+ * 回复预算(设计文档 §八/十/十一): 长度是行为结果, 不是 Prompt 固定。
  */
 public class ResponseBudget {
 

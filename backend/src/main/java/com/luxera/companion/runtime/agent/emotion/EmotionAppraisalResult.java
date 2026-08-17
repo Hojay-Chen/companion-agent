@@ -5,7 +5,7 @@ import com.luxera.companion.runtime.EmotionDelta;
 import java.util.List;
 
 /**
- * Emotion Agent 输出(V5 §17): 结构化 JSON。
+ * Emotion Agent 输出(§17): 结构化 JSON。
  * Appraisal(意义/期待违背/意图) + Delta(方向与程度) + MemoryTriggers(激活记忆) + Confidence + Reason。
  * 不是简单的 emotion label —— Runtime 需要知道"为什么/变化多少/是否确定/哪些记忆参与"。
  */

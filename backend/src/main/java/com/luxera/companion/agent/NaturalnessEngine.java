@@ -83,7 +83,7 @@ public class NaturalnessEngine {
         return new Result(cleaned, issues);
     }
 
-    /** V3: 带回复预算的校验 —— 超出本回合篇幅是问题(只记录, 不截断, 由 Prompt 预算约束) */
+    /** 带回复预算的校验 —— 超出本回合篇幅是问题(只记录, 不截断, 由 Prompt 预算约束) */
     public Result validate(String text, com.luxera.companion.interaction.ResponseBudget budget) {
         Result r = validate(text);
         if (budget != null && text != null && text.trim().length() > budget.maxCharacters) {

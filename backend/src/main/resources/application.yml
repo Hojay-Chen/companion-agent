@@ -81,23 +81,23 @@ app:
     weekly-reflection-cron: 0 0 5 * * MON
     proactive-cron: 0 */15 * * * *
     birthday-cron: 0 5 8 * * *
-    # V2.0 生命内核
+    # 生命内核
     life-tick-cron: 0 */10 * * * *       # 生活推进
     thought-maintenance-cron: 0 */30 * * * *
     emotion-maintenance-cron: 0 45 * * * *
     open-loop-cron: 0 */15 * * * *
     memory-consolidation-cron: 0 0 4 * * *
-    # V5: 事件模拟 / 已读未回复查(复查已在 Job 内固定每分钟)
+    # 事件模拟 / 已读未回复查(复查已在 Job 内固定每分钟)
     event-simulation-cron: 0 */30 * * * *
-    # V6: 会话线程衰减(ACTIVE/PAUSED → RESUMABLE → ABANDONED)
+    # 会话线程衰减(ACTIVE/PAUSED → RESUMABLE → ABANDONED)
     thread-maintenance-cron: 0 */20 * * * *
-    # V6: 未完成想法激活检查
+    # 未完成想法激活检查
     unfinished-thought-cron: 0 */15 * * * *
-    # V7: 睡眠模型推进(Coarse Tick, 每2分钟) — 睡眠压力/节律演化 + 睡眠决策
+    # 睡眠模型推进(Coarse Tick, 每2分钟) — 睡眠压力/节律演化 + 睡眠决策
     sleep-tick-cron: 0 */2 * * * *
-    # V8: 行为 Tick(每5分钟) — 中央行为选择器(主动联系/睡觉/看手机/联系朋友/继续生活)
+    # 行为 Tick(每5分钟) — 中央行为选择器(主动联系/睡觉/看手机/联系朋友/继续生活)
     behavior-tick-cron: 0 */5 * * * *
-    # V7: 手机通知生命周期推进
+    # 手机通知生命周期推进
     phone-tick-cron: 0 * * * * *
 
   # 主动消息打断控制

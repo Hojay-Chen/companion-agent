@@ -6,7 +6,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/** 原始经历记录(设计文档 V2.0 §11.2) */
+/** 原始经历记录(设计文档 §11.2) */
 @Service
 public class ExperienceService {
 

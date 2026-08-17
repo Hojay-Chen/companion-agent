@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * 未完成事项(设计文档 V2.0 §8)。
+ * 未完成事项(设计文档 §8)。
  * Open Loop: 尚未完成、等待结果、未来还会继续的事 —— 主动行为最重要的驱动。
  */
 @Entity

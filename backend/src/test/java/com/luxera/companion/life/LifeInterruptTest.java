@@ -12,7 +12,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V6 §6/§32 Activity 具体化 + Interrupt 中断系统测试:
+ * §6/§32 Activity 具体化 + Interrupt 中断系统测试:
  * - 活动类型映射为具体属性(会议注意力高/可打断性低)
  * - 高可打断性活动可被消息中断
  * - 低可打断性活动(开会/睡觉)不可被中断
@@ -128,7 +128,7 @@ class LifeInterruptTest {
                 .findByCompanionIdAndPlannedStartGreaterThanEqualAndPlannedStartLessThanOrderByPlannedStartAsc(
                         companionId, NOW.toLocalDate().atStartOfDay(), NOW.toLocalDate().plusDays(1).atStartOfDay());
         assertFalse(acts.isEmpty(), "应生成一天的活动");
-        // V7: 不再生成固定 SLEEP 块(睡眠是 emergent); 验证社会活动 spec 正确
+        // 不再生成固定 SLEEP 块(睡眠是 emergent); 验证社会活动 spec 正确
         LifeActivity work = acts.stream().filter(a -> "WORK".equals(a.getType())).findFirst().orElse(null);
         if (work != null) {
             assertTrue(work.getAttentionDemand() >= 0.8, "工作注意力占用应高");
@@ -140,6 +140,6 @@ class LifeInterruptTest {
             assertTrue(leisure.getInterruptibility() >= 0.7, "休闲可打断性应高");
         }
         assertTrue(acts.stream().noneMatch(a -> "SLEEP".equals(a.getType())),
-                "V7: 睡眠不应作为固定排程活动");
+                "睡眠不应作为固定排程活动");
     }
 }

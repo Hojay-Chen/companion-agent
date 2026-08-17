@@ -12,7 +12,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V7 §35-§36 Intention Runtime 测试:
+ * §35-§36 Intention Runtime 测试:
  * - 创建意图(ACTIVE + 基础激活概率)
  * - 到 expected_time 附近激活概率升高
  * - 过期 → FORGOTTEN(真人会忘)

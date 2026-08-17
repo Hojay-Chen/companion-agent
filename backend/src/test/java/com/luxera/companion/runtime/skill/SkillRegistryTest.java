@@ -9,7 +9,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** 技能注册表测试(V5 §50-§53): SKILL.md 加载 + Agent 固定技能列表。 */
+/** 技能注册表测试(§50-§53): SKILL.md 加载 + Agent 固定技能列表。 */
 @ActiveProfiles("test")
 @SpringBootTest(properties = {
         "app.scheduler.event-simulation-cron=0 0 0 1 1 *",

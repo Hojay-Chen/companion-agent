@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * 原始经历(设计文档 V2.0 §11)。
+ * 原始经历(设计文档 §11)。
  * Experience ≠ Memory: 聊天/事件/情绪/想法先产生 Experience,
  * 只有经过 consolidation 才进入长期 Memory。
  */

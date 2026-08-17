@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 
-/** 记忆固话 + 经历生命周期清理(设计文档 V2.0 §23/§41): 每日固话高价值经历, 清理 30 天前的低价值经历 */
+/** 记忆固话 + 经历生命周期清理(设计文档 §23/§41): 每日固话高价值经历, 清理 30 天前的低价值经历 */
 @Slf4j
 @Component
 public class MemoryConsolidationJob {

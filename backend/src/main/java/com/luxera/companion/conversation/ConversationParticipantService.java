@@ -7,7 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * V8 §五十二: 会话参与者服务。
+ * §五十二: 会话参与者服务。
  * 创建会话时自动加入 Agent + User 两个参与者(一对一聊天即最小图)。
  */
 @Service

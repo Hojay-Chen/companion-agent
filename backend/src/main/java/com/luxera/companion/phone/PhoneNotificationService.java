@@ -7,7 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 
 /**
- * V7 §16/§31 手机通知生命周期服务。
+ * §16/§31 手机通知生命周期服务。
  * 用户消息 → 通知产生 → 递进 heard/seen/opened/read, 每步都不必然。
  *
  * 真实场景:

@@ -71,7 +71,7 @@ export default function Chat() {
   const activeConvIdRef = useRef('')
   const msgIdCounter = useRef(0)
 
-  // ── V3 交互运行时: 连发聚合 + 打字指示器 ──
+  // ── 交互运行时: 连发聚合 + 打字指示器 ──
   const [gathering, setGathering] = useState(false)
   const [typing, setTyping] = useState(false)
   const pendingBatchRef = useRef<{ content: string; clientMessageId: string }[]>([])
@@ -80,7 +80,7 @@ export default function Chat() {
   const sendGapsRef = useRef<number[]>([])
   const lastSendRef = useRef(0)
 
-  // ── V4 消息状态(read receipts) ──
+  // ── 消息状态(read receipts) ──
   const [readMap, setReadMap] = useState<Record<string, boolean>>({})
   const [userMsgStatus, setUserMsgStatus] = useState<Record<string, string>>({})
 
@@ -146,8 +146,8 @@ export default function Chat() {
     activeConvIdRef.current = activeConvId
   }, [activeConvId])
 
-  // V8 §十四 消息存储: 收到事件只做增量 upsert, 绝不整表重载。
-  // V4: 持久事件流 —— 已读/打字/主动消息实时推送(带 SSE 游标, 断线重放)
+  // §十四 消息存储: 收到事件只做增量 upsert, 绝不整表重载。
+  // 持久事件流 —— 已读/打字/主动消息实时推送(带 SSE 游标, 断线重放)
   useEffect(() => {
     if (!companionId) return
     let close: (() => void) | null = null
@@ -156,7 +156,7 @@ export default function Chat() {
     const onEvent = (event: string, data: unknown) => {
       if (cancelled) return
       const d = data as Record<string, unknown>
-      // V8: 事件按会话隔离(非当前会话的消息不混入当前列表)
+      // 事件按会话隔离(非当前会话的消息不混入当前列表)
       const convId = String(d.conversationId ?? '')
       if (convId && convId !== activeConvIdRef.current) return
       if (event === 'message_read') {
@@ -172,7 +172,7 @@ export default function Chat() {
       } else if (event === 'companion_typing') {
         setTyping(Boolean(d.typing))
       } else if (event === 'message_created') {
-        // V8: 用户消息已持久化 → temp 气泡替换为 canonical(按 clientMessageId 匹配)
+        // 用户消息已持久化 → temp 气泡替换为 canonical(按 clientMessageId 匹配)
         const mid = String(d.messageId ?? '')
         const cid = String(d.clientMessageId ?? '')
         if (!mid) return
@@ -188,7 +188,7 @@ export default function Chat() {
           return [...prev, toMessage(mid, convId || activeConvIdRef.current, 'user', String(d.content ?? ''), cid)]
         })
       } else if (event === 'companion_message') {
-        // V8: 她发来的消息 → 增量追加/去重, 不重载整个聊天记录
+        // 她发来的消息 → 增量追加/去重, 不重载整个聊天记录
         const mid = String(d.messageId ?? '')
         const content = String(d.content ?? '')
         if (!mid) return
@@ -226,7 +226,7 @@ export default function Chat() {
     setTyping(false)
   }, [activeConvId])
 
-  // ── 发送消息(V3: 连发聚合, 一次请求至多一次回复) ──
+  // ── 发送消息(连发聚合, 一次请求至多一次回复) ──
   const MAX_GATHER_MS = 2200
 
   function recordGap(gap: number) {
@@ -252,7 +252,7 @@ export default function Chat() {
     setStreamingText('')
     setTyping(false)
 
-    // V8 §十三/§十四: POST /messages 携带 clientMessageId。
+    // §十三/§十四: POST /messages 携带 clientMessageId。
     // 服务器**同步落库**返回 canonical 消息 → 本地 temp 气泡替换为真实 id;
     // Agent 的回复经 GET /events 增量推送, 不再重载整个聊天记录。
     try {
@@ -291,7 +291,7 @@ export default function Chat() {
       }
     } catch (err) {
       setError((err as Error).message)
-      // V8: 发送失败 → 本地气泡标记失败(不让用户以为已发送)
+      // 发送失败 → 本地气泡标记失败(不让用户以为已发送)
       setMessages((prev) => {
         const ids = new Set(batch.map((b) => b.clientMessageId))
         let changed = false
@@ -319,7 +319,7 @@ export default function Chat() {
     setInput('')
     setError('')
 
-    // V8: 每条乐观消息带唯一 clientMessageId(幂等 + temp→canonical 对应键)
+    // 每条乐观消息带唯一 clientMessageId(幂等 + temp→canonical 对应键)
     const clientMessageId = `c-${Date.now()}-${msgIdCounter.current++}`
     const tempUser: Message = {
       id: `temp-${clientMessageId}`,
@@ -741,7 +741,7 @@ function formatTime(iso: string): string {
   return format(new Date(iso), 'HH:mm')
 }
 
-/** V4: 自己消息的状态(已发送 ✓ / 已读 ✓✓); 临时气泡默认已发送 */
+/** 自己消息的状态(已发送 ✓ / 已读 ✓✓); 临时气泡默认已发送 */
 function userStatus(
   m: Message,
   readMap: Record<string, boolean>,
@@ -755,7 +755,7 @@ function userStatus(
   return '已发送'
 }
 
-/** V8: 事件 → Message 对象(增量 upsert 用) */
+/** 事件 → Message 对象(增量 upsert 用) */
 function toMessage(
   id: string,
   conversationId: string,
@@ -793,7 +793,7 @@ function TimeDivider({ label }: { label: string }) {
   )
 }
 
-// ── 她最近(设计文档 V2.0 §31: 用户视角, 不暴露数值面板) ──
+// ── 她最近(设计文档 §31: 用户视角, 不暴露数值面板) ──
 function RecentPanel({ companionId }: { companionId: string }) {
   const [life, setLife] = useState<CompanionLife | null>(null)
   const [selfModel, setSelfModel] = useState<SelfModel | null>(null)

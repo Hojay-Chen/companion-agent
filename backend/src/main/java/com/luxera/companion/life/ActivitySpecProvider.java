@@ -3,18 +3,18 @@ package com.luxera.companion.life;
 import org.springframework.stereotype.Component;
 
 /**
- * V6 §6 Activity Model: 把活动类型映射为具体的 V6 属性。
+ * §6 Activity Model: 把活动类型映射为具体的 属性。
  * 注意力占用、可打断性、手机可用性、情绪影响 —— 这些决定
  * "消息到达时她会不会注意到 / 会不会看 / 会不会回"。
  */
 @Component
 public class ActivitySpecProvider {
 
-    /** V6 活动属性 */
+    /** 活动属性 */
     public record ActivitySpec(double attentionDemand, double interruptibility,
                                double phoneAvailability, double moodEffect) {}
 
-    /** 按活动类型返回 V6 属性; 未知类型给中性值 */
+    /** 按活动类型返回 属性; 未知类型给中性值 */
     public ActivitySpec specFor(String type) {
         if (type == null) return new ActivitySpec(0.5, 0.5, 0.6, 0);
         return switch (type) {

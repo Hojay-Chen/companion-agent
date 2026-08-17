@@ -21,7 +21,7 @@ import com.luxera.companion.runtime.agent.expression.ExpressionContext;
 import com.luxera.companion.runtime.agent.expression.ExpressionResult;
 import com.luxera.companion.runtime.pipeline.MessageDeliveryService;
 import com.luxera.companion.runtime.pipeline.MessageLifecycle;
-import com.luxera.companion.runtime.pipeline.V5MessagePipeline;
+import com.luxera.companion.runtime.pipeline.MessagePipeline;
 import com.luxera.companion.state.AgentState;
 import com.luxera.companion.state.AgentStateService;
 import com.luxera.companion.state.AvailabilityService;
@@ -53,7 +53,7 @@ import java.util.concurrent.locks.ReentrantLock;
 @RequestMapping("/api/companions/{companionId}/conversations")
 public class ChatController {
 
-    /** ResponsePlan 多段分隔符(设计文档 V3 §十九): 她也可以连发, 低频) */
+    /** ResponsePlan 多段分隔符(设计文档 §十九): 她也可以连发, 低频) */
     private static final String SPLIT = "<split>";
 
     private final ConversationService conversationService;
@@ -72,15 +72,15 @@ public class ChatController {
     private final CompanionSchedule schedule;
     private final CurrentUser currentUser;
     private final TaskExecutor taskExecutor;
-    /** V5: 消息流水线 / 表达规划 / 消息生命周期 */
-    private final V5MessagePipeline messagePipeline;
+    /** 消息流水线 / 表达规划 / 消息生命周期 */
+    private final MessagePipeline messagePipeline;
     private final ExpressionAgent expressionAgent;
     private final MessageDeliveryService deliveryService;
-    /** V6: 会话线程(话题状态) */
+    /** 会话线程(话题状态) */
     private final ConversationThreadService threadService;
-    /** V6: 行为模式学习 */
+    /** 行为模式学习 */
     private final com.luxera.companion.behavior.BehaviorLearningService behaviorLearningService;
-    /** V8: 会话参与者 */
+    /** 会话参与者 */
     private final ConversationParticipantService participantService;
     /** 每会话一个锁, 串行化同会话的消息处理(消息归并 + 生成) */
     private final java.util.concurrent.ConcurrentHashMap<String, ReentrantLock> conversationLocks = new java.util.concurrent.ConcurrentHashMap<>();
@@ -93,7 +93,7 @@ public class ChatController {
                           UserChatStyleService userChatStyleService,
                                                     CompanionEventBus eventBus, CompanionSchedule schedule,
                           CurrentUser currentUser, TaskExecutor taskExecutor,
-                          V5MessagePipeline messagePipeline, ExpressionAgent expressionAgent,
+                          MessagePipeline messagePipeline, ExpressionAgent expressionAgent,
                           MessageDeliveryService deliveryService, ConversationThreadService threadService,
                           com.luxera.companion.behavior.BehaviorLearningService behaviorLearningService,
                           ConversationParticipantService participantService) {
@@ -152,7 +152,7 @@ public class ChatController {
         return conversationService.messages(conversationId);
     }
 
-    /** V8 §五十二: 会话参与者(一对一 = Agent + User; 未来群聊多参与者) */
+    /** §五十二: 会话参与者(一对一 = Agent + User; 未来群聊多参与者) */
     @GetMapping("/{conversationId}/participants")
     public List<ConversationParticipant> participants(@PathVariable String companionId,
                                                       @PathVariable String conversationId) {
@@ -163,7 +163,7 @@ public class ChatController {
     }
 
     /**
-     * 流式聊天(SSE, V3 Interaction Runtime):
+     * 流式聊天(SSE, Interaction Runtime):
      * 批量消息(连发归并) → decide(要不要回/投入多少) → typing(仅值得) → latency → token* → done
      * 支持单条 `{content}` 与批量 `{messages:[{content}]}`, 一次请求至多一次回复。
      */
@@ -211,7 +211,7 @@ public class ChatController {
             LocalDateTime now = LocalDateTime.now();
             String decisionText = String.join("。", contents);
 
-            // 1. 批量入库(V4 Message Lifecycle: DELIVERED) + 感知 + 会话归属 + 工作记忆 + 聊天习惯学习
+            // 1. 批量入库(Message Lifecycle: DELIVERED) + 感知 + 会话归属 + 工作记忆 + 聊天习惯学习
             Message last = null;
             List<Message> userMsgs = new ArrayList<>();
             for (String content : contents) {
@@ -221,7 +221,7 @@ public class ChatController {
                 workingMemory.record(companionId, conversationId,
                         new WorkingMemory.RecentLine("user", content, m.getCreatedAt()), perception);
                 userChatStyleService.record(companionId, userId, content, m.getCreatedAt());
-                // V6 §45/§46: 行为模式学习(深夜/工作时回复慢, 用户开心时她更主动)
+                // §45/§46: 行为模式学习(深夜/工作时回复慢, 用户开心时她更主动)
                 try {
                     behaviorLearningService.onUserMessage(companionId, now, perception.emotion());
                 } catch (Exception e) {
@@ -234,12 +234,12 @@ public class ChatController {
                 last = m;
             }
 
-            // 2. V5 消息流水线: Emotion → Attention → Brain(V5 §9/§10/§13: 消息先改变状态, 再决定行为)
+            // 2. 消息流水线: Emotion → Attention → Brain(§9/§10/§13: 消息先改变状态, 再决定行为)
             PerceptionEngine.Perception burstPerception = perceptionEngine.perceive(decisionText);
-            V5MessagePipeline.PipelineResult pipelineResult = messagePipeline.process(
+            MessagePipeline.PipelineResult pipelineResult = messagePipeline.process(
                     userId, companionId, conversationId, userMsgs, decisionText, burstPerception, now);
 
-            // V6 §30 Conversation Thread: 记录/复用当前话题线程(话题变化 → 旧线程 PAUSED, 开新线程)
+            // §30 Conversation Thread: 记录/复用当前话题线程(话题变化 → 旧线程 PAUSED, 开新线程)
             try {
                 threadService.touch(conversationId, companionId, userId,
                         burstPerception != null ? burstPerception.topic() : null,
@@ -257,7 +257,7 @@ public class ChatController {
                 return;
             }
 
-            // 4. DEFER(V5 §79/§80): 看到了但不回 —— 状态已变(已读未回), 排程复查
+            // 4. DEFER(§79/§80): 看到了但不回 —— 状态已变(已读未回), 排程复查
             if (pipelineResult.isDeferred()) {
                 send(emitter, "meta", Map.of("action", "DEFER", "reason", pipelineResult.reason()));
                 send(emitter, "done", Map.of("deferred", true, "action", "DEFER", "reason", pipelineResult.reason()));
@@ -285,7 +285,7 @@ public class ChatController {
                     "action", decision.action.name(),
                     "commitment", decision.commitment.name()));
 
-            // V5 Expression: 决定"怎么说" + 分段计划(先有表达策略, 再生成文本)
+            // Expression: 决定"怎么说" + 分段计划(先有表达策略, 再生成文本)
             ExpressionResult expression = expressionAgent.execute(buildExpressionContext(
                     userId, companionId, decisionText, pipelineResult, decision, recent, now));
 
@@ -315,13 +315,13 @@ public class ChatController {
                 eventBus.publish(companionId, CompanionEventType.COMPANION_TYPING, Map.of("typing", false));
             }
 
-            // 8. 生成一次(带预算 + V5 表达策略)
+            // 8. 生成一次(带预算 + 表达策略)
             String expressionHint = describeExpression(expression);
             CompanionRuntime.ChatOutcome outcome = runtime.generate(userId, companionId, conversationId,
                     last.getId(), decisionText, recent,
                     delta -> send(emitter, "token", Map.of("delta", delta)), decision, expressionHint);
 
-            // 9. Expression Loop(V5 §35): 先有表达计划(边想边说), 而不是把完整回答拆句
+            // 9. Expression Loop(§35): 先有表达计划(边想边说), 而不是把完整回答拆句
             //    ExpressionAgent 规划段数; LLM 输出 <split> 优先; 深度情绪时按标点兜底展开
             String reply = outcome.reply();
             List<String> chunks = splitReply(reply);
@@ -430,7 +430,7 @@ public class ChatController {
         return null;
     }
 
-    /** 计算交互决策(V4: Appraisal + Drives 竞争) */
+    /** 计算交互决策(Appraisal + Drives 竞争) */
     private InteractionDecision decide(String userId, String companionId,
                                        PerceptionEngine.Perception perception, String text, LocalDateTime now,
                                        AppraisalService.AppraisalResult appraisal) {
@@ -460,11 +460,11 @@ public class ChatController {
         }
     }
 
-    // ── V5 Expression 辅助 ──────────────────────────────
+    // ── Expression 辅助 ──────────────────────────────
 
     /** 构建 ExpressionContext(Brain 已决定"要不要说/想表达什么") */
     private ExpressionContext buildExpressionContext(String userId, String companionId, String decisionText,
-                                                     V5MessagePipeline.PipelineResult pipelineResult,
+                                                     MessagePipeline.PipelineResult pipelineResult,
                                                      InteractionDecision decision,
                                                      List<Message> recent, LocalDateTime now) {
         AgentState state = agentStateService.get(companionId);

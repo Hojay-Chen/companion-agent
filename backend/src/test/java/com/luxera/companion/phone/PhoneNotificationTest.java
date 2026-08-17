@@ -13,7 +13,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V7 §15-§17 Phone Notification 测试:
+ * §15-§17 Phone Notification 测试:
  * - 消息到达 → 通知创建(delivered)
  * - 手机可用 + 有声 → 可推进 heard
  * - 看到 → opened → read 逐步推进

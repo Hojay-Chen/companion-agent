@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V6 §56/§57 消息级时间模型测试:
+ * §56/§57 消息级时间模型测试:
  * - 短消息打字时长短, 复杂消息长
  * - 情绪复杂度增加打字时长
  * - 消息间间隔随段号/复杂度变化

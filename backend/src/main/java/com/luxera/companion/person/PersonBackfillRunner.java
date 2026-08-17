@@ -14,7 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 
 /**
- * V8 §五 一次性回填: 为存量 user/companion 建立 Person 身份层, 并归一化旧关系类型。
+ * §五 一次性回填: 为存量 user/companion 建立 Person 身份层, 并归一化旧关系类型。
  * 幂等: getOrCreate 语义, 每次启动可安全执行。
  */
 @Slf4j

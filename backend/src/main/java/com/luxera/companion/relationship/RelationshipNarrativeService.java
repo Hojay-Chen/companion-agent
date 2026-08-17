@@ -12,7 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 关系叙事(设计文档 V2.0 §38/§42): "我们之间发生过一个故事", 版本化。
+ * 关系叙事(设计文档 §38/§42): "我们之间发生过一个故事", 版本化。
  * 每周反思/里程碑时由 LLM 生成, 记录 current_summary/important_chapters/emotional_arc/shared_identity。
  */
 @Slf4j

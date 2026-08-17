@@ -16,7 +16,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V8 §五十二 ConversationParticipant 测试:
+ * §五十二 ConversationParticipant 测试:
  * 会话创建后自动注册 Agent + User 两个参与者(一对一聊天即最小参与者图;
  * 未来群聊 = 多参与者 + 各自关系)。
  */

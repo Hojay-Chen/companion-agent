@@ -6,7 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * V6 §71/§72 Anti-AI Pattern Evaluation: 专门检测典型的"AI 行为"。
+ * §71/§72 Anti-AI Pattern Evaluation: 专门检测典型的"AI 行为"。
  * 目标不是追求 100% 欺骗, 而是"在正常聊天体验中, 不因典型 AI 行为而让用户轻易识别为 AI"。
  *
  * 检测的反 AI 模式(§72):

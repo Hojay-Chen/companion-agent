@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * pgvector 向量检索提供器(设计文档 V2.0 §12.3): 用 PostgreSQL + pgvector 做真实语义检索。
+ * pgvector 向量检索提供器(设计文档 §12.3): 用 PostgreSQL + pgvector 做真实语义检索。
  * 未配置 embedding key 时 available()=false → 自动回退现有结构化排序。
  */
 @Component

@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Agent 痕迹服务(V5 §60): 记录/查询每次 Agent 调用。
+ * Agent 痕迹服务(§60): 记录/查询每次 Agent 调用。
  * 失败不阻塞主流程 —— trace 写失败仅记日志。
  */
 @Service

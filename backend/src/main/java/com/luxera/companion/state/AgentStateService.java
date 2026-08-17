@@ -18,14 +18,14 @@ public class AgentStateService {
         this.emotionReducer = emotionReducer;
     }
 
-    /** V5: 情绪增量经 StateReducer 应用到状态(唯一入口) */
+    /** 情绪增量经 StateReducer 应用到状态(唯一入口) */
     @Transactional
     public AgentState applyEmotionDelta(String companionId, EmotionDelta delta) {
         AgentState s = getOrCreate(companionId);
         return emotionReducer.apply(s, delta);
     }
 
-    /** V5: 持久化状态 */
+    /** 持久化状态 */
     @Transactional
     public AgentState save(AgentState state) {
         return repo.save(state);
@@ -79,7 +79,7 @@ public class AgentStateService {
         repo.save(s);
     }
 
-    /** V4 Appraisal: 消息改变内部状态(hurt/anger 累积, warmth 增进亲密度/平复情绪) */
+    /** Appraisal: 消息改变内部状态(hurt/anger 累积, warmth 增进亲密度/平复情绪) */
     @Transactional
     public void applyAppraisal(String companionId, double hurt, double anger, double warmth) {
         AgentState s = getOrCreate(companionId);
@@ -103,7 +103,7 @@ public class AgentStateService {
         repo.save(s);
     }
 
-    /** V4/V5: hurt/anger/sadness/anxiety 随时间衰减(状态愈合) */
+    /** hurt/anger/sadness/anxiety 随时间衰减(状态愈合) */
     @Transactional
     public void decayNegative(String companionId, double rate) {
         repo.findByCompanionId(companionId).ifPresent(s -> {
@@ -116,12 +116,12 @@ public class AgentStateService {
         });
     }
 
-    /** V4/V5: 全部伴侣的负面情绪衰减(定时任务调用, 负面情绪会随时间自然愈合) */
+    /** 全部伴侣的负面情绪衰减(定时任务调用, 负面情绪会随时间自然愈合) */
     @Transactional
     public void decayAllNegative(double rate) {
         for (AgentState s : repo.findAll()) {
             boolean changed = false;
-            // V6 §48 状态惯性: 按比例衰减(情绪越高消退越慢, 保留"还有一点不爽"的残余感)
+            // §48 状态惯性: 按比例衰减(情绪越高消退越慢, 保留"还有一点不爽"的残余感)
             if (s.getHurt() > 0.001) {
                 s.setHurt(clamp(s.getHurt() - Math.max(rate, s.getHurt() * 0.15) * 0.5));
                 changed = true;

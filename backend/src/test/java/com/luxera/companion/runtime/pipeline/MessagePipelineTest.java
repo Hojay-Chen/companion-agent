@@ -27,9 +27,9 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V5 消息流水线集成测试(真实 DB + 真实 LLM):
+ * 消息流水线集成测试(真实 DB + 真实 LLM):
  * 白天(LEISURE/手机在手)→ 会注意到; 夜间(SLEEP/勿扰)→ 注意不到。
- * 行为非确定性(LLM), 断言约束在 V5 的结构性不变量上。
+ * 行为非确定性(LLM), 断言约束在 的结构性不变量上。
  */
 @ActiveProfiles("test")
 @SpringBootTest(properties = {
@@ -46,10 +46,10 @@ import static org.junit.jupiter.api.Assertions.*;
         "app.scheduler.sleep-tick-cron=0 0 0 1 1 *",
         "app.scheduler.phone-tick-cron=0 0 0 1 1 *"
 })
-class V5MessagePipelineTest {
+class MessagePipelineTest {
 
     @Autowired
-    V5MessagePipeline pipeline;
+    MessagePipeline pipeline;
     @Autowired
     ConversationService conversationService;
     @Autowired
@@ -129,22 +129,22 @@ class V5MessagePipelineTest {
 
     @Test
     void nightMessageIsNotNoticed() {
-        // V7: 睡眠是 emergent —— 先让她入睡(睡眠压力累积 + 手动入睡), 再验证消息不被注意到
+        // 睡眠是 emergent —— 先让她入睡(睡眠压力累积 + 手动入睡), 再验证消息不被注意到
         LocalDateTime nightTime = NIGHT;
         sleepModel.fallAsleep(companionId, nightTime.minusMinutes(10), "NATURAL");
         Message m = send("在吗?我有话想跟你说");
-        V5MessagePipeline.PipelineResult r = pipeline.process(userId, companionId, conversationId,
+        MessagePipeline.PipelineResult r = pipeline.process(userId, companionId, conversationId,
                 List.of(m), m.getContent(), perceptionEngine.perceive(m.getContent()), nightTime);
-        assertEquals(V5MessagePipeline.PipelineResult.Outcome.IGNORE_NOT_NOTICED, r.outcome(),
+        assertEquals(MessagePipeline.PipelineResult.Outcome.IGNORE_NOT_NOTICED, r.outcome(),
                 "睡着+勿扰 → 她根本没注意到");
     }
 
     @Test
     void daytimeEmotionalMessageIsNoticed() {
         Message m = send("我今天好难过,项目被砍了,有点撑不住");
-        V5MessagePipeline.PipelineResult r = pipeline.process(userId, companionId, conversationId,
+        MessagePipeline.PipelineResult r = pipeline.process(userId, companionId, conversationId,
                 List.of(m), m.getContent(), perceptionEngine.perceive(m.getContent()), DAYTIME);
-        assertNotEquals(V5MessagePipeline.PipelineResult.Outcome.IGNORE_NOT_NOTICED, r.outcome(),
+        assertNotEquals(MessagePipeline.PipelineResult.Outcome.IGNORE_NOT_NOTICED, r.outcome(),
                 "白天休闲+手机在手 → 至少会被注意到");
         assertNotNull(r.emotion(), "EmotionAgent 应有评估结果");
     }
@@ -154,7 +154,7 @@ class V5MessagePipelineTest {
         Message m = send("你怎么这么烦,跟你说话真没意思");
         AgentState before = agentStateService.get(companionId);
         double beforeHurt = before.getHurt() + before.getAnger() + before.getSadness();
-        V5MessagePipeline.PipelineResult r = pipeline.process(userId, companionId, conversationId,
+        MessagePipeline.PipelineResult r = pipeline.process(userId, companionId, conversationId,
                 List.of(m), m.getContent(), perceptionEngine.perceive(m.getContent()), DAYTIME);
         if (r.isIgnored()) return; // 可能忽略, 此时未必有情绪变化
         AgentState after = agentStateService.get(companionId);
@@ -168,11 +168,11 @@ class V5MessagePipelineTest {
     void deferCreatesPendingStateAndSchedule() {
         // 构造一个较可能 DEFER 的场景: 睡前疲惫(但用白天 now 保证能注意到)
         Message m = send("你怎么这么烦,跟你说话真没意思");
-        V5MessagePipeline.PipelineResult r = pipeline.process(userId, companionId, conversationId,
+        MessagePipeline.PipelineResult r = pipeline.process(userId, companionId, conversationId,
                 List.of(m), m.getContent(), perceptionEngine.perceive(m.getContent()), DAYTIME);
         if (!r.isDeferred()) {
             // 若 Brain 决定回复, 该场景同样合法 —— 只验证已读状态
-            assertEquals(V5MessagePipeline.PipelineResult.Outcome.REPLY, r.outcome());
+            assertEquals(MessagePipeline.PipelineResult.Outcome.REPLY, r.outcome());
             return;
         }
         assertFalse(pendingMessageService.pendingFor(companionId).isEmpty(),
@@ -213,7 +213,7 @@ class V5MessagePipelineTest {
     void replyPathProducesGeneratedMessage() {
         // 触发一条白天消息, 若 Brain 决定回复 → 走 Expression + 生成, 验证回复文本落库
         Message m = send("我今天好难过,项目被砍了");
-        V5MessagePipeline.PipelineResult r = pipeline.process(userId, companionId, conversationId,
+        MessagePipeline.PipelineResult r = pipeline.process(userId, companionId, conversationId,
                 List.of(m), m.getContent(), perceptionEngine.perceive(m.getContent()), DAYTIME);
         if (!r.shouldReply() || r.brainDecision() == null) {
             // DEFER 也是合法行为, 只验证存在性

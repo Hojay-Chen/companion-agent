@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * 自我模型(设计文档 V2.0 §9): "我是谁"的当前理解。
+ * 自我模型(设计文档 §9): "我是谁"的当前理解。
  * Persona = 相对稳定的我是怎样的人; SelfModel = 当前阶段我觉得自己怎样。
  * 单行/伴侣, 版本化(每次更新 version+1, 记录 change_reason)。
  */

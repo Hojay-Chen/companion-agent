@@ -3,7 +3,7 @@ package com.luxera.companion.runtime.agent.expression;
 import java.util.List;
 
 /**
- * Expression Agent 输出(V5 §34): 表达策略 + 消息计划(分段/延迟)。
+ * Expression Agent 输出(§34): 表达策略 + 消息计划(分段/延迟)。
  * 表达是"怎么说", 与"说什么"分离 —— 文本由生成阶段填充。
  */
 public record ExpressionResult(
@@ -20,7 +20,7 @@ public record ExpressionResult(
 
     public record MessageSegment(String purpose, long delayMs, int maxChars, long typingDurationMs) {
 
-        /** V5 兼容构造(默认打字时长由 TypingSimulation 填充) */
+        /** 兼容构造(默认打字时长由 TypingSimulation 填充) */
         public MessageSegment(String purpose, long delayMs, int maxChars) {
             this(purpose, delayMs, maxChars, 0);
         }

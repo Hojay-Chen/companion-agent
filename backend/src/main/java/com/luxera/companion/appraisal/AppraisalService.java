@@ -12,7 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.regex.Pattern;
 
 /**
- * 消息评估 Runtime(V4 §十/§十一/§十三): 消息被读到后, 先判断"这对我意味着什么", 改变 Agent 内部状态。
+ * 消息评估 Runtime(§十/§十一/§十三): 消息被读到后, 先判断"这对我意味着什么", 改变 Agent 内部状态。
  * 零额外 LLM 调用 —— 基于现有感知(意图/情绪) + 关键词规则扩展。
  * 产出 message_appraisals 记录 + 更新 AgentState(hurt/anger/emotionalCloseness) + 微调关系。
  */
@@ -54,7 +54,7 @@ public class AppraisalService {
     }
 
     /**
-     * V5: 仅计算评估并落记录, 不修改状态。
+     * 仅计算评估并落记录, 不修改状态。
      * 供 EmotionAgent 使用 —— 关键词只作为 cheap signal, 状态变更统一走 StateReducer。
      */
     @Transactional
@@ -145,7 +145,7 @@ public class AppraisalService {
         agentStateService.applyAppraisal(companionId, a.getHurt(), a.getAnger(), a.getWarmth());
     }
 
-    /** V5: 供 EmotionAgent 使用 —— 关系微调独立暴露(信任/亲密度是慢变量) */
+    /** 供 EmotionAgent 使用 —— 关系微调独立暴露(信任/亲密度是慢变量) */
     @Transactional
     public void applyRelationshipImpact(String userId, String companionId, AppraisalResult result) {
         applyToRelationship(userId, companionId, result.appraisal());
@@ -173,7 +173,7 @@ public class AppraisalService {
         public double relationshipImpact() { return appraisal.getRelationshipImpact(); }
         public double emotionalImpact() { return appraisal.getEmotionalImpact(); }
 
-        /** V5: 从 Emotion Agent 的评估值构建(不落库), 供 DrivesService/基线决策使用 */
+        /** 从 Emotion Agent 的评估值构建(不落库), 供 DrivesService/基线决策使用 */
         public static AppraisalResult fromValues(double hurt, double anger, double warmth,
                                                  double urgency, double relationshipImpact, double emotionalImpact) {
             MessageAppraisal a = new MessageAppraisal();

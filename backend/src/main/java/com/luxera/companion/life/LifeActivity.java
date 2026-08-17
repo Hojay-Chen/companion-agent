@@ -14,7 +14,7 @@ import javax.persistence.Table;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-/** 伴侣的生活活动(设计文档 V2.0 §5.4) */
+/** 伴侣的生活活动(设计文档 §5.4) */
 @Entity
 @Table(name = "life_activities", indexes = @Index(name = "idx_life_act_companion", columnList = "companion_id"))
 @Getter
@@ -60,7 +60,7 @@ public class LifeActivity {
     @Column(nullable = false, length = 16)
     private String status = "PLANNED";
 
-    // ── V6 Activity Model(§6/§32): 具体活动 + 可打断性 ──────────
+    // ── Activity Model(§6/§32): 具体活动 + 可打断性 ──────────
     /** 注意力占用度 0-1: 会议 0.92, 散步 0.2 */
     @Column(name = "attention_demand", nullable = false)
     private double attentionDemand = 0.5;

@@ -10,7 +10,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
 /**
- * 运行时事件总线(V5 §2/§5): 世界事件在 Runtime 内部的分发总线。
+ * 运行时事件总线(§2/§5): 世界事件在 Runtime 内部的分发总线。
  * 与 {@code CompanionEventBus}(SSE 推送给前端)不同 —— 这里是认知模块之间的内部通信。
  * 简单订阅/发布; 监听器按事件类型注册。
  */

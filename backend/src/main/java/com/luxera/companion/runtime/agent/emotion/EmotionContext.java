@@ -6,7 +6,7 @@ import com.luxera.companion.state.AgentState;
 import java.util.List;
 
 /**
- * Emotion Agent 输入(V5 §16): 消息 + 近况 + 关系 + 当前情绪 + 活动 + 注意力 + 人格 + 记忆候选。
+ * Emotion Agent 输入(§16): 消息 + 近况 + 关系 + 当前情绪 + 活动 + 注意力 + 人格 + 记忆候选。
  * 由 Context Builder 组装, Agent 不允许自己乱查数据库。
  */
 public record EmotionContext(

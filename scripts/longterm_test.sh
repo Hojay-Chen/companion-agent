@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Luxera Companion V2.0 — 4 类长期连续性测试(设计文档 §44)
+# Luxera Companion — 4 类长期连续性测试(设计文档 §44)
 # 用法: BASE=http://127.0.0.1:8081 bash scripts/longterm_test.sh
 set -euo pipefail
 BASE="${BASE:-http://127.0.0.1:8081}"

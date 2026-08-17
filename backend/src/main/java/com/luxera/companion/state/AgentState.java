@@ -44,27 +44,27 @@ public class AgentState {
     @Column(name = "emotional_closeness", nullable = false)
     private double emotionalCloseness = 0.3;
 
-    /** V4 Appraisal: 受伤程度(0-1, 随状态衰减) */
+    /** Appraisal: 受伤程度(0-1, 随状态衰减) */
     @Column(nullable = false)
     private double hurt = 0;
 
-    /** V4 Appraisal: 生气程度(0-1, 随状态衰减) */
+    /** Appraisal: 生气程度(0-1, 随状态衰减) */
     @Column(nullable = false)
     private double anger = 0;
 
-    /** V5 Emotion: 难过程度(0-1, 随状态衰减) */
+    /** Emotion: 难过程度(0-1, 随状态衰减) */
     @Column(nullable = false)
     private double sadness = 0;
 
-    /** V5 Emotion: 焦虑程度(0-1, 随状态衰减) */
+    /** Emotion: 焦虑程度(0-1, 随状态衰减) */
     @Column(nullable = false)
     private double anxiety = 0;
 
-    /** V5 Emotion: 温暖/亲密感受(0-1, 正面情绪) */
+    /** Emotion: 温暖/亲密感受(0-1, 正面情绪) */
     @Column(nullable = false)
     private double warmth = 0;
 
-    // ── V6 Body State(§50): 身体状态影响情绪/注意力/表达 ──────────
+    // ── Body State(§50): 身体状态影响情绪/注意力/表达 ──────────
     /** 困倦程度 0-1(凌晨 + 困 → 即使想聊也可能说"明天再聊") */
     @Column(nullable = false, columnDefinition = "double precision default 0.1")
     private double sleepiness = 0.1;
@@ -81,15 +81,15 @@ public class AgentState {
     @Column(nullable = false, columnDefinition = "double precision default 0.6")
     private double focus = 0.6;
 
-    /** V6 情绪叠加: 孤独感 0-1(与 warmth 并存: 可以既喜欢又孤独) */
+    /** 情绪叠加: 孤独感 0-1(与 warmth 并存: 可以既喜欢又孤独) */
     @Column(nullable = false, columnDefinition = "double precision default 0")
     private double loneliness = 0;
 
-    /** V6 情绪叠加: 愉悦/开心 0-1(与 hurt 并存) */
+    /** 情绪叠加: 愉悦/开心 0-1(与 hurt 并存) */
     @Column(nullable = false, columnDefinition = "double precision default 0")
     private double joy = 0;
 
-    /** V6 情绪叠加: 亲昵/喜爱 0-1 */
+    /** 情绪叠加: 亲昵/喜爱 0-1 */
     @Column(nullable = false, columnDefinition = "double precision default 0")
     private double affection = 0;
 

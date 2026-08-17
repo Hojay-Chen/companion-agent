@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * V7 §8 Sleep Session: 一次完整的睡眠记录。
+ * §8 Sleep Session: 一次完整的睡眠记录。
  * Agent 真正拥有"昨天睡了多久", 而不是每次重新计算。
  *
  * sleep_type: NORMAL / NAP / OVERSLEEP / INTERRUPTED

@@ -9,7 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Map;
 
 /**
- * V8 §五 Person 服务: User/Agent 的 Person 身份层。
+ * §五 Person 服务: User/Agent 的 Person 身份层。
  * id 与 users.id / companions.id 一致(零迁移), OTHER 人物独立生成。
  */
 @Service

@@ -19,7 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Emotion Agent(V5 §15-§20, P0 优先级):
+ * Emotion Agent(§15-§20, P0 优先级):
  * 不再用"关键词直接决定情绪"。关键词最多作为 cheap signal(回退),
  * LLM 负责复杂情绪解释: 这件事对人物意味着什么 / 是否违背期待 / 意图是否确定 /
  * 当前关系如何影响解释 / 当前状态是否放大削弱 / 激活哪些旧记忆 / 最终方向和程度。
@@ -84,7 +84,7 @@ public class EmotionAgent implements Agent<EmotionContext, EmotionAppraisalResul
     /** 尝试 LLM 结构化评估; 失败/不满足置信度返回 null */
     private EmotionAppraisalResult tryLlm(EmotionContext ctx, String traceId) {
         if (!llm.available() || llm.isMockActive()) {
-            // Mock 网关返回低置信度占位 → 走规则回退(与 V4 行为兼容)
+            // Mock 网关返回低置信度占位 → 走规则回退(与 行为兼容)
             return null;
         }
         try {

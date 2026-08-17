@@ -18,7 +18,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V6 §21 Event Chain 因果链测试:
+ * §21 Event Chain 因果链测试:
  * - 因果链逐层记录(出门吃饭 → 下雨 → 忘带伞 → 淋雨)
  * - 深度限制 maxDepth=3(不会无限延续)
  * - 主事件 + 后果都落到 world_events

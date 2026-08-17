@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
-/** "她最近觉得自己怎样"(设计文档 V2.0 §9 / §31 用户视角) */
+/** "她最近觉得自己怎样"(设计文档 §9 / §31 用户视角) */
 @RestController
 @RequestMapping("/api/companions/{companionId}/self")
 public class SelfController {

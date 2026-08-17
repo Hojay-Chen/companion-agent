@@ -14,7 +14,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V6 §31 Unfinished Thought 测试:
+ * §31 Unfinished Thought 测试:
  * - 创建未完成想法(type=UNFINISHED, ACTIVE)
  * - 过期 → 遗忘(EXPIRED)
  * - 冷却期后激活(优先级达标 → 强度提升)

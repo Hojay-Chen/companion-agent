@@ -7,8 +7,8 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * 统一认知内核(设计文档 V2.0 §27): 用户消息与无人状态运行使用同一个内核。
- * 这是 V2.0 最重要的架构统一。
+ * 统一认知内核(设计文档 §27): 用户消息与无人状态运行使用同一个内核。
+ * 这是 最重要的架构统一。
  */
 public interface CompanionCognitiveRuntime {
 
@@ -17,7 +17,7 @@ public interface CompanionCognitiveRuntime {
                                        String userMessageId, String userText,
                                        List<Message> recentMessages, Consumer<String> onDelta);
 
-    /** V3: 带交互决策(预算)的处理 */
+    /** 带交互决策(预算)的处理 */
     default CognitiveResult processUserMessage(String userId, String companionId, String conversationId,
                                                String userMessageId, String userText,
                                                List<Message> recentMessages, Consumer<String> onDelta,
@@ -26,7 +26,7 @@ public interface CompanionCognitiveRuntime {
                 recentMessages, onDelta);
     }
 
-    /** V5: 带表达策略提示的处理 */
+    /** 带表达策略提示的处理 */
     default CognitiveResult processUserMessage(String userId, String companionId, String conversationId,
                                                String userMessageId, String userText,
                                                List<Message> recentMessages, Consumer<String> onDelta,

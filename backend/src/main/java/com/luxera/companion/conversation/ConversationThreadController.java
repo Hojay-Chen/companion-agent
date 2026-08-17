@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * V6 §30 Conversation Thread API: 查询会话线程(话题状态), 供前端展示"还有几个没聊完的话题"。
+ * §30 Conversation Thread API: 查询会话线程(话题状态), 供前端展示"还有几个没聊完的话题"。
  */
 @RestController
 @RequestMapping("/api/companions/{companionId}/threads")

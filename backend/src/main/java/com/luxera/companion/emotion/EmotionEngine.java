@@ -8,7 +8,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 情绪引擎(设计文档 V2.0 §7): 由事件/对话推导 EmotionalEpisode, 并影响 AgentState 与行为倾向。
+ * 情绪引擎(设计文档 §7): 由事件/对话推导 EmotionalEpisode, 并影响 AgentState 与行为倾向。
  * 不允许随机制造情绪 —— 情绪必须来自 State/Emotion/Persona/Relationship/Context。
  */
 @Component

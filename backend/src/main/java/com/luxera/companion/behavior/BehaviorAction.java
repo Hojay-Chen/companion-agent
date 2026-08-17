@@ -1,7 +1,7 @@
 package com.luxera.companion.behavior;
 
 /**
- * V8 §三十五~§三十八 BehaviorAction: 数字人的全部行为候选。
+ * §三十五~§三十八 BehaviorAction: 数字人的全部行为候选。
  *
  * 主动联系用户只是其中一个候选, 不是"主动消息模块"。
  * 睡觉/看手机/继续生活/联系其他人物/想起某事 都是同一级的行为候选,

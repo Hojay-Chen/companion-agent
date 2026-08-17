@@ -17,7 +17,7 @@ import java.io.IOException;
 import java.util.List;
 
 /**
- * 持久事件流(V4 §二十七) + V8 §17 SSE 游标:
+ * 持久事件流(§二十七) + §17 SSE 游标:
  * 前端 GET /events 长连接, 携带 Last-Event-ID(或 ?after=) 断线重连后回放错过的消息。
  * 心跳每 25s(spring 内置 SseEmitter 默认 30s 超时, 这里用长超时+自管理心跳)。
  * 认证: JWT + 伴侣归属校验。
@@ -54,7 +54,7 @@ public class EventStreamController {
         long after = resolveAfter(lastEventId, afterParam);
         SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT);
 
-        // V8 §17: 游标回放 —— 断线期间的事件先补发, 再订阅实时流
+        // §17: 游标回放 —— 断线期间的事件先补发, 再订阅实时流
         if (after > 0) {
             replay(emitter, companionId, after);
         } else {

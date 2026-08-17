@@ -44,7 +44,7 @@ public class RelationshipEngine {
         r.setIntimacy(clamp(r.getIntimacy() + 0.0004));
         r.setAffection(clamp(r.getAffection() + 0.0005));
 
-        // V8 §八: 关系影响情绪敏感度 & 双向性随互动上升; 联系压力在联系后回落(关系维护)
+        // §八: 关系影响情绪敏感度 & 双向性随互动上升; 联系压力在联系后回落(关系维护)
         r.setReciprocity(clamp(r.getReciprocity() + 0.0003));
         if ("angry".equals(emotion) || "frustrated".equals(emotion) || "sad".equals(emotion)) {
             r.setTension(clamp(r.getTension() + 0.0008));
@@ -143,7 +143,7 @@ public class RelationshipEngine {
         }
     }
 
-    /** 关系摩擦: 用户对伴侣表达不满/失望 → 记一次冲突(设计文档 V2.0 §20) */
+    /** 关系摩擦: 用户对伴侣表达不满/失望 → 记一次冲突(设计文档 §20) */
     @Transactional
     public void onConflict(String userId, String companionId, String userText) {
         relRepo.findByUserIdAndCompanionId(userId, companionId).ifPresent(r -> {
@@ -151,14 +151,14 @@ public class RelationshipEngine {
             addMilestone(r, "conflict", "一次不愉快",
                     "因为" + cause + ",你表达了不满。", 0.55);
             r.setAffection(clamp(r.getAffection() - 0.01));
-            // V8: 冲突 → 张力上升, 双向性略降
+            // 冲突 → 张力上升, 双向性略降
             r.setTension(clamp(r.getTension() + 0.02));
             r.setReciprocity(clamp(r.getReciprocity() - 0.004));
             relRepo.save(r);
         });
     }
 
-    /** 关系修复: 冲突后和好/被纠正 → 记修复事件(设计文档 V2.0 §20) */
+    /** 关系修复: 冲突后和好/被纠正 → 记修复事件(设计文档 §20) */
     @Transactional
     public void onRepair(String userId, String companionId) {
         relRepo.findByUserIdAndCompanionId(userId, companionId).ifPresent(r -> {
@@ -166,7 +166,7 @@ public class RelationshipEngine {
                     "你们把话说开了,关系反而更近了一点。", 0.62);
             r.setTrust(clamp(r.getTrust() + 0.008));
             r.setIntimacy(clamp(r.getIntimacy() + 0.006));
-            // V8: 修复 → 张力下降
+            // 修复 → 张力下降
             r.setTension(clamp(r.getTension() - 0.03));
             relRepo.save(r);
         });

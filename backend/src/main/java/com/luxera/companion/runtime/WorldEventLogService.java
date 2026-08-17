@@ -8,7 +8,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 世界事件日志服务(V5 §62): 记录/查询世界事件。
+ * 世界事件日志服务(§62): 记录/查询世界事件。
  * 非关键路径 —— 写失败不影响主流程。
  */
 @Service

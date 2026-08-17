@@ -3,7 +3,7 @@ package com.luxera.companion.behavior;
 import java.util.List;
 
 /**
- * 行为约束(设计文档 V2.0 §13/§20): 编码"什么情境不该做什么",
+ * 行为约束(设计文档 §13/§20): 编码"什么情境不该做什么",
  * 让行为来自 State/Emotion/Relationship, 而非随机。
  */
 public final class BehaviorConstraints {

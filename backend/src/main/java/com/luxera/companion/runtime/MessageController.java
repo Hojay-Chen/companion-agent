@@ -18,11 +18,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * V8 §十一~§十六 POST /messages: 用户消息**同步落库** + clientMessageId 幂等。
+ * §十一~§十六 POST /messages: 用户消息**同步落库** + clientMessageId 幂等。
  *
- * 与 V7 的关键区别:
- * - V7: 消息在 AgentRuntime 异步线程落库 → 刷新即丢/延迟出现。
- * - V8: 消息在 HTTP 请求内落库(MessageCoreService), 返回 canonical messageId;
+ * 与 的关键区别:
+ * - 消息在 AgentRuntime 异步线程落库 → 刷新即丢/延迟出现。
+ * - 消息在 HTTP 请求内落库(MessageCoreService), 返回 canonical messageId;
  *       事务提交后经 Outbox 异步触发 Agent —— 消息永久存在, Agent 永不阻塞请求。
  *
  * 前端: 乐观消息(temp-xxx)带 clientMessageId 上屏, 收到 201 后替换为 canonical;
@@ -30,12 +30,12 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/companions/{companionId}/conversations/{conversationId}/messages")
-public class V8MessageController {
+public class MessageController {
 
     private final CurrentUser currentUser;
     private final MessageCoreService messageCoreService;
 
-    public V8MessageController(CurrentUser currentUser, MessageCoreService messageCoreService) {
+    public MessageController(CurrentUser currentUser, MessageCoreService messageCoreService) {
         this.currentUser = currentUser;
         this.messageCoreService = messageCoreService;
     }

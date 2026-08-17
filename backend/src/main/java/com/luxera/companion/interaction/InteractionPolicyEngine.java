@@ -9,8 +9,8 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 /**
- * 交互策略引擎(V3 §三~十一 + V4 §十五~十七):
- * V3 是规则树; V4 引入 Appraisal + Drives 竞争 —— 消息先 Appraisal(改变内部状态),
+ * 交互策略引擎(§三~十一 + §十五~十七):
+ * 是规则树; 引入 Appraisal + Drives 竞争 —— 消息先 Appraisal(改变内部状态),
  * 再由行为倾向(desire_to_reply vs desire_to_avoid)评分竞争决定行为。
  * 保留明确情境规则(离开/回来/求助/低落), 默认路径用 Drives 竞争(避免纯 if/else 堆叠)。
  */
@@ -36,7 +36,7 @@ public class InteractionPolicyEngine {
         this.drivesService = drivesService;
     }
 
-    /** 决策入口(V4): Appraisal → Drives 竞争 → 明确规则 → 状态调节 */
+    /** 决策入口: Appraisal → Drives 竞争 → 明确规则 → 状态调节 */
     public InteractionDecision decide(InteractionInput in) {
         // 0. Drives 竞争(基于 Appraisal + 状态 + 可用状态)
         Drives drives = null;
@@ -235,14 +235,14 @@ public class InteractionPolicyEngine {
         return new ResponseBudget(chars, sentences, q, adv, intensity, intimate);
     }
 
-    /** 决策输入(V4: 含 Appraisal 维度与关系标量) */
+    /** 决策输入(含 Appraisal 维度与关系标量) */
     public record InteractionInput(String userText, String intent, String emotion,
                                    double energy, double stress, String relationshipStage,
                                    boolean intimate, boolean busy,
                                    com.luxera.companion.state.CompanionAvailability availability,
                                    AppraisalService.AppraisalResult appraisal,
                                    double closeness, double familiarity, double intimacy) {
-        /** V3 兼容: 无 Appraisal/关系标量 */
+        /** 兼容: 无 Appraisal/关系标量 */
         public InteractionInput(String userText, String intent, String emotion,
                                 double energy, double stress, String relationshipStage,
                                 boolean intimate, boolean busy) {

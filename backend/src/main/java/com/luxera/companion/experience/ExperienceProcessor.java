@@ -5,7 +5,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
-/** 经历处理器: 统一把对话/生活/情绪/想法写成 Experience(设计文档 V2.0 §11.1) */
+/** 经历处理器: 统一把对话/生活/情绪/想法写成 Experience(设计文档 §11.1) */
 @Component
 public class ExperienceProcessor {
 

@@ -7,7 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 
 /**
- * 手机状态服务(V4 §五): 手机状态由作息+时间确定性派生 —— 上班静音/开会勿扰/晚间震动/睡觉勿扰。
+ * 手机状态服务(§五): 手机状态由作息+时间确定性派生 —— 上班静音/开会勿扰/晚间震动/睡觉勿扰。
  * 决定"消息能否通过通知触达她"(Phone Runtime 是消息生命周期的第一道门)。
  */
 @Service

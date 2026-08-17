@@ -13,7 +13,7 @@ import javax.persistence.Table;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-/** 关系线索(设计文档 V2.0 §10.1): 如"找工作"→准备简历→投递→面试→等结果 */
+/** 关系线索(设计文档 §10.1): 如"找工作"→准备简历→投递→面试→等结果 */
 @Entity
 @Table(name = "relationship_threads", indexes = @Index(name = "idx_thread_rel", columnList = "relationship_id"))
 @Getter

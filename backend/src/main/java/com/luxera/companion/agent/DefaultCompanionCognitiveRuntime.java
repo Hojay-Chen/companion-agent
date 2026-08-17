@@ -19,7 +19,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 /**
- * 默认认知内核实现(设计文档 V2.0 §27):
+ * 默认认知内核实现(设计文档 §27):
  * processUserMessage 统一编排 感知→上下文→行为策略→编译→生成→校验→异步学习。
  */
 @Slf4j
@@ -65,7 +65,7 @@ public class DefaultCompanionCognitiveRuntime implements CompanionCognitiveRunti
                 recentMessages, onDelta, null);
     }
 
-    /** V3: 带交互决策预算的处理 */
+    /** 带交互决策预算的处理 */
     @Override
     public CognitiveResult processUserMessage(String userId, String companionId, String conversationId,
                                               String userMessageId, String userText,
@@ -75,7 +75,7 @@ public class DefaultCompanionCognitiveRuntime implements CompanionCognitiveRunti
                 recentMessages, onDelta, interaction, null);
     }
 
-    /** V5: 带表达策略提示的处理 */
+    /** 带表达策略提示的处理 */
     @Override
     public CognitiveResult processUserMessage(String userId, String companionId, String conversationId,
                                               String userMessageId, String userText,
@@ -99,7 +99,7 @@ public class DefaultCompanionCognitiveRuntime implements CompanionCognitiveRunti
         // 4. 行为策略: Runtime 决定"现在应该做什么"
         BehaviorDecision decision = behaviorPolicyEngine.decide(ctx);
 
-        // 5. 上下文编译: 压缩为 LLM 可消费的提示(V3: 带回复预算; V5: 带表达策略)
+        // 5. 上下文编译: 压缩为 LLM 可消费的提示(带回复预算; 带表达策略)
         com.luxera.companion.interaction.ResponseBudget budget =
                 interaction != null ? interaction.budget : null;
         String system = contextCompiler.buildSystem(ctx, decision, budget, expressionHint);
@@ -137,7 +137,7 @@ public class DefaultCompanionCognitiveRuntime implements CompanionCognitiveRunti
             if (onDelta != null) onDelta.accept(r.getContent());
         }
 
-        // 8. 自然度校验(带 V3 预算: 超出本回合篇幅也会被标记)
+        // 8. 自然度校验(带 预算: 超出本回合篇幅也会被标记)
         var validation = naturalnessEngine.validate(raw.toString(), budget);
         String reply = validation.cleaned();
         if (!validation.issues().isEmpty()) {

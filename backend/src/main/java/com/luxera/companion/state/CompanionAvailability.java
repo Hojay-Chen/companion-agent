@@ -1,7 +1,7 @@
 package com.luxera.companion.state;
 
 /**
- * 伴侣可用状态(V3 P1 §四十一~四十二): 她不是永远在线。
+ * 伴侣可用状态(P1 §四十一~四十二): 她不是永远在线。
  * Busy ≠ 不回复 —— 影响的是延迟/长度/追问/注意力, 而不是 canReply=false。
  */
 public enum CompanionAvailability {

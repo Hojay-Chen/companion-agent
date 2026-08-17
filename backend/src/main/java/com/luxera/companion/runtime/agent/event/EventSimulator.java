@@ -30,7 +30,7 @@ import java.util.Random;
 import java.util.stream.Collectors;
 
 /**
- * 事件模拟器(V5 §28/§70/§71): LLM 只提出候选, 真正是否发生由 Runtime 决定。
+ * 事件模拟器(§28/§70/§71): LLM 只提出候选, 真正是否发生由 Runtime 决定。
  * 确定性基概率 + 人格/环境/记忆/近期事件 modifier + 加权采样。
  * 事件不是随机制造剧情 —— NORMAL(无事发生)默认概率最高。
  */
@@ -107,7 +107,7 @@ public class EventSimulator {
             return EventSimulationResult.NORMAL;
         }
 
-        // 事件发生: 记录主事件 + V6 §21 因果链(后果逐层应用, 深度 ≤ MAX_DEPTH)
+        // 事件发生: 记录主事件 + §21 因果链(后果逐层应用, 深度 ≤ MAX_DEPTH)
         worldEventLogService.record(WorldEvent.of(WorldEventType.WORLD_EVENT_OCCURRED,
                 companionId, Map.of("event", chosen.eventType(), "trigger", chosen.trigger(),
                         "consequences", chosen.consequences() == null ? List.of() : chosen.consequences(),

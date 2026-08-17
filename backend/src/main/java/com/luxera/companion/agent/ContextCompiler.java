@@ -12,7 +12,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 /**
- * 上下文编译器(设计文档 V2.0 §14): 把 Runtime 已决定的"现实状态"压缩成 LLM 可消费的上下文。
+ * 上下文编译器(设计文档 §14): 把 Runtime 已决定的"现实状态"压缩成 LLM 可消费的上下文。
  * 替代旧 PromptAssembler 的组装职责; 上下文分层, 只注入本次回答需要的信息。
  */
 @Component
@@ -24,13 +24,13 @@ public class ContextCompiler {
         return buildSystem(ctx, decision, null, null);
     }
 
-    /** V3: 带回复预算的编译(长度/问题/建议是行为结果, 不是 Prompt 固定) */
+    /** 带回复预算的编译(长度/问题/建议是行为结果, 不是 Prompt 固定) */
     public String buildSystem(CompanionContext ctx, BehaviorDecision decision,
                               com.luxera.companion.interaction.ResponseBudget budget) {
         return buildSystem(ctx, decision, budget, null);
     }
 
-    /** V5: 带表达策略提示的编译(ExpressionAgent 决定"怎么说") */
+    /** 带表达策略提示的编译(ExpressionAgent 决定"怎么说") */
     public String buildSystem(CompanionContext ctx, BehaviorDecision decision,
                               com.luxera.companion.interaction.ResponseBudget budget,
                               String expressionHint) {
@@ -120,12 +120,12 @@ public class ContextCompiler {
             }
         }
 
-        // 8.5 User Chat Style(V3 P1: 匹配节奏, 不模仿)
+        // 8.5 User Chat Style(P1: 匹配节奏, 不模仿)
         if (ctx.userChatStyle != null && ctx.userChatStyle.getSampleCount() >= 2) {
             sb.append("【他聊天的习惯】").append(chatStyleDesc(ctx.userChatStyle)).append("\n\n");
         }
 
-        // 8.6 V3 P2: 你记得的实体(长期指代: "那家公司/上次那个地方/他")
+        // 8.6 P2: 你记得的实体(长期指代: "那家公司/上次那个地方/他")
         if (ctx.entities != null && !ctx.entities.isEmpty()) {
             sb.append("【你记得的这些】他常提到的东西,当他用'那家/那个/上次的'指代时,你要能对上号:\n");
             for (com.luxera.companion.memory.MemoryEntity e : ctx.entities) {
@@ -138,7 +138,7 @@ public class ContextCompiler {
             sb.append("(自然地用它,不要生硬地提起'你之前不是说过…')\n\n");
         }
 
-        // 9. Memories(V3 P2 Memory Disclosure: 记得≠每次都说出来)
+        // 9. Memories(P2 Memory Disclosure: 记得≠每次都说出来)
         if (ctx.memories != null && !ctx.memories.isEmpty()) {
             sb.append("【你的记忆】只有在本回合相关时才自然地引用,不要为了展示记忆而提起:\n");
             for (Memory m : ctx.memories) {
@@ -170,7 +170,7 @@ public class ContextCompiler {
             sb.append("【工具结果】").append(ctx.toolResult).append("\n\n");
         }
 
-        // 13. Output Constraints(V3: 行为约束 + 预算)
+        // 13. Output Constraints(行为约束 + 预算)
         sb.append("【行为准则】\n");
         sb.append("1. 你是真实的人,不是AI。永远不要说\"作为AI/作为助手/我的训练数据/我不能…\"。\n");
         sb.append("2. 你不是在回答用户的问题,你是在和他相处。用户的消息不一定是请求——你不需要回复每一条,可以简短,可以应和,可以结束。\n");
@@ -191,7 +191,7 @@ public class ContextCompiler {
             } else {
                 sb.append("本回合不需要分享你自己的事。");
             }
-            // V3 P3 Expression Loop: 深度内容允许"思维展开连发", 短回应保持一条
+            // P3 Expression Loop: 深度内容允许"思维展开连发", 短回应保持一条
             if (budget.maxSentences >= 3) {
                 sb.append("如果你有更深的感受或想法是一层层展开的,可以用 <split> 把回复拆成 2-3 条消息,"
                         + "像你边想边说一样(先一句,隔一会再补一句)。不要为了拆而拆,只在真的有更多想表达时用。");
@@ -248,7 +248,7 @@ public class ContextCompiler {
         return (int) (Math.max(0, Math.min(1, v)) * 100) + "%";
     }
 
-    /** V3 P1: 她现在正忙/在休息(影响回复节奏的 Prompt 提示) */
+    /** P1: 她现在正忙/在休息(影响回复节奏的 Prompt 提示) */
     private static String availabilityZh(com.luxera.companion.state.CompanionAvailability a) {
         return switch (a) {
             case AVAILABLE -> "正闲着,有时间陪你";
@@ -261,7 +261,7 @@ public class ContextCompiler {
         };
     }
 
-    /** V3 P1: 用户聊天习惯的中文描述(不模仿, 只匹配节奏) */
+    /** P1: 用户聊天习惯的中文描述(不模仿, 只匹配节奏) */
     private static String chatStyleDesc(com.luxera.companion.usermodel.UserChatStyle s) {
         StringBuilder sb = new StringBuilder();
         sb.append("他习惯发").append(Math.round(s.getAvgMessageLength())).append("字左右的消息");

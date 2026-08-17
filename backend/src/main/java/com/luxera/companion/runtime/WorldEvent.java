@@ -4,7 +4,7 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 /**
- * 世界事件(V5 §5/§62): 系统中发生的一件事。
+ * 世界事件(§5/§62): 系统中发生的一件事。
  * 携带事件类型、时间戳、companionId 与结构化 payload。
  * 事件是认知层的唯一输入; 也是事件溯源的基础记录。
  */

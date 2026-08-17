@@ -18,7 +18,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V7 作息测试: 作息是 Emergent Behavior, 不是 Schedule。
+ * 作息测试: 作息是 Emergent Behavior, 不是 Schedule。
  * - 夜班(酒吧)伴侣: 23 点醒着上班(即使生物钟偏向晚睡)
  * - 白班伴侣: 23 点是否睡由 SleepModel 决定(不是固定 22 点)
  * - 睡眠状态由 SleepModel 控制, 不是 activityFor 硬编码
@@ -116,7 +116,7 @@ class NightWorkerScheduleTest {
         c.setSleepPressure(0.2);   // 低压力
         circadianRepo.save(c);
         assertNotEquals(CompanionSchedule.Activity.SLEEP, schedule.activityFor(dayCompanionId, nightTime),
-                "V7: 睡眠压力低时不应强制睡眠(emergent)");
+                "睡眠压力低时不应强制睡眠(emergent)");
     }
 
     @Test

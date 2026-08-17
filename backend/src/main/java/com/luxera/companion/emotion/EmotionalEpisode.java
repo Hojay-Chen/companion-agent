@@ -13,7 +13,7 @@ import javax.persistence.Table;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-/** 事件型情绪(设计文档 V2.0 §7.2) */
+/** 事件型情绪(设计文档 §7.2) */
 @Entity
 @Table(name = "emotional_episodes", indexes = @Index(name = "idx_episode_companion", columnList = "companion_id"))
 @Getter

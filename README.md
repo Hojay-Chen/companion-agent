@@ -2,266 +2,67 @@
 
 > **不是 Chatbot**：拥有稳定人格、连续人生、持续记忆，随时间与用户建立关系，并在合适的时候主动找你。
 >
-> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime + V4 Continuous Human Runtime + **V5 Continuous Person Runtime** + **V6 拟真人格与持续生活** + **V7 Human Runtime** + **V8 Digital Person**。当前完成 **V2.0(44/44) + V3 P0/P1/P2 + V4 P0/P1/P2/P3 + V5 P0~P8 + V6 P0~P3 + V7 P0~P7 + V8 P0~P2**。
+> 设计依据：《Persistent AI Companion 产品与技术设计方案》（107 节）。当前为 **Digital Person 版**：
+> Chat Platform 是软件，Agent 是独立存在的人 —— 消息永不丢、关系是真实状态、世界持续运行、行为由中央行为选择器决定。
 
 ---
 
-## V8 · Digital Person（2026-08）
+## 当前版本 · Digital Person
 
-> **V7 是"让生活产生 AI 的行为"；V8 是"把 Agent 真正拆成两个世界：Chat Platform 是软件，Agent 是独立存在的人"。**
+> **核心目标：让用户无法仅通过聊天行为判断对方是 AI。**
 >
-> 核心目标不变：**让用户无法仅通过聊天行为判断对方是 AI。**
-> V8 的四个骨架：**Chat Core 重构（消息永不丢） + Person/Relationship Graph（关系是真实状态） + World Event Engine（世界持续运行） + Behavior Engine（中央行为选择器）**。
+> 架构原则：**Chat Platform 是通信基础设施，Agent 是独立数字人。**
+> 用户消息只是 Agent 世界中的一种事件；世界每时每刻都在运行（时间/生活/身体/关系/记忆/意图/外界）。
 
-### V8 核心改造
+### 核心能力
 
-1. **Chat Core：消息同步落库（§十一~§十六）** — 根治"消息显示 → 刷新没了 → 过一会儿又回来"：
-   - `POST /messages` **在请求事务内同步落库**，返回 canonical messageId（不再由 Agent 异步线程入库）
-   - `clientMessageId` 幂等键：同会话重复提交返回同一条，不重复入库/不重复触发 Agent
-   - **Outbox after-commit**：Agent 处理在事务提交后异步触发（Agent 崩溃/LLM 超时/服务器重启都不丢消息）
-   - `MessageCoreService` 是用户消息的唯一真相源；前端收到事件**增量 upsert**，不再整表重载
-2. **SSE 游标（§十七）**：`event_log` 持久化事件日志，`GET /events` 支持 `Last-Event-ID` 断线重连回放 —— 网络断开/切后台/服务器重启都不丢实时消息
-3. **Person + Relationship Graph（§五~§八）**：
-   - `persons` 表：**User / Agent / OtherPerson 都是 Person**（id 沿用 user.id / companion.id，零迁移）
-   - 关系升级为多维状态：`familiarity / trust / intimacy / affection / tension / reciprocity / respect / dependence / connectionPressure`
-   - **创建伴侣时用户选择关系类型**（恋人/最好的朋友/朋友/姐姐/同事/同学/家人…）→ 真实初始化关系维度（不是 Prompt）
-   - 关系维护压力：沉默越久 `connectionPressure` 越高 → 驱动主动联系（"想你了"不是定时器，是关系系统产生了联系需求）
-4. **World Event Engine（§四十三~§四十七）**：`digital_world_events` 持久化世界事件（时间/生活/身体/社交/记忆/意图/外界/通信）。**世界每时每刻都在运行，不是用户发消息世界才开始**；用户消息只是其中一种事件
-5. **Behavior Engine（§三十四~§四十一）**：**中央行为选择器**，取代"15 分钟主动消息检查"：
-   - 每 5 分钟问一次"她此刻最可能做什么？"：继续生活 / 睡觉 / 看手机 / 主动联系用户 / 联系朋友 / 想起某事 / 发呆
-   - **主动联系只是候选之一**（价值 - 打断成本 + 关系/人格修正 + 随机扰动 → 概率化选择）
-   - 人格进入行为：外向/主动 → 更可能联系；内向 → 更多独处；张力高 → 更少主动
-   - 行为熵从"评估器"变成"控制器"：规律是统计规律，不决定每次行为
-6. **关系驱动认知（§三十一/§三十二）**：Cognitive Wakeup 加入关系权重 —— 同一句话，亲密的人发来唤醒更深；回复节奏也随熟悉度/张力变化
-7. **睡眠是行为候选（§二十八/§二十九）**：`SleepTickJob` 的入睡决策考虑"是否正在陪你聊" —— 深夜聊天她会硬撑，而不是到点被 tick 强制入睡
-8. **会话参与者（§五十二）**：`conversation_participants`（Agent + User），群聊数据模型天然成立（UI 暂不开放群聊）
+1. **Chat Core（消息永不丢）**：`POST /messages` 在请求内**同步落库**并返回 canonical messageId；
+   `clientMessageId` 幂等（重复提交不重复入库）；事务提交后经 Outbox 异步触发 Agent ——
+   Agent 崩溃 / LLM 超时 / 服务器重启 / 用户刷新页面，消息都不会丢。
+   前端收到事件**增量 upsert**（temp → canonical 替换），不整表重载。
+2. **SSE 游标**：`event_log` 持久化事件日志，`GET /events` 支持 `Last-Event-ID` 断线重连回放。
+3. **Person + 关系图**：`persons` 表（用户 / Agent / 其他人物都是 Person）；
+   关系是多维真实状态（熟悉/信任/亲密/好感/张力/双向性/尊重/依赖/联系压力）；
+   **创建伴侣时选择关系类型**（恋人/最好的朋友/朋友/姐姐/同事/同学/家人…），初始化各维度；
+   沉默越久联系压力越高 → 驱动主动联系。
+4. **世界事件引擎**：`digital_world_events` 持久化世界事件（通信/生活/身体/社交/记忆/意图/外界），
+   事件带 causation/correlation 因果链。
+5. **行为引擎（中央行为选择器）**：每 5 分钟问一次"她此刻最可能做什么？"
+   —— 继续生活 / 睡觉 / 看手机 / 主动联系用户 / 联系朋友 / 发呆，
+   由价值 − 打断成本 + 关系/人格修正 + 随机扰动 → 概率化选择。
+   **主动联系只是候选之一**；人格（外向/主动）与关系张力真实影响行为概率。
+6. **睡眠涌现**：睡眠是行为候选，不是时刻表 —— 睡眠压力 + 昼夜节律 + 身体 + 动机综合决定；
+   深夜陪你聊她会硬撑。作息从历史涌现（午睡推迟当晚）。
+7. **关系驱动认知**：同一句话，亲密的人发来唤醒更深（Cognitive Wakeup 带关系权重）；
+   回复节奏随熟悉度/张力变化；情绪随关系演化（冲突/修复/里程碑）。
+8. **会话参与者**：`conversation_participants`（一对一 = Agent + User），群聊数据模型天然成立。
+9. **拟真表达**：打字节奏（短/复杂/多段）、已读延迟、连发聚合、主动消息进聊天框（不是通知）。
 
-### V8 新增数据表
+### 数据表（50 张）
 
-| 表 | 用途 |
-|----|------|
-| `persons` | Person 身份层（USER/AGENT/OTHER 都是 Person） |
-| `conversation_participants` | 会话参与者（一对一 = Agent+User；未来群聊多参与者） |
-| `event_log` | SSE 事件日志（游标回放，消息永不丢） |
-| `digital_world_events` | 世界事件（数字人世界持续运行的基础设施） |
-
-### V8 新增列
-
-| 表 | 列 | 说明 |
-|----|-----|------|
-| `messages` | `client_message_id` | 客户端幂等键（同会话唯一） |
-| `relationships` | `tension/reciprocity/respect/dependence/connection_pressure` | 多维关系状态 |
-
-### V8 验收
-
-- `mvn clean test`：**全部测试全绿**（含新增 MessageCoreService / BehaviorEngine / RelationshipGraph / EventLogCursor / ConversationParticipant 测试）
-- `scripts/v8_check.sh`：同步落库(立即查库可见) / clientMessageId 幂等 / Person+关系类型落库 / 会话参与者 / SSE 游标重放 / 行为引擎 / Anti-AI 回归
-- `scripts/v5_check.sh` + `scripts/v6_check.sh` + `scripts/v7_check.sh`：V5/V6/V7 回归通过
-- 端到端：发送消息刷新后仍在（同步落库）；断线重连补回事件；深夜聊天不强制入睡；沉默后她会主动联系
-
----
-
-## V7 · Human Runtime（2026-08）
-
-> **V6 是"让 AI 拥有生活"，V7 是"让生活产生 AI 的行为"。**
->
-> 核心目标：让用户无法仅通过聊天行为判断对方是 AI。核心原则：**Chat App 是应用，Agent 是人。**
-> 用户只是这个数字人的一个重要社会关系，而不是它的全部世界。
-
-### V7 核心改造
-
-1. **取消固定作息（§1/§2）**：彻底删除 `if time>=sleepTime → SLEEP`。
-   睡眠是 **Emergent Behavior**，由睡眠压力(Process S) + 昼夜节律(Process C) + 身体 + 环境 + 动机综合决定。
-2. **Sleep Model（§3-§9）**：
-   - `circadian_states`：chronotype / sleep_pressure / sleep_debt / 节律偏移
-   - `sleep_sessions`：每次睡眠的时长/质量/类型/原因（"昨天睡了多久"）
-   - Sleep Decision：SLEEP / STAY_AWAKE / DELAY_SLEEP / NAP
-   - **意志克服睡意**：深夜聊天+重要话题 → 她会硬撑（"我其实已经有点困了哈哈"然后继续聊）
-   - **午睡推迟当晚**：14:00-19:00 午睡 → 当晚 22:00 睡意低 → 自然晚睡（习惯从历史涌现）
-   - **新伴侣作息初始化**：新伴侣不是"刚出生"，而是"已生活了一段时间"——按 chronotype 假定起床时间，睡眠压力从起床自然积累；深夜创建的非夜班伴侣合理入睡（凌晨不再醒着秒回）
-   - **夜班 chronotype 感知**：persona 含酒吧/夜班设定 → 自动 LATE 型（深夜保持清醒上班），不靠哈希随机
-3. **通信解耦（§10-§21）**：
-   - `POST /messages` **立即返回 DELIVERED（几十毫秒）**，不等待 Agent
-   - Agent 完全异步处理，回复通过 `GET /events` 事件流推送
-   - **Agent Runtime 任何异常都不能阻塞消息发送**
-   - 前端 Chat 改用 `POST /messages` + `GET /events`
-4. **Phone Runtime（§14-§17）**：`phone_notifications` 生命周期
-   - 通知 → 听到(heard) → 看到(seen) → 打开(opened) → 阅读(read)，每步都不必然
-   - 洗澡=没听到；客厅=听到但没拿手机；刷手机=看到→打开→读
-5. **Cognitive Wakeup（§22-§23）**：事件驱动认知分级
-   - NO_WAKE / MICRO_WAKE / ATTENTION / DELIBERATION / DEEP_THINKING
-   - "哈哈"→MICRO_WAKE（不打扰）；"被裁了"→DEEP_THINKING
-   - 用户消息绝不 NO_WAKE（真人收到消息至少会知道）
-6. **Activity 惯性（§29）**：看剧被消息打断→"等这集看完再看"，洗澡→洗完才看
-7. **Intention Runtime（§35-§36）**：`intentions` 意图记忆
-   - "等下我要告诉他一件事"不是普通记忆，是未来行为的潜在触发器
-   - 激活概率随时间演化，过期→FORGOTTEN（真人会忘）
-   - "忙完忘了回复"是自然过程，不是 bug
-8. **Behavioral Entropy（§50-§51）**：`BehavioralEntropyEvaluator`
-   - 规律是统计规律：她通常 23:30 左右睡，不是每天 23:30 睡
-   - 检测睡眠/回复/主动消息分布是否过于固定
-
-### V7 新增数据表
-
-| 表 | 用途 |
-|----|------|
-| `circadian_states` | 生物钟状态（chronotype/睡眠压力/睡眠债/节律偏移） |
-| `sleep_sessions` | 睡眠历史（时长/质量/类型/原因） |
-| `phone_notifications` | 手机通知生命周期（heard/seen/opened/read） |
-| `intentions` | 意图记忆（未来行为的潜在触发器） |
-
-### V7 验收
-
-- `mvn clean test`：**115 个测试全绿**（23 测试类，含 V7 新增 SleepModel/PhoneNotification/Intention/CognitiveWakeup/BehavioralEntropy/V7Message 等）
-- `scripts/v7_check.sh`：通信解耦(POST /messages 44ms) / Sleep Runtime / Phone Notification / 行为熵 / 端到端
-- `scripts/v5_check.sh` + `scripts/v6_check.sh`：V5/V6 回归通过
-- 端到端：POST /messages 立即返回 + Agent 异步回复；深夜新伴侣合理入睡；酒吧夜班伴侣深夜保持清醒上班
-
----
-
-## V6 · 拟真人格与持续生活（2026-08）
-
-
-> **V5 是"持续运行的 Person Runtime"；V6 是"一个持续生活、拥有内部状态、偶尔主动联系你、会因为现实活动暂时无法回复、会产生情绪和记忆、并以符合人物个性的方式表达的人"。**
->
-> 核心转变：不再是"等待用户输入的 AI 聊天机器人"，而是"一个拥有连续时间、生活、状态、记忆、关系、情绪、行为和表达能力的虚拟人物"。
-
-### V6 核心改造
-
-1. **Conversation Thread（§30）**：会话线程状态机（ACTIVE → PAUSED → RESUMABLE → ENDED → ABANDONED）。
-   真人经常"聊到一半去做别的事，过一段时间回来继续" —— 话题切换时旧线程暂停，回来时可恢复。
-   - 新表 `conversation_threads`
-   - `ThreadMaintenanceJob` 周期衰减（太久没聊 → RESUMABLE → 遗忘）
-   - 集成消息链路：用户消息自动 touch/切换线程
-2. **Unfinished Thought（§31）**：她想说没说完 / 想问忘了 / 回复被打断 → 记入未完成想法。
-   - `ThoughtService.createUnfinished`（优先级 + 过期时间）
-   - `UnfinishedThoughtActivationJob` 冷却期后重新激活 → 成为主动消息种子
-   - Brain DEFER 时自动记录"想回复但暂时没回"
-3. **Activity 具体化 + Interrupt（§6/§32）**：活动不再只是 SLEEP/WORK，而是具体场景。
-   - `LifeActivity` 增 `attentionDemand / interruptibility / phoneAvailability / moodEffect / progress`
-   - `ActivitySpecProvider` 按活动类型映射属性（会议注意力 0.92、可打断性 0.12；洗澡手机不可用）
-   - `LifeInterruptService` 支持"做饭 → 用户消息 → 看一眼回复 → 继续做饭"
-4. **Emotion Inertia + BodyState（§48/§49/§50）**：情绪不会因事件结束瞬间归零。
-   - 边际递减：已有情绪越高，新冲击影响越小
-   - 多维叠加：joy/loneliness/affection 与负面情绪并存（又开心又委屈）
-   - 身体状态：困倦/饥饿/不适放大负面、抑制正面
-5. **Memory Recall Probability（§19）**：记忆召回概率化。
-   - `recallProbability = 激活 × 显著性`，只有超过阈值才进入当前认知
-   - 检索回退：关键词匹配不到时回退最近记忆（她仍会"想起"近事）
-6. **Decision Validator（§44）**：每次 Brain 决策做一致性校验。
-   - 睡眠时不立即回复、开会忙时不回复、手机不在身边不查手机、没注意到不回复、冲突中不主动结束
-   - 违规 → 修正为可接受的替代动作
-7. **Behavior Pattern（§45/§46）**：人物逐渐形成习惯（非 Prompt，是数据）。
-   - 新表 `behavior_patterns`（模式/置信度/观察数/影响方向）
-   - 从真实互动学习：深夜消息→她回复慢、工作时段→不爱看手机、用户开心→她更主动
-8. **Expression 消息级时间模型（§56/§57）**：真人打字节奏。
-   - `TypingSimulationService`：短消息 0.8~2s、复杂 2~8s、多段每条间隔 0.8~4s
-   - `MessageSegment` 增 `typingDurationMs`
-9. **Communication Friction（§54）**：通信摩擦是特性不是 bug。
-   - `PendingMessageState` 增 `frictionType`（看到了没回/想回忘了/回一半被打断）+ `reviewCount`
-   - 复查时 Brain 想回又被打断 → 记录"想回忘了"并延后
-10. **Event Chain 因果链（§21）**：事件可连锁影响。
-    - `EventChainService`：出门吃饭 → 下雨 → 忘带伞 → 淋雨 → 心情下降 → 回忆 → 主动告诉用户
-    - `maxDepth = 3` 防无限剧情
-11. **Anti-AI Evaluation（§71/§72）**：检测"典型 AI 行为"。
-    - 秒回/从不忽略/从不主动结束/从不遗忘/主动轰炸/回复过长 → 真人感评分
-    - `GET /api/companions/{id}/v6/eval`
-
-### V6 新增数据表
-
-| 表 | 用途 |
-|----|------|
-| `conversation_threads` | 会话话题线程（状态机 + 情感基调 + 未解决意图） |
-| `behavior_patterns` | 行为模式学习（置信度 + 观察数） |
-
-### V6 新增列
-
-| 表 | 列 | 说明 |
-|----|-----|------|
-| `agent_states` | `sleepiness/hunger/physical_discomfort/focus` | 身体状态 |
-| `agent_states` | `loneliness/joy/affection` | 情绪叠加维度 |
-| `life_activities` | `attention_demand/interruptibility/phone_availability/mood_effect/progress` | 活动属性 |
-| `pending_message_states` | `friction_type/review_count` | 通信摩擦 |
-
-### V6 验收
-
-- `mvn clean test`：**81 个单元/集成测试全部通过**（16 测试类，含 V6 新增 10 类）
-- `scripts/v6_check.sh`：V6 表结构 + 线程 API + 行为模式 + 反 AI 评估
-- `scripts/v5_check.sh`：V5 回归通过
-- 新诊断端点：`GET /api/companions/{id}/v6/eval`
-
----
-
-## V5 · Continuous Person Runtime（2026-08）
-
-> **V4 是"持续运行的 AI 人"；V5 是"拥有世界状态、注意力、情绪、记忆、事件模拟、执行控制和表达系统的持续运行的人格 Runtime"。**
->
-> 目标：让用户发来的消息，成为这个人现实生活中发生的一件事，而不是"收到就回答"。
-
-### V5 核心改造
-
-1. **消息流水线（P1）**：`用户消息 → WorldEvent → Emotion → Attention → Brain → (REPLY | DEFER | IGNORE)`。
-   消息**不再直接进入 Brain** —— 先经过情绪评估改变内部状态，再由手机/注意力层决定"她有没有看到"，
-   最后 Brain 决定"要不要回 / 怎么回 / 回不回"。
-2. **Emotion Agent（P3，P0 优先级）**：用 LLM 结构化 `emotion-appraisal` 取代关键词规则。
-   输出 `appraisal + emotionDelta + memoryTriggers + confidence + reason`，经 `EmotionReducer` 落状态；
-   关键词只作为 cheap signal（LLM 不可用/低置信度时回退）。
-3. **Brain Executive（P4）**：取代 `replyDrive > avoidDrive` 的最终裁决。
-   Brain 输出结构化 `action（REPLY/SHORT_ACK/CHECK_PHONE_FIRST/READ_NO_REPLY/IGNORE/END_CONVERSATION）`，
-   Drives 只作为上下文输入。**Brain 不输出自然语言**。
-4. **Expression Agent（P5）**：决定"怎么说 / 说几条 / 什么时候发"，与"说什么"分离。
-   表达策略（tone/directness/warmth/playfulness/vulnerability）注入生成提示词；不再按标点机械拆句。
-5. **已读不回复查（P1 §79）**：`PendingMessageState` 记录"看到了但不回" + 复查时间，
-   `PendingMessageReevaluationJob` 到点唤醒 Brain —— 会议结束可能回、可能继续冷处理、也可能放下。
-6. **Memory Agent（P2）**：两阶段召回 —— 廉价检索 → LLM 激活评分（`memory-recall`），激活后重排。
-7. **Event Simulation（P6）**：LLM 提候选、Runtime 决定是否发生（NORMAL 概率最高），事件落 `world_events`，
-   产生经历与想法（可能成为主动分享的种子）。
-8. **Runtime 基础设施（P0）**：`AgentTrace`（可回放"为什么她突然不理我"）、`ScheduledAction`（排程持久化，重启不丢）、
-   `WorldEventLog`（事件溯源）、`StateReducer`（所有状态变更可追踪）、`AgentRegistry` + `skills/`（技能注册表）。
-9. **Skills（P7）**：`resources/skills/**/SKILL.md`（core/emotion/brain/memory/expression/event），
-   `SkillRegistry` 按 Agent 类型固定注入；身份/人格/关系与技能分离。
-
-### V5 数据表（新增）
-
-| 表 | 用途 |
-|----|------|
-| `agent_traces` | Agent 调用痕迹（输入摘要/输出/耗时/状态），用于回放 |
-| `scheduled_actions` | 持久化排程动作（延迟回复/复查/主动行为），重启不丢 |
-| `pending_message_states` | "已读未回"消息 + 复查时间 |
-| `world_events` | 世界事件日志（事件溯源） |
-| `agent_states` 新增列 | `sadness / anxiety / warmth`（情绪维度） |
-
-### V5 验收
-
-- `mvn test`：**24 个单元/集成测试全部通过**（EmotionReducer / SkillRegistry / MemoryAgent / ScheduledActionService / V5MessagePipeline 昼夜场景 / 回复路径）。
-- `scripts/v5_check.sh`：V5 运行时表结构 + Agent 注册 + 消息生命周期 + Agent 痕迹 + 诊断端点。
-- `scripts/v4_check.sh`：V4 回归。
-- 诊断端点：`GET /api/companions/{id}/v5/{traces|scheduled|pending-messages|world-events|agents}`
-
-### V5 已知边界
-
-- 活动尚未实现"ActivityPlan + Checkpoint"（由 LifeRuntime 按作息推进）；事件模拟只做轻量扰动。
-- 单实例内存事件总线（多实例需 Redis）。
-- LLM 不可用（Mock 模式）时所有 Agent 回退到规则基准 —— 保证离线可跑、行为确定。
-
-
-| 项 | 值 |
+| 域 | 表 |
 |----|----|
-| 后端 | Spring Boot 2.7.18 · JDK 17 · 模块化单体（210+ 个 Java 类，25 个业务模块） |
-| 前端 | React 19 · Vite 8 · TypeScript(strict) · Tailwind CSS 3 · Zustand |
-| 数据库 | PostgreSQL 16 · 36 张表（含 pgvector） |
-| 大模型 | 统一 LLM 网关 → DeepSeek(deepseek-chat)，无 key 自动降级 Mock；模型用途路由可配 |
-| 线上 | `https://companion.luxera.top`（nginx + systemd jar :8081） |
-| 代码 | GitHub `Hojay-Chen/companion-agent` |
-| 当前数据量 | 54 用户 / 54 伴侣 / 449 消息 / 507 记忆 / 251 反思记录 |
+| 人 | `persons`（User/Agent/Other 都是 Person）、`users`、`companions`、`persona_versions` |
+| 关系 | `relationships`（多维）、`relationship_events`、`relationship_narratives`、`relationship_threads`、`shared_experiences`、`promises` |
+| 会话 | `conversations`、`conversation_participants`、`conversation_threads`、`conversation_sessions`、`conversation_exchanges`、`conversation_boundaries`、`messages`（含 client_message_id）、`message_appraisals` |
+| 记忆 | `memories`、`memory_links`、`entities`、`experiences` |
+| 用户模型 | `user_facts`、`user_preferences`、`user_patterns`、`user_hypotheses`、`user_chat_styles` |
+| 状态与身体 | `agent_states`、`agent_traces`、`circadian_states`、`sleep_sessions`、`companion_phone_states`、`phone_notifications` |
+| 生活 | `companion_life`、`life_activities`、`companion_life_events`、`self_models` |
+| 认知 | `thoughts`、`intentions`、`open_loops`、`emotional_episodes` |
+| 世界 | `world_events`、`digital_world_events`、`event_log`、`scheduled_actions`、`pending_message_states`、`interaction_sessions` |
+| 行为 | `behavior_patterns` |
+| 工具 | `reminders`、`companion_notifications`、`reflection_records` |
+
+### 验收
+
+- `mvn clean test`：**142 个测试全绿**
+- `scripts/check.sh`：同步落库 / clientMessageId 幂等 / Person+关系类型 / 会话参与者 / SSE 游标重放 / 行为引擎 / 反 AI 评估 / 端到端
+
+---
 
 ## 📖 目录
 
-- [V5 · Continuous Person Runtime（2026-08）](#v5--continuous-person-runtime2026-08)
-  - [V5 核心改造](#v5-核心改造)
-  - [V5 数据表（新增）](#v5-数据表新增)
-  - [V5 验收](#v5-验收)
-  - [V5 已知边界](#v5-已知边界)
 - [8. 实体关系总览](#8-实体关系总览)
 - [9. 数据表详细设计（36 张表）](#9-数据表详细设计36-张表)
   - [9.1 用户与伴侣](#91-用户与伴侣)
@@ -318,7 +119,7 @@
   - [24.3 会话 / 聊天](#243-会话--聊天)
   - [24.4 记忆](#244-记忆)
   - [24.5 用户模型 / 关系 / 状态 / 提醒 / 通知 / 反思](#245-用户模型--关系--状态--提醒--通知--反思)
-  - [24.7 V2.0 数字人格内核（用户视角）](#247-v20-数字人格内核用户视角)
+  - [24.7 数字人格内核（用户视角）](#247-v20-数字人格内核用户视角)
   - [24.6 管理（验收/运维）](#246-管理验收运维)
 - [25. 快速开始](#25-快速开始)
   - [25.1 环境要求](#251-环境要求)
@@ -336,56 +137,6 @@
 - [29. 已知限制（如实）](#29-已知限制如实)
 - [30. 与设计文档路线图的关系](#30-与设计文档路线图的关系)
 - [31. 演进路线](#31-演进路线)
-- [32. V2.0 重构现状（数字人格内核）](#32-v20-重构现状数字人格内核)
-  - [32.1 一句话](#321-一句话)
-  - [32.2 架构统一（Strangler Pattern）](#322-架构统一strangler-pattern)
-  - [32.3 新增模块与数据](#323-新增模块与数据)
-  - [32.4 验收场景（V2.0 §50，全部实测通过）](#324-验收场景v20-50全部实测通过)
-  - [32.5 完成度](#325-完成度)
-  - [32.6 测试与评测](#326-测试与评测)
-  - [32.7 待激活项](#327-待激活项)
-- [33. V3.0 Interaction Runtime（P0 完成）](#33-v30-interaction-runtimep0-完成)
-  - [33.1 一句话](#331-一句话)
-  - [33.2 P0 五件事（全部完成）](#332-p0-五件事全部完成)
-  - [33.3 Interaction Runtime 链路](#333-interaction-runtime-链路)
-  - [33.4 会话模型（Conversation → Session → Exchange → Message）](#334-会话模型conversation--session--exchange--message)
-  - [33.5 验收行为（实测通过，`scripts/v3_check.sh`）](#335-验收行为实测通过scriptsv3_checksh)
-  - [33.6 对原方案的两处修正（工程落地）](#336-对原方案的两处修正工程落地)
-  - [33.7 完成度](#337-完成度)
-- [34. V3.1 P1 — 她更像一个"有自己生活的人"（完成）](#34-v31-p1--她更像一个有自己生活的人完成)
-  - [34.1 CompanionAvailability（她不是永远在线）](#341-companionavailability她不是永远在线)
-  - [34.2 UserChatStyle（学习你的聊天习惯，但不模仿你）](#342-userchatstyle学习你的聊天习惯但不模仿你)
-  - [34.3 SelfDisclosure 增强（双向关系）](#343-selfdisclosure-增强双向关系)
-  - [34.4 FollowUp 增强（关系型跟进）](#344-followup-增强关系型跟进)
-  - [34.5 ResponsePlan（她也可以连发，低频）](#345-responseplan她也可以连发低频)
-  - [34.6 验收（`scripts/p1_check.sh` 全过）](#346-验收scriptsp1_checksh-全过)
-- [35. V3.2 P2 — 记忆 3.0 起步（完成）](#35-v32-p2--记忆-30-起步完成)
-  - [35.1 Entity Layer（设计 §五十四：长期指代）](#351-entity-layer设计-五十四长期指代)
-  - [35.2 Memory Disclosure（设计 §五十八：记得≠每次说出来）](#352-memory-disclosure设计-五十八记得每次说出来)
-  - [35.3 验收（`scripts/p2_check.sh` 全过）](#353-验收scriptsp2_checksh-全过)
-  - [35.4 一个踩坑记录](#354-一个踩坑记录)
-- [36. V4.0 Continuous Human Runtime（P0/P1 核心完成）](#36-v40-continuous-human-runtimep0p1-核心完成)
-  - [36.1 一句话](#361-一句话)
-  - [36.1.1 V4 完整架构](#3611-v4-完整架构)
-  - [36.2 Message Lifecycle（消息状态可见）](#362-message-lifecycle消息状态可见)
-  - [36.3 持久 Event Stream（`GET /events`）](#363-持久-event-streamget-events)
-  - [36.4 Appraisal（消息先改变内部状态）](#364-appraisal消息先改变内部状态)
-  - [36.5 Drives + Behavior 竞争](#365-drives--behavior-竞争)
-  - [36.6 DEFER（看到了但不回）](#366-defer看到了但不回)
-  - [36.7 验收（`scripts/v4_check.sh` 全过）](#367-验收scriptsv4_checksh-全过)
-  - [36.8 对原方案的两处工程修正](#368-对原方案的两处工程修正)
-  - [36.9 完成度](#369-完成度)
-  - [36.9.1 端到端消息流转（开会场景，验证 V4 因果链）](#3691-端到端消息流转开会场景验证-v4-因果链)
-- [37. V4.1 P2/P3 — 完整 Human Behavior + Natural Expression（完成）](#37-v41-p2p3--完整-human-behavior--natural-expression完成)
-  - [37.1 Phone Runtime（她也有手机，手机不是总响的）](#371-phone-runtime她也有手机手机不是总响的)
-  - [37.2 Attention 动态场（忙 ≠ 永远不看手机）](#372-attention-动态场忙--永远不看手机)
-  - [37.3 负面情绪衰减 + Re-engagement](#373-负面情绪衰减--re-engagement)
-  - [37.3.1 主动消息机制重构（V4.2）](#3731-主动消息机制重构v42)
-  - [37.3.2 Appraisal 正则误判修复（V4.2）](#3732-appraisal-正则误判修复v42)
-  - [37.3.3 Expression Loop 触发放宽（V4.2）](#3733-expression-loop-触发放宽v42)
-  - [37.4 Expression Loop（她的思想真的在展开）](#374-expression-loop她的思想真的在展开)
-  - [37.5 Playwright 实测 + 用户评审发现的 Bug（已修复）](#375-playwright-实测--用户评审发现的-bug已修复)
-  - [37.6 Playwright 实测通过（真实 UI）](#376-playwright-实测通过真实-ui)
 - [附录](#附录)
 ---
 
@@ -408,9 +159,9 @@ users 1─* companions 1─* conversations 1─* messages
 
 > 所有核心表强制携带 `user_id + companion_id`（多租户隔离，查询强制过滤）。
 
-## 9. 数据表详细设计（36 张表）
+## 9. 数据表详细设计（50 张表）
 
-> 原有 19 表 + V2.0 新增 10 表 + V3 新增 5 表 + V4 新增 2 表（`message_appraisals` / `companion_phone_states`）。
+> 原有 19 表 + 新增 10 表 + 新增 5 表 + 新增 2 表（`message_appraisals` / `companion_phone_states`）。
 
 ### 9.1 用户与伴侣
 
@@ -426,12 +177,12 @@ users 1─* companions 1─* conversations 1─* messages
 | 表 | 字段 |
 |----|------|
 | `conversations` | id, user_id, companion_id, title, started_at, last_message_at, message_count, summary, status, created_at, updated_at |
-| `messages` | id, conversation_id, sender_type, content, intent, emotion, topic, is_proactive, session_id(V3), exchange_id(V3), message_kind(V3: NORMAL/SHORT_ACK/PROACTIVE/FOLLOW_UP/SYSTEM/TOOL_RESULT), delivery_status(V3), metadata(JSON), created_at |
-| `interaction_sessions`(V3) | id, conversation_id, companion_id, user_id, started_at, ended_at, message_count |
-| `conversation_exchanges`(V3) | id, session_id, conversation_id, companion_id, user_id, started_at, ended_at, status(OPEN/CLOSED), message_count |
-| `conversation_boundaries`(V3) | id, conversation_id, companion_id, user_id, type(SOFT_END/HARD_END/PAUSE/BUSY/SLEEP/DISTRACTED/RETURN_LATER), reason, occurred_at |
-| `message_appraisals`(V4) | id, message_id, companion_id, emotional_impact, relationship_impact, urgency, warmth, hurt, anger, personal_relevance, context |
-| `companion_phone_states`(V4 P2) | id, companion_id, notification_mode(sound/vibrate/silent/dnd), sound_enabled, vibration_enabled, phone_location(hand/desk/bag/other_room), battery, screen_on, do_not_disturb, last_checked_at |
+| `messages` | id, conversation_id, sender_type, content, intent, emotion, topic, is_proactive, session_id, exchange_id, message_kind(NORMAL/SHORT_ACK/PROACTIVE/FOLLOW_UP/SYSTEM/TOOL_RESULT), delivery_status, metadata(JSON), created_at |
+| `interaction_sessions` | id, conversation_id, companion_id, user_id, started_at, ended_at, message_count |
+| `conversation_exchanges` | id, session_id, conversation_id, companion_id, user_id, started_at, ended_at, status(OPEN/CLOSED), message_count |
+| `conversation_boundaries` | id, conversation_id, companion_id, user_id, type(SOFT_END/HARD_END/PAUSE/BUSY/SLEEP/DISTRACTED/RETURN_LATER), reason, occurred_at |
+| `message_appraisals` | id, message_id, companion_id, emotional_impact, relationship_impact, urgency, warmth, hurt, anger, personal_relevance, context |
+| `companion_phone_states`(P2) | id, companion_id, notification_mode(sound/vibrate/silent/dnd), sound_enabled, vibration_enabled, phone_location(hand/desk/bag/other_room), battery, screen_on, do_not_disturb, last_checked_at |
 
 ### 9.3 记忆
 
@@ -439,7 +190,7 @@ users 1─* companions 1─* conversations 1─* messages
 |----|------|
 | `memories` | id, user_id, companion_id, type(episodic/semantic/shared), content, summary, importance, confidence, emotional_weight, relationship_weight, retrieval_count, last_retrieved_at, occurred_at, expires_at, status, source_type, source_id, created_at |
 | `memory_links` | id, from_memory_id, to_memory_id, relation(same_topic), strength, created_at |
-| `entities`(V3 P2) | id, user_id, companion_id, type(PERSON/COMPANY/PLACE/…), name, description, first_seen_at, last_seen_at, mention_count, last_context, salience, status |
+| `entities`(P2) | id, user_id, companion_id, type(PERSON/COMPANY/PLACE/…), name, description, first_seen_at, last_seen_at, mention_count, last_context, salience, status |
 
 ### 9.4 用户模型
 
@@ -449,7 +200,7 @@ users 1─* companions 1─* conversations 1─* messages
 | `user_preferences` | id, user_id, companion_id, category, preference, value(JSON), confidence, source_type, source_id, observed_at, status |
 | `user_patterns` | id, user_id, companion_id, pattern, description, confidence, evidence_count, evidence(JSON), first_observed_at, last_observed_at, status |
 | `user_hypotheses` | id, user_id, companion_id, hypothesis, description, confidence, evidence(JSON), status, created_at, updated_at |
-| `user_chat_styles`(V3 P1) | id, companion_id, user_id, sample_count, avg_message_length, avg_gap_ms, burst_rate, emoji_rate, laugh_rate, question_rate, active_hour_start/end, hour_distribution(JSON), last_active_at |
+| `user_chat_styles`(P1) | id, companion_id, user_id, sample_count, avg_message_length, avg_gap_ms, burst_rate, emoji_rate, laugh_rate, question_rate, active_hour_start/end, hour_distribution(JSON), last_active_at |
 
 ### 9.5 关系 / 状态 / 反思 / 主动 / 工具
 
@@ -520,10 +271,10 @@ http.csrf().disable()
 ## 12. 聊天对话（核心交互）
 
 ### 功能介绍
-流式打字机对话；支持多会话；**V3 Interaction Runtime**：收到消息先决定"要不要回、投入多少、怎么回"，连发消息自动合并为一次回复，回复长度/问题/建议由预算决定而非固定模板，她也会有自己的回复节奏（延迟/打字指示）。每条消息带意图/情绪/话题；对话窗口显示真实时间（今天/昨天/日期分隔 + HH:mm）。
+流式打字机对话；支持多会话；**Interaction Runtime**：收到消息先决定"要不要回、投入多少、怎么回"，连发消息自动合并为一次回复，回复长度/问题/建议由预算决定而非固定模板，她也会有自己的回复节奏（延迟/打字指示）。每条消息带意图/情绪/话题；对话窗口显示真实时间（今天/昨天/日期分隔 + HH:mm）。
 
 ### 实现原理
-- **SSE 流式（V3 具名事件协议）**：`ChatController.chat()` 返回 `SseEmitter`（300s），线程池执行：
+- **SSE 流式（具名事件协议）**：`ChatController.chat()` 返回 `SseEmitter`（300s），线程池执行：
   ```
   event:meta         {intent, emotion, topic, action, commitment}   ← 决策结果
   event:typing_start {conversationId}    ← 仅 commitment≥CASUAL 才发
@@ -571,7 +322,7 @@ String emotion = root.path("emotion").asText("");
 - `WorkingMemory`：`ConcurrentHashMap<companionId:conversationId, Entry>`，Entry 含 `recent(Deque)`、`currentTopic/Intent/Emotion`、`currentEntities`、`lastUpdated`。
 - **TTL 过期**：超过 `working-memory-ttl-minutes: 720` 自动失效。
 - `ChatController` 同步记录每条消息；`PerceptionRefiner` 写入精炼后的话题/情绪/实体。
-- `ContextLoader` 读取 → `ContextCompiler` 渲染"当前会话状态"块（V2 起替代旧 `PromptAssembler`）。
+- `ContextLoader` 读取 → `ContextCompiler` 渲染"当前会话状态"块（起替代旧 `PromptAssembler`）。
 - 内存实现（接口可替换 Redis，多实例共享）。
 
 ## 15. 记忆系统
@@ -582,7 +333,7 @@ String emotion = root.path("emotion").asText("");
 - **Semantic**：对用户的长期认知（"用户加班多，容易累"）
 - **Shared**：双方共同经历/默契（"你们都爱手冲咖啡"）
 
-用户可查看记忆、搜索、看"为什么你知道"（来源对话）、遗忘单条、清空、导出 JSON。记忆会**随时间和使用演化**（衰减/强化）。**V3 P2 新增实体层**：她还会记住你常提的"人/地方/事"（`entities` 表），用于理解"那家公司/上次那个地方"这类长期指代。
+用户可查看记忆、搜索、看"为什么你知道"（来源对话）、遗忘单条、清空、导出 JSON。记忆会**随时间和使用演化**（衰减/强化）。**P2 新增实体层**：她还会记住你常提的"人/地方/事"（`entities` 表），用于理解"那家公司/上次那个地方"这类长期指代。
 
 ### 实现原理
 
@@ -704,15 +455,15 @@ Schedule s = new Schedule(8 + h%3, 17 + (h/3)%3, 23 + (h/18)%2, 6 + (h/9)%2);
 到期提醒先转通知（系统事件, 不受打扰控制）
 每伴侣过滤：DND(23-8) / 作息=SLEEP / 最小间隔1h / 每日上限5
 decide() 按优先级评估触发，每个触发 expected_value × 作息因子
-  触发: open_loop(未了结事项, V3 P1 价值递减) / thought(想起你) / late_work / morning_greeting / evening_checkin / follow_up_joy / silence
+  触发: open_loop(未了结事项, P1 价值递减) / thought(想起你) / late_work / morning_greeting / evening_checkin / follow_up_joy / silence
 打断成本:
   cost = 0.15 + 深夜(0.4) + 22点后(0.1) + 4h内聊过(0.35) ± 响应率(0.1) + 今日上限(0.3)
 cost ≥ expected_value → DO_NOTHING
 通过 → draftMessage(): LLM 按"人格+当前作息+场景"生成（失败回退模板）
-     → 只写入最新会话 message_kind=PROACTIVE（V3: 主动=Chat 消息, 不再写 Notification）
+     → 只写入最新会话 message_kind=PROACTIVE（主动=Chat 消息, 不再写 Notification）
 ```
 
-> **V3 变化**：主动消息只进聊天框（`message_kind=PROACTIVE`），不再是 Notification —— 她"主动找你"是关系互动而非系统通知；去重/间隔 bookkeeping 改查 `messages(kind=PROACTIVE)`。提醒（Reminder）仍走 Notification（系统事件）。
+> **变化**：主动消息只进聊天框（`message_kind=PROACTIVE`），不再是 Notification —— 她"主动找你"是关系互动而非系统通知；去重/间隔 bookkeeping 改查 `messages(kind=PROACTIVE)`。提醒（Reminder）仍走 Notification（系统事件）。
 
 ## 21. 工具与提醒
 
@@ -796,7 +547,7 @@ public interface LlmGateway {
 | POST | `/api/companions/{cid}/conversations` | 新建会话 |
 | GET | `/api/companions/{cid}/conversations/{id}/messages` | 消息列表 |
 | POST | `/api/companions/{cid}/conversations/{id}/chat` | **SSE 流式聊天**（单条 `{content}` 或连发合并 `{messages:[{content}]}`；事件含 typing_start/typing_stop/boundary/message） |
-| GET | `/api/companions/{cid}/events` | **V4 持久事件流**（长连接，实时推已读/打字/主动消息/心跳，25s ping） |
+| GET | `/api/companions/{cid}/events` | **持久事件流**（长连接，实时推已读/打字/主动消息/心跳，25s ping） |
 
 ### 24.4 记忆
 | 方法 | 路径 | 说明 |
@@ -805,7 +556,7 @@ public interface LlmGateway {
 | GET | `/api/companions/{cid}/memories/search?q=` | 检索 |
 | GET | `/api/companions/{cid}/memories/export` | 导出 JSON |
 | GET | `/api/companions/{cid}/memories/graph` | 记忆图谱 |
-| GET | `/api/companions/{cid}/memories/entities` | 用户常提实体（V3 P2） |
+| GET | `/api/companions/{cid}/memories/entities` | 用户常提实体（P2） |
 | GET | `/api/companions/{cid}/memories/why?q=` | 为什么你知道（含来源） |
 | GET | `/api/companions/{cid}/memories/{id}/source` | 单条来源摘录 |
 | DELETE | `/api/companions/{cid}/memories/{id}` | 遗忘 |
@@ -826,7 +577,7 @@ public interface LlmGateway {
 | GET | `/api/companions/{cid}/notifications/unread-count` | 未读数 |
 | GET | `/api/companions/{cid}/reflections` | 反思记录 |
 
-### 24.7 V2.0 数字人格内核（用户视角）
+### 24.7 数字人格内核（用户视角）
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/companions/{cid}/life` | 她今天在干嘛（Life Runtime） |
@@ -891,11 +642,10 @@ sudo bash companion-agent/scripts/deploy.sh
 ### 25.5 测试脚本
 
 ```bash
-BASE=http://127.0.0.1:8081 bash scripts/smoke.sh      # V2 全链路冒烟（注册→建伴→SSE→记忆→关系→反思）
-BASE=http://127.0.0.1:8081 bash scripts/v3_check.sh   # V3 P0 验收（连发一次回/短陪伴/洗澡SOFT_END/自然重开/嗯=不回）
-BASE=http://127.0.0.1:8081 bash scripts/p1_check.sh   # V3 P1 验收（聊天习惯学习/连发率/表结构）
-BASE=http://127.0.0.1:8081 bash scripts/p2_check.sh   # V3 P2 验收（实体抽取/实体API/表结构）
-BASE=http://127.0.0.1:8081 bash scripts/v4_check.sh   # V4 验收（message_read/Appraisal/DEFER/表结构）
+BASE=http://127.0.0.1:8081 bash scripts/check.sh       # 全量验收（表结构/端到端/同步落库/幂等/SSE游标/行为引擎/反AI）
+BASE=http://127.0.0.1:8081 bash scripts/smoke.sh       # 全链路冒烟（登录→建伴→SSE→记忆→关系→反思）
+BASE=http://127.0.0.1:8081 bash scripts/longterm_test.sh  # 长期连续性（记忆/生活/关系/主动）
+BASE=http://127.0.0.1:8081 bash scripts/evaluate.sh    # Human-likeness 评测
 ```
 
 ## 26. 非功能设计
@@ -940,8 +690,8 @@ BASE=http://127.0.0.1:8081 bash scripts/v4_check.sh   # V4 验收（message_read
 - **冒烟**（scripts/smoke.sh）：全链路通过。
 - **4 类长期连续性测试**（scripts/longterm_test.sh，自动断言）：记忆/生活/关系/主动连续性全通过。
 - **Human-likeness 评测**（scripts/evaluate.sh，自动打分）：10 维 1-5 分。
-- **验收场景 A-E**（V2.0 §50）：面试跟进、今天干嘛、累的情绪持续、一周沉默后自然联系，全部通过。
-- **真实模型验证**：回复长短随消息价值变化（V3 预算）、提醒时间正确、记忆图谱建链、记忆透明带来源、LLM 反思有洞察、人格演化在跑、主动消息按时段 LLM 生成、作息体现（周六回复"窝在沙发喝茶"）。
+- **验收场景 A-E**（§50）：面试跟进、今天干嘛、累的情绪持续、一周沉默后自然联系，全部通过。
+- **真实模型验证**：回复长短随消息价值变化（预算）、提醒时间正确、记忆图谱建链、记忆透明带来源、LLM 反思有洞察、人格演化在跑、主动消息按时段 LLM 生成、作息体现（周六回复"窝在沙发喝茶"）。
 - **已修 Bug**：
   - LLM 时间幻觉（提醒年份错）→ 注入当前日期 + 过去时间兜底
   - 部署脚本丢 EnvironmentFile 导致降级 Mock → 已修
@@ -959,8 +709,8 @@ BASE=http://127.0.0.1:8081 bash scripts/v4_check.sh   # V4 验收（message_read
 1. **向量检索需 embedding key 激活**：pgvector 已装+接线，但需配 `EMBEDDING_API_KEY`（DeepSeek 无 embedding 接口）才启用真实向量；未配时回退结构排序。
 2. **WorkingMemory 单实例内存**：多实例部署需换 Redis。
 3. **主动消息仅站内通知**：无 APNs/FCM 手机推送。
-4. **工具层仅提醒**：无 MCP / 日历 / 搜索（V2.0 方案 §49 后置）。
-5. **模型 deepseek-chat**：无推理模式 / 语音 / 图片 / 多模态（V3/V4 后置）。
+4. **工具层仅提醒**：无 MCP / 日历 / 搜索（方案 §49 后置）。
+5. **模型 deepseek-chat**：无推理模式 / 语音 / 图片 / 多模态（后置）。
 6. **单机部署**：无高可用、无 K8s（方案后置）。
 7. **认证简单**：用户名+密码 JWT，无邮箱验证 / OAuth / 找回密码。
 8. **多租户应用层过滤**：非数据库 RLS。
@@ -973,538 +723,15 @@ BASE=http://127.0.0.1:8081 bash scripts/v4_check.sh   # V4 验收（message_read
 | 阶段 | 状态 |
 |------|------|
 | MVP（§95） | ✅ 完成 |
-| V2.0 重构方案（44/44） | ✅ 全部完成（生命内核/认知内核/自我模型/关系叙事/行为策略/主动2.0/记忆2.0/可解释性/评测） |
-| V2（§97） | ✅ 完成 |
-| V3（§98） | ◐ 部分（关联记忆+人格演化+多模态中的语音/图片未做） |
-| V4（§99 生态） | ⏳ 未启动 |
+| 重构方案（44/44） | ✅ 全部完成（生命内核/认知内核/自我模型/关系叙事/行为策略/主动2.0/记忆2.0/可解释性/评测） |
+| 人格与长期记忆 | ✅ 完成 |
+| 关系与生态 | ◐ 部分（多模态中的语音/图片未做） |
+| 多端/群聊/生态 | ⏳ 未启动 |
 
 ## 31. 演进路线
 
 - **短期**：配 `EMBEDDING_API_KEY` 激活向量检索、手机推送、MCP 工具层（日历/天气/搜索）。
 - **中期**：语音对话、用户自定义作息注入、真实用户灰度、Human-likeness 评测接入 CI。
-- **长期**：V4 多端共享记忆/身份、K8s 高可用、RLS 加固、审计日志。
+- **长期**：多端共享记忆/身份、K8s 高可用、RLS 加固、审计日志。
 
 ---
-
-## 32. V2.0 重构现状（数字人格内核）
-
-> 依据《Luxera Companion V2.0 重构设计方案》逐节落地，采用 Strangler Pattern 演进，不推倒重来。
-
-### 32.1 一句话
-
-**从"记得用户的 AI"升级为"拥有自己连续生命、自我模型、内在思想、关系叙事、主动行为能力的数字人格"。** 验收场景 A-E 全部通过。
-
-### 32.2 架构统一（Strangler Pattern）
-
-```
-旧 CompanionRuntime ──委托──> CompanionCognitiveRuntime（统一内核）
-                                    ├─ processUserMessage()  一次用户消息全链路
-                                    └─ tick()                无交互时的生命推进
-数据流: WorldTime → Life → Emotion → Thought → [SelfModel|UserModel|Relationship]
-        → Memory → OpenLoops → BehaviorPolicy → ContextCompiler → LLM
-        → Response → Experience → Consolidation → 记忆/自我/关系/人格学习
-```
-
-旧 `PromptAssembler`/`ContextBuilder` 已标 `@Deprecated`，由 `ContextCompiler`/`ContextLoader` 取代。
-
-### 32.3 新增模块与数据
-
-| 类别 | 内容 |
-|------|------|
-| 新增包（7） | `life/` `thought/` `emotion/` `experience/` `openloop/` `selfmodel/` `behavior/` |
-| 新增表（10，共 29） | companion_life / life_activities / thoughts / emotional_episodes / open_loops / self_models / experiences / relationship_threads / promises / relationship_narratives |
-| 核心新类 | CompanionCognitiveRuntime / CompanionContext / ContextLoader / ContextCompiler / BehaviorPolicyEngine / BehaviorConstraints / MemoryConsolidator / SelfModelExtractor / ThoughtEngine / EmotionEngine / LifeRuntime / LearningContext |
-
-### 32.4 验收场景（V2.0 §50，全部实测通过）
-
-| 场景 | 结果 |
-|------|------|
-| A · 用户说"明天面试" | → OpenLoop=面试 + Thought=curiosity，**今天不打扰**（SUPPRESSED）✅ |
-| B · 面试后 | Thought 重新激活 → 主动"面试怎么样"（时间感知，不提前）✅ |
-| C · "你今天干嘛了" | 从 Life Runtime 回答（非随机）✅ |
-| D · "我最近真的有点累" | EmotionalEpisode(tired/anxious) 持续影响行为 ✅ |
-| E · 一周没聊 | 依据 Thought/OpenLoop/Relationship 决定是否/为何/如何联系 ✅ |
-
-### 32.5 完成度
-
-```
-✅ 44 节 · ◐ 4 节 · ❌ 0 · ⛔ 1（MCP 工具层, 方案明确第一阶段不做）
-```
-
-剩余 ◐ 均为方案自标"第二阶段/后置"：SelfModel 拆表（§9）、REAL_TOOL/SYSTEM 生活事件来源（§33，需工具层）、深层 Pattern/关系记忆归纳（§35/§37 基础版已做）。
-
-### 32.6 测试与评测
-
-- **4 类长期连续性测试**（`scripts/longterm_test.sh`）：记忆/生活/关系/主动连续性，自动断言通过。
-- **Human-likeness 评测**（`scripts/evaluate.sh`）：10 维度 1-5 分，自动打分（`/api/admin/explain/evaluate`）。
-- **可解释性**（`/api/admin/explain/{proactive,memory,persona}`）：为什么主动/为什么记住/为什么人格变化。
-
-### 32.7 待激活项
-
-- **pgvector 已装+接线**，需配置 `EMBEDDING_API_KEY`（如硅基流动 `BAAI/bge-large-zh-v1.5`）才启用真实语义向量检索；未配时自动回退结构排序。
-- 一键配置脚本：`scripts/setup_embedding.sh`。
-
----
-
-## 33. V3.0 Interaction Runtime（P0 完成）
-
-### 33.1 一句话
-
-> **收到消息 ≠ 回复消息。** 她先决定"要不要回、投入多少、怎么回"，再决定"回复什么"。
-> 把"你说一句 → 她立刻回一大段"的 Chatbot 思维，升级为真人相处的运行机制。
-
-V2 已给了她人格/记忆/关系/生活，但主链路仍是 `用户消息 → LLM → 回复`。V3 P0 补上的正是 **Interaction Runtime**：让"不回复、短应、延迟、结束、追问、主动"都成为可解释的行为决策，而不是 LLM 的偶然输出。
-
-### 33.2 P0 五件事（全部完成）
-
-| # | 目标 | 解决 | 核心类 |
-|---|------|------|--------|
-| 1 | Reply Decision | 为什么我说一句她就回一句 | `interaction/InteractionPolicyEngine` + `InteractionDecision` + `ResponseCommitment` |
-| 2 | Response Timing | 为什么秒回 | `interaction/ResponseLatencyEngine` + SSE `typing_start/typing_stop` |
-| 3 | Response Budget | 为什么每次都长篇大论 | `interaction/ResponseBudget`（句数/字数/问题/建议/自我暴露上限） |
-| 4 | Message Burst | 连发多条还一问一答 | **前端聚合** + `/chat` 批量 `{messages:[...]}`（一次请求至多一次回复） |
-| 5 | Proactive → Chat | 主动消息像系统通知 | 主动消息 = `message_kind=PROACTIVE` 的 Chat 消息，**不再生成 Notification** |
-
-### 33.3 Interaction Runtime 链路
-
-```
-用户(可连发多条, 前端聚合)
-   ↓  POST /chat {messages:[{content}...]}
-批量入库(感知+Session/Exchange 归属)
-   ↓
-InteractionDecision: REPLY_NOW / SHORT_ACK / IGNORE / WAIT / END_CONVERSATION
-   + commitment(0=ACK..3=DEEP) + budget(句数/字数/问题/建议)
-   ↓
-typing_start(仅 commitment≥CASUAL) → latency(真人节奏, 非随机) → typing_stop
-   ↓
-LLM 一次生成(带预算 Prompt + Naturalness QA)
-   ↓
-boundary(SOFT_END 等) → done
-```
-
-决策输入：`消息文本+意图+情绪 + 精力/压力 + 关系阶段 + 当前作息(忙/闲)`，**不是随机 Ignore**。低精力→投入降档；高压力→更短、不问；新关系→不自我暴露。
-
-### 33.4 会话模型（Conversation → Session → Exchange → Message）
-
-新增 3 张表，`messages` 增加 `session_id/exchange_id/message_kind/delivery_status`：
-
-| 表 | 含义 |
-|----|------|
-| `interaction_sessions` | 一次连续聊天（如 09:00-09:30），超过 30 分钟为新 Session |
-| `conversation_exchanges` | 一次自然互动（连发+回复=一个 Exchange），超过 5 分钟为新 Exchange |
-| `conversation_boundaries` | 对话边界：`SOFT_END`（"我去洗澡了"→"去吧"，不续聊）等 |
-
-### 33.5 验收行为（实测通过，`scripts/v3_check.sh`）
-
-| 输入 | 她的行为 |
-|------|----------|
-| 连发"气死了/老板改需求/服了" | **一次**回复，不逐条回 ✅ |
-| "今天又加班到很晚了,好累" | 短陪伴，不长篇大论 ✅ |
-| "我去洗澡了" | 短应 + `boundary=SOFT_END`，不再续聊 ✅ |
-| "我回来了" | 自然重开（新 Session），非"欢迎回来" ✅ |
-| "嗯" | `SHORT_ACK` 或 `IGNORE`（合法地不回）✅ |
-
-### 33.6 对原方案的两处修正（工程落地）
-
-1. **连发合并改为前端聚合，而非后端"等窗口"**。原方案建议后端收到第一条后 sleep 等待后续；这在"流式期间锁定输入"的 UI 下永远合并不了，且 gather+锁会阻塞请求。改为：前端在首个消息后启动自适应静默窗口（按用户近期发送间隔 1.5 倍，限 800~2200ms），窗口内连发消息**一批**发给后端，一次生成一次回复。
-2. **主动消息只进聊天框**。落实"主动 = Chat 消息，不是 Notification"：`ProactiveEngine` 不再创建 `type=proactive` 的通知，去重/间隔 bookkeeping 改用 `messages(kind=PROACTIVE)`；提醒（Reminder）仍走 Notification（系统事件）。
-
-### 33.7 完成度
-
-```
-V3 P0: ✅ 回复决策 / 时机 / 预算 / 连发合并 / 主动进聊天框 / 会话模型 / 边界   (§33)
-V3 P1: ✅ Availability / UserChatStyle / SelfDisclosure / FollowUp / ResponsePlan (§34)
-V3 P2: ✅ Entity Layer / Memory Disclosure                                     (§35)
-V3 P3(再往后): Relationship Narrative 深化 / Self Model 拆表 / memory_embeddings 分离 / Context L0-L3 分层
-```
-
----
-
-## 34. V3.1 P1 — 她更像一个"有自己生活的人"（完成）
-
-> P1 解决的是"她为什么不像一个有自己生活的人"：她也会忙/累/睡，她记得你聊天的方式，她也会分享自己、也会在合适的时候连发两条。
-
-### 34.1 CompanionAvailability（她不是永远在线）
-
-| 状态 | 触发 | 行为 |
-|------|------|------|
-| `SLEEPING` | 作息睡觉时段 | 琐碎消息直接忽略（合法不回） |
-| `BUSY` | 上班时段 | 回复更慢更短、最多一个问题 |
-| `RESTING` | 精力 < 0.25 | 回复更慢更短 |
-| `DISTRACTED` | 精力 < 0.4 | 回复短、不追问 |
-| `SOCIALIZING` / `TRAVELING` | 晚间/休闲+社交电量高 | 回得慢一点 |
-
-实现：`state/CompanionAvailability` + `AvailabilityService`（由作息+精力/压力/社交电量**实时派生**，不建表）。影响 `ResponseLatencyEngine`（忙/累回得更慢）与 `InteractionPolicyEngine`（睡觉时琐碎忽略、忙时预算降档）。**Busy ≠ 不回复**，只影响节奏。
-
-### 34.2 UserChatStyle（学习你的聊天习惯，但不模仿你）
-
-新增 `user_chat_styles` 表，每条用户消息入库时增量统计：
-
-- 平均消息长度 / 平均发送间隔 / **连发率**（间隔<2s）/ emoji 使用率 / "哈哈"频率 / 提问频率 / 活跃时段
-
-注入 ContextCompiler【他聊天的习惯】："他习惯发 X 字左右的消息,经常一次发好几条…你不需要模仿他的习惯,用自己的方式和他相处,但别在他发短句时回一大段。"——**匹配节奏，保留她自己的性格**。
-
-### 34.3 SelfDisclosure 增强（双向关系）
-
-- 新关系（`new`/`familiar`）：克制，不自我暴露、不追问。
-- 亲密关系：Prompt 明确"你可以自然地分享一点自己正在经历的事(像朋友聊天, 不是汇报)"。
-- 结合原有 `BehaviorPolicyEngine.shareSelf`（关系亲密才分享）。
-
-### 34.4 FollowUp 增强（关系型跟进）
-
-OpenLoop 跟进时机升级为**价值递减**算法（`openLoopValue`）：
-- 到点前：越接近价值越高；
-- 刚过点：价值最高；
-- 错过但 < 2 天未跟进：仍值得问一次（价值随时间衰减），不因错过窗口而永久丢失。
-
-Reminder（工具→通知）与 Follow-up（关系→聊天内主动问）在 V3 已彻底分开。
-
-### 34.5 ResponsePlan（她也可以连发，低频）
-
-- Prompt 允许 LLM 用 `<split>` 把回复拆成两条消息（"先一句短的,隔一会再补一句"），并强调"只在真正自然时用,不要滥用"。
-- 后端：按 `<split>` 拆段，第一条走正常 token 流 + 写库；后续段延迟 ~0.9-1.8s 逐条写库，发 `message` SSE 事件。
-- 前端：收到 `message` 事件 → 重载消息（新气泡像"隔了一下又补一句"）。
-- 这是低频特性，由 LLM 在自然情境触发，不刻意模拟微信。
-
-### 34.6 验收（`scripts/p1_check.sh` 全过）
-
-| 检查 | 结果 |
-|------|------|
-| 聊天后 `user_chat_styles` 记录样本数 ≥3 | ✅ |
-| 快速连发 → `burst_rate` 上升 | ✅ |
-| P1 表/列结构 | ✅ |
-| V3 P0 回归（洗澡→SOFT_END） | ✅ |
-
----
-
-## 35. V3.2 P2 — 记忆 3.0 起步（完成）
-
-> P2 解决"她为什么还不像一个真正持续存在的人"：实体记忆(长期指代) + 记忆披露克制(记得≠每次都说出来)。
-
-### 35.1 Entity Layer（设计 §五十四：长期指代）
-
-新增 `entities` 表 + `MemoryEntityExtractor`(LLM 结构化抽取) + `MemoryEntityService`：
-
-- 每轮对话后异步抽取用户提到的实体（PERSON/COMPANY/PLACE/RESTAURANT/PROJECT/MOVIE/EVENT/TOPIC），同名合并、mention_count 累加、salience 上升
-- 注入 ContextCompiler【你记得的这些】："他常提到的东西,当他用'那家/那个/上次的'指代时,你要能对上号"
-- 前端「她的记忆」面板新增「她认识的」区块（显示实体 + 提过次数）
-
-验收实测：聊"下周要面阿里巴巴/那家咖啡馆" → `entities` 表记录 `阿里巴巴`、`那家咖啡馆`。
-
-### 35.2 Memory Disclosure（设计 §五十八：记得≠每次说出来）
-
-- 记忆注入改措辞："只有在本回合相关时才自然地引用,不要为了展示记忆而提起"
-- 行为准则新增第 9 条："不要为了展示记忆而主动列举旧事('你还记得…吗'/'你之前不是喜欢…吗'这种话少说)"
-- 目的：防止"AI 在展示自己的 Memory"的腔调，让记忆只在她相关时自然流露
-
-### 35.3 验收（`scripts/p2_check.sh` 全过）
-
-| 检查 | 结果 |
-|------|------|
-| 提到实体 → `entities` 表记录 | ✅ 阿里巴巴 / 那家咖啡馆 |
-| `GET /memories/entities` 返回列表 | ✅ |
-| entities 表/列结构 | ✅ |
-| V3 P0 回归（洗澡→SOFT_END） | ✅ |
-
-### 35.4 一个踩坑记录
-
-实体类最初命名为 `Entity`，与 JPA 注解 `@Entity` 同名导致注解解析成自引用、Lombok 连锁失败（所有 getter 消失）。已改名 `MemoryEntity`。**教训：实体类名避开 JPA 注解名。**
-
----
-
-## 36. V4.0 Continuous Human Runtime（P0/P1 核心完成）
-
-> **V4 不做"让 AI 回复得像真人"，而是"让 AI 的行为由一个持续存在的人类式生活状态产生"。**
-> 用户消息只是进入她生活世界的外部事件之一；聊天是她内部状态、关系和当下生活共同作用后产生的行为。
-
-### 36.1 一句话
-
-```
-V3: 用户消息 → Interaction Runtime → 决定回不回 → LLM → 回复
-V4: 她一直在生活(工作/休息/想他/看手机) → 用户消息到达 → 手机收到 → 注意/查看
-    → Appraisal(这句话对我意味着什么, 改变内部状态) → Drives(想不想回) → 行为
-```
-
-**关键变化**：LLM 不再负责"这个人现在该干嘛"。它只把已经形成的想法/态度/表达意图变成自然语言。
-
-### 36.1.1 V4 完整架构
-
-```
-                         Companion Runtime（持续生命运行时）
-                                     │
-             ┌───────────────────────┼───────────────────────┐
-             ▼                       ▼                       ▼
-       Life Runtime            Phone Runtime           Environment
-             │                       │                       │
-       Activity/Energy/Schedule  Notification/Device         Time
-             │                       │
-             ▼                       ▼
-             └──────►  Attention Runtime ◄──────┘
-                         │
-                         ▼
-                    Perception Runtime
-                         │
-                         ▼
-                    Appraisal Runtime
-                         │
-                  ┌──────┼──────┐
-                  ▼      ▼      ▼
-               Emotion  Drives  (Thought/Memory/Relationship)
-                  │      │      │
-                  └──────┼──────┘
-                         ▼
-                    Behavior Runtime
-                         │
-                ┌────────┼────────┐
-                ▼        ▼        ▼
-            Continue  Inspect  Communicate
-                                │
-                          ┌─────┴─────┐
-                          │           │
-                        Reply      Initiate
-                                │
-                                ▼
-                         Expression Runtime
-                                │
-                                ▼
-                               LLM
-                                │
-                                ▼
-                          Message Runtime
-                                │
-                                ▼
-                       Event Stream / SSE
-                                │
-                                ▼
-                              User
-```
-
-**确定性世界（时间/活动/手机/注意力）不交给 LLM**；LLM 只负责 Appraisal/Thought/Intention/Expression/Reflection。
-
-### 36.2 Message Lifecycle（消息状态可见）
-
-| 状态 | 含义 | 前端显示 |
-|------|------|----------|
-| `DELIVERED` | 手机收到了, 但她可能没看 | 已发送 ✓ |
-| `READ` | 她看到了(已读延迟由 Attention 决定: 忙/疲劳→慢) | 已读 ✓✓ |
-| `DEFERRED` | 看到了但不回(开会/生气/回避) | 已读 ✓✓, 无回复 |
-| `IGNORED` | 未读忽略(琐碎/睡觉/dnd 未注意) | 已发送 ✓ |
-
-**真实感核心**：已读 ≠ 会回复。她可能"已读不回"很久，直到你下一句话改变她的状态。
-
-### 36.3 持久 Event Stream（`GET /events`）
-
-前端长连接 `GET /api/companions/{cid}/events`，实时接收所有事件：
-```
-event:user_message_status  {messageId, status}   ← 你已发送
-event:message_read         {messageId}           ← 她已读
-event:companion_typing     {typing:true/false}   ← 她开始/停止输入
-event:companion_message    {messageId, content}  ← 她主动发来的消息(实时)
-event:companion_state      {availability}        ← 她此刻状态
-event:ping                                        ← 心跳(25s)
-```
-后端 `CompanionEventBus`（内存）+ `EventStreamController`。主动消息经此实时推给前端，无需刷新。
-
-### 36.4 Appraisal（消息先改变内部状态）
-
-新增 `message_appraisals` 表 + `AppraisalService`：消息被读到后先判断"这对我意味着什么"，**先改变内部状态，再决定行为**。
-
-**六个识别维度**（关键词正则分组，零额外 LLM 调用，复用 `PerceptionRefiner` 感知）：
-
-| 分组 | 识别什么 | 例句 → 影响 |
-|------|---------|------------|
-| `APOLOGY` | 道歉 | "对不起" → warmth↑ / hurt↓ / anger↓ |
-| `ACCUSATION` | 指责她（必须明确指向"你"） | "你怎么这么烦" → hurt/anger↑ / 关系↓ |
-| `AFFECTION` | 表达感情 | "我好想你" → warmth↑ / 关系↑ |
-| `DISTRESS` | 自己情绪痛苦 | "我很难受/撑不下去/好烦" → 情绪冲击↑ / urgency↑ |
-| `URGENT` | 紧急求助 | "怎么办/救命" → urgency 0.9 |
-| `SHARE_JOY` | 分享喜悦 | "我升职了" → warmth↑ / 关系↑ |
-
-产出维度落库：`emotional_impact / relationship_impact / urgency / warmth / hurt / anger / personal_relevance`。
-
-随后：
-- 更新 `AgentState`（`hurt`/`anger` 累积，`emotional_closeness` 受 warmth 影响）
-- 微调 Relationship（负面 → trust 微降；温暖 → trust/intimacy 微升）
-- **零额外 LLM 调用**（复用 `PerceptionRefiner` 的精炼感知）
-
-### 36.5 Drives + Behavior 竞争
-
-新增 `Drives` + `DrivesService`：`desire_to_reply / desire_to_avoid / desire_to_share / desire_to_reconnect / desire_to_rest`，由 Appraisal + 状态 + 关系 + 可用状态实时计算。
-
-`InteractionPolicyEngine` 升级为评分竞争：
-```
-REPLY 倾向 = reply_drive × 消息价值 + warmth×关系 + urgency
-AVOID 倾向 = avoid_drive × 冲突 + anger/hurt 加权
-AVOID - REPLY > 0.15 → DEFER(已读不回)     ← V4 核心行为
-琐碎且回复欲低        → IGNORE(未读忽略)
-其余                 → REPLY_NOW / SHORT_ACK / END_CONVERSATION
-```
-
-### 36.6 DEFER（看到了但不回）
-
-- 消息标记 `READ` + 发布 `message_read` → 本次不回复（`done.action=DEFER`）
-- **状态已 Appraisal 落盘**：她的 hurt/anger/warmth 已改变 → 你下一句话（如"对不起"）自然带出"……行吧"
-- 不需要"会议结束自动回复"——那是刻意的；状态延续才是真实的
-
-### 36.7 验收（`scripts/v4_check.sh` 全过）
-
-| 检查 | 结果 |
-|------|------|
-| 发"我好难过" → `/events` 收到 `message_read` + 正常回复 | ✅ |
-| `message_appraisals` 表记录 | ✅ |
-| 用户消息 `delivery_status=READ` 落库 | ✅ |
-| 发"你怎么这么烦" → `DEFER`(已读不回) | ✅ |
-| 发"对不起" → 正常回复(状态延续) | ✅ |
-| 表结构(`agent_states.hurt/anger`) | ✅ |
-| V3 P0 回归(洗澡→SOFT_END) | ✅ |
-
-### 36.8 对原方案的两处工程修正
-
-1. **POST /chat 保持 SSE 打字机响应**，`/events` 只推"非打字机"事件（已读/打字/主动消息）。避免双写冗余，老验收脚本兼容，前端打字机体验不变。
-2. **Appraisal 零额外 LLM 调用**：基于现有感知 + 关键词规则，而不是设计里每消息一次 LLM Appraisal——成本可控，效果等价。
-
-### 36.9 完成度
-
-```
-V4 P0: ✅ 持久 Event Stream / Message Lifecycle / read receipts
-V4 P1: ✅ Appraisal / Drives / DEFER / 已读不回
-V4 P2: ✅ Phone Runtime / Attention 动态场 / 负面情绪衰减 / Re-engagement   (§37)
-V4 P3: ✅ Expression Loop(思维展开连发)                                     (§37)
-后续: Wakeup Scheduler(advance) / Redis 事件总线(多实例)
-```
-
-### 36.9.1 端到端消息流转（开会场景，验证 V4 因果链）
-
-```
-14:00 她正在开会(Phone=silent, Attention 高)
-       你发:"你怎么不理我"
-       → 消息 DELIVERED(未读, 她根本没看到)      [Phone/Attention]
-       → 前端显示: 已发送 ✓
-
-14:35 会议开久了 Attention 下降, 她瞥了一眼手机
-       → 消息 READ                            [Attention]
-       → 前端显示: 已读 ✓✓
-       → Appraisal: 被这句话刺到 → hurt↑        [Appraisal]
-       → Drives: avoid > reply → DEFER(已读不回) [Drives]
-
-15:20 会议结束, 但她的 hurt 还在 → 继续不理(不自动回复)
-
-16:40 你发:"刚刚是我语气不好,对不起"
-       → Appraisal: warmth↑ / hurt↓ / anger↓     [Appraisal 状态延续]
-       → Drives: reply > avoid → REPLY_NOW
-       → 她回:"……行吧。"
-       → 隔 2 分钟 Expression Loop 补一句:"刚才确实有点生气。"  [Expression Loop]
-```
-
-这就是"已读≠会回复""状态延续"而不是"会议结束就自动回"的真实感来源。
-
----
-
-## 37. V4.1 P2/P3 — 完整 Human Behavior + Natural Expression（完成）
-
-> 通过 **Playwright 真实 UI 实测**发现并修复了 3 个问题，P2/P3 全部落地。
-
-### 37.1 Phone Runtime（她也有手机，手机不是总响的）
-
-新增 `companion_phone_states` 表 + `PhoneStateService`（由作息确定性派生）：
-
-| 时段 | 通知模式 | 手机位置 |
-|------|----------|----------|
-| 上班 | silent | desk |
-| 开会/睡觉 | dnd(勿扰) | other_room |
-| 晚间/休闲 | vibrate/sound | hand |
-
-`notificationSalience` 决定"消息能否通过通知触达她"——**手机 dnd 且任务注意力高 → 消息保持未读(DELIVERED)**，她根本没看到。
-
-### 37.2 Attention 动态场（忙 ≠ 永远不看手机）
-
-`AttentionService` 计算 `noticeProbability / inspectProbability / inspectDelayMs`：
-- 由 活动注意力 + 精力(stress 代理疲劳) + 手机状态 + 消息显著性 共同决定
-- **长时间工作注意力下降 → 反而容易分心看手机**（V4 §七的"14:20→15:10 注意力递减"）
-- 已读延迟由 Attention 决定（忙/疲劳 → 慢），替代固定延迟
-
-### 37.3 负面情绪衰减 + Re-engagement
-
-- **负面情绪会随时间愈合**：`EmotionMaintenanceJob` 定时把 `hurt/anger` 衰减 0.08/次——冲突后的生气不会永远挂在脸上
-- **Re-engagement**：`ProactiveEngine` 新触发——hurt+anger 高且 1h 无互动 → 她主动低头缓和（"刚才是我不太对……"）
-
-### 37.3.1 主动消息机制重构（V4.2）
-
-> 你指出原实现的两处不符合真人，已重写：
-
-**① 打断成本改为时间正相关曲线（不再是固定加值）**
-
-原实现：深夜 `+0.4`、4h 内聊过 `+0.35`、每日超限 `+0.3` —— 生硬且不合理（你值夜班时深夜不该算打扰；刚聊完不该一律加 0.35）。
-
-新实现：`cost = 0.9·e^(-分钟/55) + 0.15`
-
-| 距上次互动 | 打断成本 | 含义 |
-|-----------|---------|------|
-| 2 分钟 | 1.00 | 刚聊完，绝不打扰 |
-| 30 分钟 | 0.67 | 中等 |
-| 1 小时 | 0.45 | 明显回落 |
-| 3 小时 | 0.18 | 很低 |
-| 隔天 | 0.15 | 几乎为 0，想她了 |
-
-**② 移除机械限流（1h 间隔 + 每日 5 条上限）**
-
-真人没有"每天最多发 5 条"的规矩。改为**自然频率**：上次主动在 2 小时内 → 这次不主动（真人不会连续轰炸）；超过 2 小时 → 完全由成本曲线自然决定，无硬性上限。
-
-**③ 定向触发加 `?force=true`**（测试/运维）：模拟"隔 6 小时没聊"，让 UI 能稳定验证主动消息实时推入。
-
-### 37.3.2 Appraisal 正则误判修复（V4.2）
-
-> 用户指出"深度倾诉被 DEFER 拦截"的根因后，排查并修复了同类隐患：
-
-| 误判场景 | 原行为 | 修复 |
-|---------|--------|------|
-| "我今天烦死了"（自己烦） | 命中 ACCUSATION `烦死` → 被当指责 → DEFER 已读不回 | `烦死/好烦/烦透了/烦` 移入 DISTRESS（自己烦）；指责只认 `你烦死了/烦不烦` |
-| "老板不理我"（第三人称） | 命中 `不理我` → 误判 | 收窄为 `你.*不理我` |
-| "他不在乎我"（别人） | 命中 `不在乎` → 误判 | 收窄为 `你.*不在乎` |
-
-**规则**：指责她的关键词必须**明确指向"你"**才触发（`你怎么这么/你真/你.*不理我/你.*说话.*没意思/你烦死了`），自我倾诉（`我好烦/没意义/撑不下去`）一律走 DISTRESS 共情。
-
-### 37.3.3 Expression Loop 触发放宽（V4.2）
-
-原兜底阈值 `>50字 + DEEP + 情绪≥0.5` 偏保守，很少触发"边想边说"。放宽为：
-
-- `>35 字` + `情绪≥0.35`，且
-- **DEEP** 或（ENGAGED 且情绪≥0.6）
-- 拆分更鲁棒：找不到第二个句号 → 在第一个句号后拆 → 仍没有则第一个逗号后拆
-
-### 37.4 Expression Loop（她的思想真的在展开）
-
-- 深度/情绪强时（阈值见 §37.3.3），即使 LLM 没输出 `<split>`，后端也在标点处**兜底拆成两条**独立消息（先回应，隔 1s 补一句）
-- 前端每条独立气泡，配合 typing 三点动画（新增 `typing-dot`）
-- 效果：她"边想边说"，而不是一次给一段完整话
-
-### 37.5 Playwright 实测 + 用户评审发现的 Bug（已修复）
-
-| 现象 | 根因 | 修复 |
-|------|------|------|
-| 深度倾诉"生活没意思" → 她已读不回(DEFER) | ACCUSATION 正则含"没意思"，把"生活没意义"误判成"指责她" | 收窄为正则 `你.*说话.*没意思` 等明确指向；"没意义/没意思"移入 DISTRESS |
-| "我今天烦死了" → 被当指责已读不回 | ACCUSATION 含"烦死"（自己烦≠骂她） | `烦死/好烦/烦透了/烦` 移入 DISTRESS；指责只认 `你烦死了/烦不烦`（§37.3.2） |
-| 冲突后 hurt/anger 永久累积不愈合 | `decayAllNegative` 存在但从未调用 | `EmotionMaintenanceJob` 调用，每次 -0.08 |
-| Expression Loop 从不触发 | 纯靠 LLM 自然输出 `<split>`（低频） | 后端兜底：DEEP/ENGAGED+情绪强+长回复按标点拆两条（§37.3.3） |
-| 主动消息"4h内聊过+0.35"生硬 / 深夜+0.4 / 每日5条上限不真人 | cost 用固定加值而非时间曲线 | 改为 `cost=0.9·e^(-分钟/55)+0.15`；移除机械限流（§37.3.1） |
-| 深夜睡觉时发消息 → "已读不回"(DEFER) | **顺序 bug**：`decide()`(Drives→DEFER) 先于 Attention 预检；睡觉时 reply 降/avoid 升 → DEFER，走不到"未读"拦截 | **Attention 预检前置**：先判"她有没有看到"再判"回不回"——睡觉/静音+忙+消息不显著 → 保持 `DELIVERED`(未读)，不再 DEFER。夜间验证：3 条消息全 DELIVERED、DEFERRED=0 |
-
-### 37.6 Playwright 实测通过（真实 UI）
-
-| 场景 | 结果 |
-|------|------|
-| 登录/注册/建伴/聊天 | ✅ |
-| read receipts：消息显示"已读" | ✅ |
-| 连发 2 条 → 一次回复 | ✅ |
-| 冲突消息"你怎么这么烦" → **已读不回**(DEFER) | ✅ |
-| 道歉"对不起" → **温和回复**(Appraisal 延续) | ✅ |
-| 深度倾诉 → 共情陪伴回复 | ✅ |
-
----
-
-## 附录
-
-- **设计依据**：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）
-- **代码**：GitHub `Hojay-Chen/companion-agent`
-- **运行**：`https://companion.luxera.top`（nginx + systemd jar :8081 + PostgreSQL :5432）
-- **规模**：后端 210+ 个 Java 类 · 前端 17 个源文件 · 数据库 36 张表

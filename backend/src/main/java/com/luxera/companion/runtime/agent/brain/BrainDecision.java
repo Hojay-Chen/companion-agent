@@ -5,7 +5,7 @@ import com.luxera.companion.interaction.InteractionDecision;
 import java.util.List;
 
 /**
- * Brain 决策(V5 §42): Brain 不输出自然语言, 只输出 Action + Intent + Schedule。
+ * Brain 决策(§42): Brain 不输出自然语言, 只输出 Action + Intent + Schedule。
  * 用户可见文本只能来自 Expression Agent。
  */
 public record BrainDecision(

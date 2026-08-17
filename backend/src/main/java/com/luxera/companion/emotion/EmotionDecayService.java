@@ -6,7 +6,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.time.LocalDateTime;
 
-/** 情绪自然消退(设计文档 V2.0 §41): 数小时~数周后结束/清理 */
+/** 情绪自然消退(设计文档 §41): 数小时~数周后结束/清理 */
 @Component
 public class EmotionDecayService {
 

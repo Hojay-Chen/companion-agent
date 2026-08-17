@@ -42,7 +42,7 @@ public class MemoryController {
         this.currentUser = currentUser;
     }
 
-    /** V3 P2: 用户常提的实体(长期指代: "那家公司/上次那个地方") */
+    /** P2: 用户常提的实体(长期指代: "那家公司/上次那个地方") */
     @GetMapping("/entities")
     public List<MemoryEntity> entities(@PathVariable String companionId) {
         String userId = currentUser.requireUserId();

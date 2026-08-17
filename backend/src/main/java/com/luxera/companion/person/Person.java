@@ -16,7 +16,7 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * V8 §五 Person: 数字人世界中的"人"。
+ * §五 Person: 数字人世界中的"人"。
  *
  * 关键设计: **User / Agent / OtherPerson 都是 Person**, 不再各自特殊处理。
  * - USER  → id 沿用 users.id(零迁移)

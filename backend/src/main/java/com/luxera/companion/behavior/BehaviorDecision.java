@@ -1,7 +1,7 @@
 package com.luxera.companion.behavior;
 
 /**
- * 行为决策(设计文档 V2.0 §13.3): Runtime 决定"现在应该做什么", LLM 负责怎么说。
+ * 行为决策(设计文档 §13.3): Runtime 决定"现在应该做什么", LLM 负责怎么说。
  */
 public record BehaviorDecision(
         /** LISTEN/RESPOND/ASK/COMFORT/ADVISE/SHARE/TEASE/DISAGREE/SET_BOUNDARY/END_CONVERSATION/PROACTIVE_CONTACT/DO_NOTHING */

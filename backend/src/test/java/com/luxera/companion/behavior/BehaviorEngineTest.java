@@ -26,7 +26,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V8 §三十四~§四十一 BehaviorEngine 中央行为选择器测试:
+ * §三十四~§四十一 BehaviorEngine 中央行为选择器测试:
  * 1. 行为评估总是产出一个候选(绝不崩)
  * 2. 主动联系用户只是候选之一 —— 沉默 + 联系压力高时它会出现, 但不是必然每次
  * 3. 睡眠决策考虑社交参与(深夜陪你聊 → 硬撑不睡)

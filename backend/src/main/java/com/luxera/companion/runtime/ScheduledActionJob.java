@@ -8,7 +8,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 排程动作轮询(V5 §5 next wake-up): 周期性检查到期动作并分发。
+ * 排程动作轮询(§5 next wake-up): 周期性检查到期动作并分发。
  * 到点才唤醒相关处理; 而不是每 tick 调用 LLM。
  */
 @Slf4j

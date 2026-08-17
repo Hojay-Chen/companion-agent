@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * V7 §35-§36 Intention Runtime: 意图记忆生命周期。
+ * §35-§36 Intention Runtime: 意图记忆生命周期。
  * - 创建意图("想告诉他一件事" / "该回复他了")
  * - 激活概率随时间演化(到 expected_time 附近升高, 过期衰减)
  * - 过期 → 遗忘(FORGOTTEN), 真人会忘

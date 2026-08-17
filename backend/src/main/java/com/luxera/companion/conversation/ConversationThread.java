@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * V6 §30 Conversation Thread: 一段围绕某个话题的连续对话。
+ * §30 Conversation Thread: 一段围绕某个话题的连续对话。
  * 真人经常不是"说完全部内容后结束", 而是聊到一半去做别的事情, 过一段时间回来继续。
  * Thread 状态机: ACTIVE → PAUSED → RESUMABLE → ENDED / ABANDONED。
  */

@@ -7,7 +7,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 
 /**
- * 会话管理器(设计文档 V3 §二十~二十六): 把消息归入 Session/Exchange, 记录对话边界。
+ * 会话管理器(设计文档 §二十~二十六): 把消息归入 Session/Exchange, 记录对话边界。
  * Conversation(长期空间) → Session(一次连续聊天) → Exchange(一次自然互动) → Message
  */
 @Component

@@ -5,7 +5,7 @@ import com.luxera.companion.interaction.InteractionDecision;
 import java.util.List;
 
 /**
- * Expression Agent 输入(V5 §33): Brain 已决定"要不要说/想表达什么", Expression 决定"怎么说/说几条/什么时候发"。
+ * Expression Agent 输入(§33): Brain 已决定"要不要说/想表达什么", Expression 决定"怎么说/说几条/什么时候发"。
  */
 public record ExpressionContext(
         String companionId,

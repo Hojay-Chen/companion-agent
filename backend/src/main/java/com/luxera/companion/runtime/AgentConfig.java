@@ -10,11 +10,11 @@ import org.springframework.stereotype.Component;
 import javax.annotation.PostConstruct;
 
 /**
- * Agent 注册(V5 §52/§53): 启动时把认知 Agent 注册进 AgentRegistry。
+ * Agent 注册(§52/§53): 启动时把认知 Agent 注册进 AgentRegistry。
  * 技能注入按 Agent 类型固定(见 skills/), 不让 Agent 自己决定加载什么。
  */
 @Component
-public class V5AgentConfig {
+public class AgentConfig {
 
     private final AgentRegistry registry;
     private final EmotionAgent emotionAgent;
@@ -23,7 +23,7 @@ public class V5AgentConfig {
     private final ExpressionAgent expressionAgent;
     private final EventSimulationAgent eventSimulationAgent;
 
-    public V5AgentConfig(AgentRegistry registry, EmotionAgent emotionAgent, BrainAgent brainAgent,
+    public AgentConfig(AgentRegistry registry, EmotionAgent emotionAgent, BrainAgent brainAgent,
                          MemoryAgent memoryAgent, ExpressionAgent expressionAgent,
                          EventSimulationAgent eventSimulationAgent) {
         this.registry = registry;

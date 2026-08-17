@@ -33,7 +33,7 @@ public class Relationship {
     @Column(name = "companion_id", nullable = false, length = 36)
     private String companionId;
 
-    /** V8: 关系的 Person 身份层引用(agent 侧 = companion.id, user 侧 = user.id) */
+    /** 关系的 Person 身份层引用(agent 侧 = companion.id, user 侧 = user.id) */
     @Column(name = "agent_person_id", length = 36)
     private String agentPersonId;
 
@@ -58,23 +58,23 @@ public class Relationship {
     @Column(nullable = false)
     private double affection = 0.2;
 
-    /** V8: 关系张力(冲突/摩擦), 0-1 */
+    /** 关系张力(冲突/摩擦), 0-1 */
     @Column(nullable = false, columnDefinition = "double precision not null default 0")
     private double tension = 0.0;
 
-    /** V8: 双向性(对方在意这段关系的程度感知), 0-1 */
+    /** 双向性(对方在意这段关系的程度感知), 0-1 */
     @Column(nullable = false, columnDefinition = "double precision not null default 0.5")
     private double reciprocity = 0.5;
 
-    /** V8: 尊重 */
+    /** 尊重 */
     @Column(nullable = false, columnDefinition = "double precision not null default 0.4")
     private double respect = 0.4;
 
-    /** V8: 依赖(需要对方的程度) */
+    /** 依赖(需要对方的程度) */
     @Column(nullable = false, columnDefinition = "double precision not null default 0.15")
     private double dependence = 0.15;
 
-    /** V8: 联系压力 —— 沉默越久越高, 驱动主动联系(关系维护需求) */
+    /** 联系压力 —— 沉默越久越高, 驱动主动联系(关系维护需求) */
     @Column(name = "connection_pressure", nullable = false, columnDefinition = "double precision not null default 0")
     private double connectionPressure = 0.0;
 

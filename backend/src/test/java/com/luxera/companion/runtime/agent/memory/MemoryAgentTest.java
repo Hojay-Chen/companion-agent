@@ -13,7 +13,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Memory Agent 两阶段召回测试(V5 §23/§24): 候选记忆必须返回激活评分。 */
+/** Memory Agent 两阶段召回测试(§23/§24): 候选记忆必须返回激活评分。 */
 @ActiveProfiles("test")
 @SpringBootTest(properties = {
         "app.scheduler.event-simulation-cron=0 0 0 1 1 *",

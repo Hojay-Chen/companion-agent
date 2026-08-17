@@ -11,7 +11,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** 排程动作服务测试(V5 §64/§65): 持久化 + 到期 + 状态流转。 */
+/** 排程动作服务测试(§64/§65): 持久化 + 到期 + 状态流转。 */
 @ActiveProfiles("test")
 @SpringBootTest(properties = {
         "app.scheduler.event-simulation-cron=0 0 0 1 1 *",

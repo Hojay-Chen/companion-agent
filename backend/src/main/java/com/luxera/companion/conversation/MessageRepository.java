@@ -13,7 +13,7 @@ public interface MessageRepository extends JpaRepository<Message, String> {
     List<Message> findTop200ByConversationIdOrderByCreatedAtDesc(String conversationId);
     long countByConversationId(String conversationId);
 
-    /** V8: 幂等键查询(clientMessageId 同会话唯一) */
+    /** 幂等键查询(clientMessageId 同会话唯一) */
     Optional<Message> findByConversationIdAndClientMessageId(String conversationId, String clientMessageId);
 
     @Query("select m from Message m where m.senderType = 'user' and m.createdAt >= :since "
@@ -28,7 +28,7 @@ public interface MessageRepository extends JpaRepository<Message, String> {
                                       @Param("since") LocalDateTime since,
                                       @Param("until") LocalDateTime until);
 
-    // ── V3: 主动消息 = Chat 消息(kind=PROACTIVE), 用于去重/间隔 bookkeeping ──
+    // ── 主动消息 = Chat 消息(kind=PROACTIVE), 用于去重/间隔 bookkeeping ──
     @Query("select m from Message m where m.messageKind = :kind "
             + "and m.conversationId in (select c.id from Conversation c where c.companionId = :companionId) "
             + "order by m.createdAt desc")

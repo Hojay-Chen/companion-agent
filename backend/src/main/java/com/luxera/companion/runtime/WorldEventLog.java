@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * 世界事件日志(V5 §62 Event Sourcing): 系统里发生过的所有 WorldEvent。
+ * 世界事件日志(§62 Event Sourcing): 系统里发生过的所有 WorldEvent。
  * 出现"为什么她突然不理我"时, 可以按时间回放事件链。
  */
 @Entity

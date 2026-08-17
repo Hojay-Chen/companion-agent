@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * V7 §35 Intention Memory: 意图记忆。
+ * §35 Intention Memory: 意图记忆。
  * 不是普通记忆, 而是"未来行为的潜在触发器"。
  * 例如"等下我要告诉他一件事" / "我本来想回他那句的, 被打断了"。
  *

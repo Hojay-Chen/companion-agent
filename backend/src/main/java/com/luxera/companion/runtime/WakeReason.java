@@ -1,7 +1,7 @@
 package com.luxera.companion.runtime;
 
 /**
- * Agent 唤醒原因(V5 §74): Runtime 代码路由, 决定某个事件唤醒哪些认知模块。
+ * Agent 唤醒原因(§74): Runtime 代码路由, 决定某个事件唤醒哪些认知模块。
  * 不允许把 Agent 调度也交给 LLM。
  */
 public enum WakeReason {

@@ -18,7 +18,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 统一运行时上下文(设计文档 V2.0 §28): Runtime 用完整系统数据, Prompt 只取需要部分。
+ * 统一运行时上下文(设计文档 §28): Runtime 用完整系统数据, Prompt 只取需要部分。
  */
 public class CompanionContext {
 

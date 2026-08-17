@@ -1,4 +1,4 @@
-/** V8 §七: 关系类型(与后端 RelationshipTypes.ALL 一致) */
+/** §七: 关系类型(与后端 RelationshipTypes.ALL 一致) */
 export const RELATIONSHIP_TYPES = [
   { value: 'lover', label: '恋人', desc: '想要亲密又彼此独立的关系' },
   { value: 'best_friend', label: '最好的朋友', desc: '无话不谈,彼此信任' },

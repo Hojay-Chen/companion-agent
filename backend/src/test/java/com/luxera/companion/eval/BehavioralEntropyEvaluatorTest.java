@@ -7,7 +7,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V7 §50-§51 Behavioral Entropy 测试:
+ * §50-§51 Behavioral Entropy 测试:
  * - 过于规律的样本(每天同一时刻) → tooRegular
  * - 有习惯 + 适度波动的样本 → 正常(真人)
  * - 方差过大(完全随机) → 不规律但非"机械"

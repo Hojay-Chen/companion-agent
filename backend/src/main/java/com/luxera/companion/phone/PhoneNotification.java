@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * V7 §15-§17 Phone Notification: 手机通知生命周期。
+ * §15-§17 Phone Notification: 手机通知生命周期。
  * 用户消息 → 手机通知产生 → Agent 听到(heard)/看到(seen)/打开(opened)/阅读(read)。
  * 每一步都不是必然发生 —— 这是"她到底经历了什么"的持久记录。
  */

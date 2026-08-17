@@ -5,7 +5,7 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 
 /**
- * 回复延迟引擎(设计文档 V3 §十二/十三): 延迟不是 random, 而是由消息价值/情绪/状态/时间计算。
+ * 回复延迟引擎(设计文档 §十二/十三): 延迟不是 random, 而是由消息价值/情绪/状态/时间计算。
  * 用户可接受的"打字/思考"延迟, 让"秒回"消失。
  */
 @Component
@@ -16,7 +16,7 @@ public class ResponseLatencyEngine {
         return computeDelayMs(decision, userText, energy, stress, now, null);
     }
 
-    /** V3 P1: 加入"她此刻可用状态" —— 忙/休息/走神会回得更慢, 更真实 */
+    /** P1: 加入"她此刻可用状态" —— 忙/休息/走神会回得更慢, 更真实 */
     public long computeDelayMs(InteractionDecision decision, String userText,
                                double energy, double stress, LocalDateTime now,
                                com.luxera.companion.state.CompanionAvailability availability) {
@@ -29,7 +29,7 @@ public class ResponseLatencyEngine {
         // Agent 忙/累 → 更慢
         if (energy < 0.4) base += rand(800, 2500);
         if (stress > 0.6) base += rand(500, 1500);
-        // V3 P1: 可用状态影响节奏(她也有自己的生活)
+        // P1: 可用状态影响节奏(她也有自己的生活)
         if (availability != null) {
             switch (availability) {
                 case BUSY -> base += rand(2000, 5000);

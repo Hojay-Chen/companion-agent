@@ -4,7 +4,7 @@ import com.luxera.companion.agent.PerceptionEngine;
 import com.luxera.companion.event.CompanionEventBus;
 import com.luxera.companion.event.CompanionEventType;
 import com.luxera.companion.persona.CompanionService;
-import com.luxera.companion.runtime.V7AgentRuntime;
+import com.luxera.companion.runtime.AgentRuntime;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * V8 §十一~§十四 Chat Core: 用户消息的唯一真相源。
+ * §十一~§十四 Chat Core: 用户消息的唯一真相源。
  *
  * 职责链: Controller → MessageCoreService(同步落库) → 事件总线(Outbox) → AgentRuntime(异步)。
  *
@@ -37,13 +37,13 @@ public class MessageCoreService {
     private final MessageRepository messageRepository;
     private final PerceptionEngine perceptionEngine;
     private final CompanionEventBus eventBus;
-    private final V7AgentRuntime agentRuntime;
+    private final AgentRuntime agentRuntime;
     private final CompanionService companionService;
     private final com.luxera.companion.world.WorldEventEngine worldEventEngine;
 
     public MessageCoreService(ConversationService conversationService,
                               MessageRepository messageRepository, PerceptionEngine perceptionEngine,
-                              CompanionEventBus eventBus, V7AgentRuntime agentRuntime,
+                              CompanionEventBus eventBus, AgentRuntime agentRuntime,
                               CompanionService companionService,
                               com.luxera.companion.world.WorldEventEngine worldEventEngine) {
         this.conversationService = conversationService;
@@ -108,7 +108,7 @@ public class MessageCoreService {
                     "status", com.luxera.companion.runtime.pipeline.MessageLifecycle.DELIVERED,
                     "at", m.getCreatedAt() == null ? "" : m.getCreatedAt().toString()));
 
-            // V8 §四十五: 用户消息是数字人世界中的一种事件(不是世界的全部)
+            // §四十五: 用户消息是数字人世界中的一种事件(不是世界的全部)
             try {
                 worldEventEngine.publish(companionId, com.luxera.companion.world.WorldEventEngine.TYPE_MESSAGE_CREATED,
                         com.luxera.companion.world.WorldEvent.SRC_COMMUNICATION,

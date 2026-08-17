@@ -9,7 +9,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V6 §19 Memory Recall Probability 测试:
+ * §19 Memory Recall Probability 测试:
  * - 召回概率 = 激活 × 显著性
  * - 低于阈值 → 不进入当前认知(过滤掉)
  * - 达到阈值 → 保留, 按激活降序

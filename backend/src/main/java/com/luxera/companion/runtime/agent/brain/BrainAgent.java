@@ -18,7 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Brain Executive(V5 §41-§46, P4): 最终决策层。
+ * Brain Executive(§41-§46, P4): 最终决策层。
  * 不是"回复驱动力 > 回避驱动力就回复" —— 综合当前活动/是否方便/情绪/消息重要程度/
  * 关系状态/精力/未完成任务/想分享的事/历史互动/人格/Drives, 允许 延迟/忽略/只看不回/回复一部分/稍后继续/主动联系/改变活动。
  *
@@ -65,7 +65,7 @@ public class BrainAgent implements Agent<BrainContext, BrainDecision> {
         return validatedFallback;
     }
 
-    /** V6 §44 一致性校验: 决策违反当前状态约束时, 修正为可接受的替代动作 */
+    /** §44 一致性校验: 决策违反当前状态约束时, 修正为可接受的替代动作 */
     private BrainDecision applyValidation(BrainDecision d, BrainContext ctx) {
         if (decisionValidator == null) return d;
         try {

@@ -1,7 +1,7 @@
 package com.luxera.companion.runtime.pipeline;
 
 /**
- * 消息生命周期状态(V5 §11): 这些不是同一个状态。
+ * 消息生命周期状态(§11): 这些不是同一个状态。
  * SENT → DELIVERED → NOTIFIED → NOTICED → CHECKED → READ → (RESPONDED | DEFERRED | IGNORED)
  */
 public final class MessageLifecycle {

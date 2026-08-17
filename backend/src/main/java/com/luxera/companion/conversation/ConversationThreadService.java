@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * V6 §30 Conversation Thread 服务: 维护"围绕一个话题的一段对话"的生命周期。
+ * §30 Conversation Thread 服务: 维护"围绕一个话题的一段对话"的生命周期。
  *
  * 状态机: ACTIVE → PAUSED → RESUMABLE → ENDED / ABANDONED
  * - 连续聊一个话题 → ACTIVE(活跃线程)

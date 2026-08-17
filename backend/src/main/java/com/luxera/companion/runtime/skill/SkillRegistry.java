@@ -9,7 +9,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 技能注册表(V5 §52): 按技能 id 存取; 按 Agent 类型返回固定技能列表。
+ * 技能注册表(§52): 按技能 id 存取; 按 Agent 类型返回固定技能列表。
  * Runtime 根据 Agent 类型加载核心技能, 不让 Agent 自己决定加载什么。
  */
 @Component

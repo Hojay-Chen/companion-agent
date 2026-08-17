@@ -24,7 +24,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 可解释性(设计文档 V2.0 §43): 管理端回答"为什么主动联系/为什么记住/为什么人格变化"。
+ * 可解释性(设计文档 §43): 管理端回答"为什么主动联系/为什么记住/为什么人格变化"。
  * 只提供结构化解释, 不暴露内部 CoT。
  */
 @RestController
@@ -58,7 +58,7 @@ public class ExplainController {
             {"score": 0-5的总平均分, "dimensions": {"Continuity":1-5,"Consistency":1-5,"Initiative":1-5,"ContextualRelevance":1-5,"EmotionalCoherence":1-5,"SelfConsistency":1-5,"RelationshipCoherence":1-5,"MemoryNaturalness":1-5,"TemporalCoherence":1-5,"Imperfection":1-5}}
             打分标准: 5=非常像真人, 1=机械。""";
 
-    /** Human-likeness 自动评测(设计文档 V2.0 §45) */
+    /** Human-likeness 自动评测(设计文档 §45) */
     @org.springframework.web.bind.annotation.PostMapping("/evaluate")
     public Map<String, Object> evaluate(@org.springframework.web.bind.annotation.RequestBody Map<String, String> body) {
         String reply = body.get("reply");

@@ -20,7 +20,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 对话后的异步后处理(V2.0): Experience 记录 + Thought/Emotion/OpenLoop/承诺 触发
+ * 对话后的异步后处理: Experience 记录 + Thought/Emotion/OpenLoop/承诺 触发
  * + 记忆/用户模型/实体抽取 + 关系与状态演化。
  * 感知精炼已在回复生成前同步完成,这里不再重复。
  */
@@ -67,19 +67,19 @@ public class AgentPostProcessor {
                               String userText, String reply, PerceptionEngine.Perception perception,
                               List<String> validationIssues) {
         try {
-            // 1. 经历层: 一次交流 → Experience(设计文档 V2.0 §11)
+            // 1. 经历层: 一次交流 → Experience(设计文档 §11)
             double importance = intentImportance(perception.intent());
             double emotionalWeight = emotionWeight(perception.emotion());
             experienceProcessor.recordConversationExchange(companionId, conversationId, userText, reply,
                     importance, emotionalWeight, 0.6);
 
-            // 2. 想法/未完成事项(设计文档 V2.0 §6/§8)
+            // 2. 想法/未完成事项(设计文档 §6/§8)
             thoughtEngine.maybeFromConversation(companionId, userText);
 
-            // 3. 情绪事件(设计文档 V2.0 §7)
+            // 3. 情绪事件(设计文档 §7)
             emotionEngine.fromConversation(companionId, perception.emotion(), perception.intent(), userText);
 
-            // 3.5 用户分享真实生活事件 → 记入人生时间线(设计文档 V2.0 §33 USER_SHARED_EVENT)
+            // 3.5 用户分享真实生活事件 → 记入人生时间线(设计文档 §33 USER_SHARED_EVENT)
             maybeRecordUserSharedEvent(companionId, userText);
 
             // 4. 关系 2.0: 承诺识别 + 关系线索更新
@@ -98,7 +98,7 @@ public class AgentPostProcessor {
             // 5. 原有异步学习链路
             memoryExtractor.extractFromExchange(userId, companionId, conversationId, userText, reply);
             userModelExtractor.extractFromExchange(userId, companionId, conversationId, userText, reply);
-            // 5.5 V3 P2: 实体抽取(长期指代: 那家公司/上次那个地方)
+            // 5.5 P2: 实体抽取(长期指代: 那家公司/上次那个地方)
             entityExtractor.extractFromExchange(userId, companionId, conversationId, userText, reply);
             relationshipEngine.onMessage(userId, companionId, LocalDateTime.now(), perception.emotion(), perception.intent());
             if ("correction".equals(perception.intent())) {

@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * V7 §3 Circadian State: 生物钟状态。
+ * §3 Circadian State: 生物钟状态。
  * 记录每个伴侣的长期节律 + 实时睡眠压力。
  *
  * sleep_pressure(睡眠稳态压力, Process S): 醒着越久越高, 睡觉时下降。

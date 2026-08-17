@@ -2,7 +2,7 @@ package com.luxera.companion.thought;
 
 import org.springframework.stereotype.Component;
 
-/** 想法评分(设计文档 V2.0 §6.2) */
+/** 想法评分(设计文档 §6.2) */
 @Component
 public class ThoughtScorer {
 

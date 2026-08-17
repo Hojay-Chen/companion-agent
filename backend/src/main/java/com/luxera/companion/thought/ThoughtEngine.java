@@ -14,7 +14,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 想法引擎(设计文档 V2.0 §6): Trigger → Candidate → Scoring → Active → Decision。
+ * 想法引擎(设计文档 §6): Trigger → Candidate → Scoring → Active → Decision。
  * 大部分内部事件最终什么都不发生 —— 这正是为了模拟真人。
  */
 @Slf4j
@@ -43,7 +43,7 @@ public class ThoughtEngine {
         this.llm = llm;
     }
 
-    /** 每日反思时用 LLM 抽取未办完的事(设计文档 V2.0 §8, Level 3) */
+    /** 每日反思时用 LLM 抽取未办完的事(设计文档 §8, Level 3) */
     @Transactional
     public void extractOpenLoopsFromDay(String companionId, String dayExcerpt) {
         if (dayExcerpt == null || dayExcerpt.isBlank()) return;
@@ -66,7 +66,7 @@ public class ThoughtEngine {
         }
     }
 
-    /** 想法转 OpenLoop(设计文档 V2.0 §6: Convert to OpenLoop 决策) */
+    /** 想法转 OpenLoop(设计文档 §6: Convert to OpenLoop 决策) */
     @Transactional
     public void convertToOpenLoop(String companionId, String thoughtId) {
         thoughtService.activeThoughts(companionId).stream()

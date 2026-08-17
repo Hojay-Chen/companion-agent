@@ -7,7 +7,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 排程动作分发器(V5 §66/§100): 到期动作按类型分发给处理器。
+ * 排程动作分发器(§66/§100): 到期动作按类型分发给处理器。
  * 处理器由各模块注册(消息复查/主动消息/事件模拟), Runtime 不关心具体实现。
  */
 @Slf4j

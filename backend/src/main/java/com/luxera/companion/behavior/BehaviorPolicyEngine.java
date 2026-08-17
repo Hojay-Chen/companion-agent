@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * 行为策略引擎(设计文档 V2.0 §13): Runtime 决定"现在应该做什么"。
+ * 行为策略引擎(设计文档 §13): Runtime 决定"现在应该做什么"。
  * 规则驱动(Level 1, 不调用 LLM); 使用 BehaviorConstraints 约束; 输出 BehaviorDecision。
  */
 @Component
@@ -56,7 +56,7 @@ public class BehaviorPolicyEngine {
             initiative = Math.max(0.2, initiative - 0.2);
             reason = "最近压力有点大,有点没精神";
         }
-        // 更细的摩擦(设计文档 V2.0 §20): 同一话题被反复追问 + 高压力 → 允许轻微不耐烦/委婉拒绝
+        // 更细的摩擦(设计文档 §20): 同一话题被反复追问 + 高压力 → 允许轻微不耐烦/委婉拒绝
         if (stress > 0.55 && isRepeatedTopic(ctx) && !BehaviorConstraints.shouldAskGently(emotion)) {
             posture = "slightly_impatient";
             initiative = Math.max(0.2, initiative - 0.15);

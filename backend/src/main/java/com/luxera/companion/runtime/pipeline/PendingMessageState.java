@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * 未回复消息状态(V5 §79): 消息被读到但本次没有回复 → 记录待复查状态。
+ * 未回复消息状态(§79): 消息被读到但本次没有回复 → 记录待复查状态。
  * 形成"看到了但不回, 稍后可能回"的行为连续性。
  * 服务重启也不丢 —— 真人不会因为服务器重启而忘记没回的消息。
  */
@@ -70,7 +70,7 @@ public class PendingMessageState {
     @Column(length = 500)
     private String reason;
 
-    // ── V6 §54 Communication Friction ──────────────
+    // ── §54 Communication Friction ──────────────
     /** 摩擦类型: SEEN_NO_REPLY(看到了没回) / WANTED_TO_REPLY_FORGOT(想回忘了) / REPLIED_HALFWAY(回一半被打断) */
     @Column(name = "friction_type", length = 32)
     private String frictionType;

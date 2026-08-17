@@ -22,7 +22,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * V8 §十一~§十六 POST /messages Chat Core 测试:
+ * §十一~§十六 POST /messages Chat Core 测试:
  * - 用户消息**同步落库**(刷新不丢, 服务器重启不丢)
  * - clientMessageId 幂等(同会话重复提交不重复入库)
  * - Agent 异步处理(请求不阻塞)
@@ -30,7 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 @SpringBootTest
 @AutoConfigureMockMvc
-class V7MessageControllerTest {
+class MessageControllerTest {
 
     @Autowired
     MockMvc mockMvc;
@@ -41,7 +41,7 @@ class V7MessageControllerTest {
     @Autowired
     MessageRepository messageRepository;
     @Autowired
-    V7AgentRuntime v7AgentRuntime;
+    AgentRuntime v7AgentRuntime;
 
     private String companionId;
     private String conversationId;
@@ -75,7 +75,7 @@ class V7MessageControllerTest {
                 .andExpect(status().is4xxClientError());
     }
 
-    /** V8: Agent 处理已持久化的消息(测试中直接同步调用), 消息由 MessageCoreService 先落库 */
+    /** Agent 处理已持久化的消息(测试中直接同步调用), 消息由 MessageCoreService 先落库 */
     @Test
     void agentRuntimeProcessesPersistedMessages() {
         String content = "你好,我在这里";

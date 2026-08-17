@@ -41,7 +41,7 @@ public class AppProperties {
         private int timeoutSeconds = 120;
         /** api-key 为空时自动降级为 mock */
         private boolean mockFallback = true;
-        /** 模型用途路由(设计文档 V2.0 §25): 按任务类型可分别指定模型/温度, 缺省用 chat-model */
+        /** 模型用途路由(设计文档 §25): 按任务类型可分别指定模型/温度, 缺省用 chat-model */
         private Map<String, Purpose> purpose = new java.util.HashMap<>();
     }
 
@@ -75,7 +75,7 @@ public class AppProperties {
         private String weeklyReflectionCron = "0 0 5 * * MON";
         private String proactiveCron = "0 */15 * * * *";
         private String birthdayCron = "0 5 8 * * *";
-        // V2.0 生命内核
+        // 生命内核
         private String lifeTickCron = "0 */10 * * * *";
         private String thoughtMaintenanceCron = "0 */30 * * * *";
         private String emotionMaintenanceCron = "0 45 * * * *";

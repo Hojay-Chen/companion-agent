@@ -61,12 +61,12 @@ public class ConversationService {
         conv.setCompanionId(companionId);
         conv.setTitle(title == null || title.isBlank() ? "新的对话" : title);
         convRepo.save(conv);
-        // V8: 会话参与者(Agent + User), 幂等
+        // 会话参与者(Agent + User), 幂等
         companionRepo.findById(companionId).ifPresent(c -> seedParticipants(conv, userId, c));
         return conv;
     }
 
-    /** V8 §五十二: 注册会话参与者(群聊数据模型的地基) */
+    /** §五十二: 注册会话参与者(群聊数据模型的地基) */
     private void seedParticipants(Conversation conv, String userId, Companion companion) {
         try {
             participantService.seed(conv, userId, companion);
@@ -107,7 +107,7 @@ public class ConversationService {
         return asc;
     }
 
-    /** V4 Message Lifecycle: 更新消息投递状态(DELIVERED/READ/DEFERRED/IGNORED) */
+    /** Message Lifecycle: 更新消息投递状态(DELIVERED/READ/DEFERRED/IGNORED) */
     @Transactional
     public void updateDeliveryStatus(String messageId, String status) {
         msgRepo.findById(messageId).ifPresent(m -> {
@@ -122,7 +122,7 @@ public class ConversationService {
         return addMessage(conversationId, senderType, content, perception, proactive, null, null, null);
     }
 
-    /** V3: 带会话归属与消息类型 */
+    /** 带会话归属与消息类型 */
     @Transactional
     public Message addMessage(String conversationId, String senderType, String content,
                               PerceptionEngine.Perception perception, boolean proactive,
@@ -131,7 +131,7 @@ public class ConversationService {
                 messageKind, sessionId, exchangeId, null);
     }
 
-    /** V8: 带客户端幂等键的消息落库(用户消息同步持久化核心) */
+    /** 带客户端幂等键的消息落库(用户消息同步持久化核心) */
     @Transactional
     public Message addMessage(String conversationId, String senderType, String content,
                               PerceptionEngine.Perception perception, boolean proactive,

@@ -14,8 +14,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * 伴侣事件总线(V4 §二十七): 每 companion 一组 SSE 订阅者。
- * V8 §17 升级: publish 时同步写入 {@link EventLogService}(SSE 游标), 断线重连可回放。
+ * 伴侣事件总线(§二十七): 每 companion 一组 SSE 订阅者。
+ * §17 升级: publish 时同步写入 {@link EventLogService}(SSE 游标), 断线重连可回放。
  * 瞬态事件(心跳/打字)不入日志 —— 回放它们没有意义。
  * 前端通过 GET /events 长连接订阅, 后端各模块 publish 事件实时推送。
  */

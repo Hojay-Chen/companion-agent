@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Luxera Companion V2.0 — Human-likeness 自动评测(设计文档 §45)
+# Luxera Companion — Human-likeness 自动评测(设计文档 §45)
 # 用法: echo "回复文本" | BASE=http://127.0.0.1:8081 bash scripts/evaluate.sh
 set -euo pipefail
 BASE="${BASE:-http://127.0.0.1:8081}"

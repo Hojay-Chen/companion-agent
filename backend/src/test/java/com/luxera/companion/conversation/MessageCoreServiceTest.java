@@ -14,7 +14,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V8 §十一~§十三 Chat Core 核心测试:
+ * §十一~§十三 Chat Core 核心测试:
  * 1. 用户消息同步落库(请求事务内即可读到)
  * 2. clientMessageId 幂等(同会话重复提交返回同一条, 不重复入库)
  * 3. 返回 canonical messageId(真实 id, 非占位符)

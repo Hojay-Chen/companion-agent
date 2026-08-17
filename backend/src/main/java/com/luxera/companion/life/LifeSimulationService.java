@@ -45,7 +45,7 @@ public class LifeSimulationService {
             a.setEmotionalSignificance(blockEmotional(b.type()));
             a.setStatus("PLANNED");
             a.setSource("SIMULATED_LIFE_EVENT");
-            // V6 §6: 具体活动属性(注意力占用/可打断性/手机可用性/情绪影响)
+            // §6: 具体活动属性(注意力占用/可打断性/手机可用性/情绪影响)
             var spec = specProvider.specFor(b.type());
             a.setAttentionDemand(spec.attentionDemand());
             a.setInterruptibility(spec.interruptibility());

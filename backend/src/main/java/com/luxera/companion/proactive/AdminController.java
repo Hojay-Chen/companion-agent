@@ -21,7 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/** 手动触发验收用的管理端点(设计文档 V2.0 §30) */
+/** 手动触发验收用的管理端点(设计文档 §30) */
 @RestController
 @RequestMapping("/api/admin")
 public class AdminController {
@@ -82,7 +82,7 @@ public class AdminController {
         return Map.of("actions", actions, "count", actions.size());
     }
 
-    /** V4.2: 定向触发某伴侣的主动消息(?force=true 模拟隔了一阵没聊, 稳定验证实时推送) */
+    /** 定向触发某伴侣的主动消息(?force=true 模拟隔了一阵没聊, 稳定验证实时推送) */
     @PostMapping("/proactive/run/{companionId}")
     public Map<String, Object> runProactiveFor(@PathVariable String companionId,
                                                @RequestParam(required = false, defaultValue = "false") boolean force) {
@@ -96,7 +96,7 @@ public class AdminController {
         return Map.of("success", true);
     }
 
-    // ── V2.0 生命内核 ───────────────────────────
+    // ── 生命内核 ───────────────────────────
 
     @PostMapping("/life/tick")
     public Map<String, Object> lifeTick(@RequestParam(required = false) String companionId) {
@@ -149,7 +149,7 @@ public class AdminController {
 
     @PostMapping("/cognitive/tick")
     public Map<String, Object> cognitiveTick() {
-        // 统一内核 tick: Life→Emotion→Thought→OpenLoop→Proactive(设计文档 V2.0 §17)
+        // 统一内核 tick: Life→Emotion→Thought→OpenLoop→Proactive(设计文档 §17)
         int ticked = 0;
         for (Companion c : companionRepo.findAll()) {
             if (c.getDeletedAt() != null) continue;
@@ -159,7 +159,7 @@ public class AdminController {
         return Map.of("ticked", ticked);
     }
 
-    // ── V8 行为引擎 ─────────────────────────────
+    // ── 行为引擎 ─────────────────────────────
 
     @PostMapping("/behavior/run")
     public Map<String, Object> behaviorRun() {

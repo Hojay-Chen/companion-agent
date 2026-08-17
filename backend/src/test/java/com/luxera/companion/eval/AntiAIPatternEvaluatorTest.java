@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V6 §71/§72 Anti-AI Pattern Evaluation 测试:
+ * §71/§72 Anti-AI Pattern Evaluation 测试:
  * - 正常行为 → 无反 AI 模式, 高真人感
  * - 每次秒回 → 检测到
  * - 从不忽略/延迟 → 检测到"永远积极回应"

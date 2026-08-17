@@ -1,7 +1,7 @@
 package com.luxera.companion.interaction;
 
 /**
- * 交互决策(设计文档 V3 §四): 收到消息后先决定行为, 再由运行时执行。
+ * 交互决策(设计文档 §四): 收到消息后先决定行为, 再由运行时执行。
  */
 public class InteractionDecision {
 

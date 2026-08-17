@@ -18,7 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-/** 关系叙事(设计文档 V2.0 §38/§42): "我们之间发生过一个故事", 版本化 */
+/** 关系叙事(设计文档 §38/§42): "我们之间发生过一个故事", 版本化 */
 @Entity
 @Table(name = "relationship_narratives")
 @Getter

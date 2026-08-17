@@ -31,7 +31,7 @@ public class Message {
     @Column(name = "conversation_id", nullable = false, length = 36)
     private String conversationId;
 
-    /** V8: 客户端幂等键(用户消息), 同会话内唯一; agent/系统消息为空 */
+    /** 客户端幂等键(用户消息), 同会话内唯一; agent/系统消息为空 */
     @Column(name = "client_message_id", length = 64)
     private String clientMessageId;
 
@@ -54,7 +54,7 @@ public class Message {
     @Column(name = "is_proactive", nullable = false)
     private boolean proactive = false;
 
-    // ── V3 会话模型 ──────────────────────────
+    // ── 会话模型 ──────────────────────────
     @Column(name = "session_id", length = 36)
     private String sessionId;
 

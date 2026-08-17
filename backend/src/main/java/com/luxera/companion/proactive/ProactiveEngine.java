@@ -86,7 +86,7 @@ public class ProactiveEngine {
     }
 
     /**
-     * V8 §四十一: 定时主动检查已由 BehaviorEngine(行为 Tick)接管,
+     * §四十一: 定时主动检查已由 BehaviorEngine(行为 Tick)接管,
      * 主动联系只是数字人的行为候选之一。此方法保留手动触发入口(Admin/测试)。
      */
     public void runScheduled() {
@@ -118,7 +118,7 @@ public class ProactiveEngine {
             // 她的作息: 睡觉时不主动打扰(比 DND 更贴合个人作息)
             if (schedule.activityFor(c.getId(), now) == CompanionSchedule.Activity.SLEEP) continue;
 
-            // V4.2 主动意愿: 由"自然频率"决定, 不再有硬性上限/间隔
+            // 主动意愿: 由"自然频率"决定, 不再有硬性上限/间隔
             Message lastProactive = messageRepo
                     .findFirstByCompanionIdAndMessageKindOrderByCreatedAtDesc(c.getId(), "PROACTIVE")
                     .orElse(null);
@@ -130,7 +130,7 @@ public class ProactiveEngine {
             ProactiveDecision decision = decide(c, now, lastInteraction, lastProactive, responsive);
             if (decision.act()) {
                 String content = draftMessage(c, decision.trigger(), decision.content(), now);
-                // V3: 主动消息只进聊天框(见设计 §二十七~三十), 它是 Chat 消息, 不是 Notification
+                // 主动消息只进聊天框(见设计 §二十七~三十), 它是 Chat 消息, 不是 Notification
                 injectMessage(c.getId(), content);
                 actions.add(c.getName() + " → " + decision.title() + " (预期" + round(decision.expectedValue())
                         + " vs 成本" + round(decision.interruptionCost()) + ")");
@@ -140,7 +140,7 @@ public class ProactiveEngine {
         return actions;
     }
 
-    /** V4.2: 定向触发某伴侣的主动消息(测试实时推送用, 可用 force 模拟"隔了一阵没聊") */
+    /** 定向触发某伴侣的主动消息(测试实时推送用, 可用 force 模拟"隔了一阵没聊") */
     @Transactional
     public List<String> runForCompanion(String companionId, boolean force) {
         List<String> actions = new ArrayList<>();
@@ -167,7 +167,7 @@ public class ProactiveEngine {
         return actions;
     }
 
-    /** 决策引擎: 收集触发,计算预期价值与打断成本(设计文档 V2.0 §18) —— V8 作为行为候选生成器 */
+    /** 决策引擎: 收集触发,计算预期价值与打断成本(设计文档 §18) —— 作为行为候选生成器 */
     public ProactiveDecision decide(Companion c, LocalDateTime now, LocalDateTime lastInteraction,
                                     Message lastProactive, boolean responsive) {
         String userId = c.getUserId();
@@ -175,22 +175,22 @@ public class ProactiveEngine {
         Relationship rel = relationshipRepo.findByUserIdAndCompanionId(userId, c.getId()).orElse(null);
         // 按作息调节主动意愿: 忙碌时低, 休闲时高
         double factor = schedule.proactiveFactor(c.getId(), now);
-        // 关系相关性(设计文档 V2.0 §18): 越熟悉/越亲密, 主动联系的价值越高
+        // 关系相关性(设计文档 §18): 越熟悉/越亲密, 主动联系的价值越高
         double relBonus = relationshipBonus(rel);
-        // V4.2 打断成本: 由"最后一次互动距今"的正相关曲线决定(刚聊过→很低, 越久没聊→越低)
+        // 打断成本: 由"最后一次互动距今"的正相关曲线决定(刚聊过→很低, 越久没聊→越低)
         double cst = cost(lastInteraction);
         // "今天还没聊过"是合理自然条件(用于早安/回访触发)
         long todayCount = messageRepo.countByCompanionIdAndMessageKindAndCreatedAtAfter(
                 c.getId(), "PROACTIVE", now.toLocalDate().atStartOfDay());
 
-        // V4.2 自然频率: 上次主动在 2 小时内 → 这次先不主动(真人不会连续轰炸);
+        // 自然频率: 上次主动在 2 小时内 → 这次先不主动(真人不会连续轰炸);
         // 超过 2 小时 → 由成本曲线自然决定是否值得发, 不再有"每日上限"这种机械限制
         if (lastProactive != null && lastProactive.getCreatedAt().isAfter(now.minusHours(2))) {
             return ProactiveDecision.nothing();
         }
 
         // 触发 0: OpenLoop 驱动(未完成事项, 最真实) — "面试怎么样了"
-        // V3 P1 增强: 到点后问(±2h 窗口内价值最高), 错过但仍未跟进的在 2 天内仍值得问一次(价值随时间递减)
+        // P1 增强: 到点后问(±2h 窗口内价值最高), 错过但仍未跟进的在 2 天内仍值得问一次(价值随时间递减)
         OpenLoop bestLoop = openLoopService.activeLoops(c.getId()).stream()
                 .filter(l -> l.getExpectedResolutionAt() != null)
                 .filter(l -> l.getExpectedResolutionAt().isBefore(now.plusHours(2)))
@@ -288,7 +288,7 @@ public class ProactiveEngine {
                     "silence", 0.5 * factor, cst);
         }
 
-        // 触发 5.5: V4 Re-engagement(冲突后缓和) — 她受了伤/生气, 但过了一阵想缓和关系
+        // 触发 5.5: Re-engagement(冲突后缓和) — 她受了伤/生气, 但过了一阵想缓和关系
         var astate = agentStateService.get(c.getId());
         if (astate != null && (astate.getHurt() + astate.getAnger()) > 0.5
                 && lastInteraction != null && lastInteraction.isBefore(now.minusHours(1))
@@ -342,7 +342,7 @@ public class ProactiveEngine {
     }
 
     /**
-     * V4.2 打断成本: 由"最后一次互动距今"的正相关曲线决定。
+     * 打断成本: 由"最后一次互动距今"的正相关曲线决定。
      * - 刚聊过(<30min) → 成本高, 不打扰(她刚回完你, 不会立刻又发)
      * - 越久没聊 → 成本越低(她想你了, 联系更自然)
      * - 用平滑曲线而非固定加值; 时间成本自然回落, 不再有"4h 内一律 +0.35"的生硬
@@ -405,7 +405,7 @@ public class ProactiveEngine {
                 .orElse(false);
     }
 
-    /** 关系相关性加权(设计文档 V2.0 §18): 越熟悉/越亲密, 主动价值越高 */
+    /** 关系相关性加权(设计文档 §18): 越熟悉/越亲密, 主动价值越高 */
     private static double relationshipBonus(Relationship rel) {
         if (rel == null) return 0;
         return clamp(rel.getFamiliarity() * 0.1 + rel.getIntimacy() * 0.1);
@@ -415,14 +415,14 @@ public class ProactiveEngine {
         return Math.max(0, Math.min(1, v));
     }
 
-    /** V8: 上次主动消息(BehaviorEngine 候选生成用) */
+    /** 上次主动消息(BehaviorEngine 候选生成用) */
     public Message lastProactive(String companionId) {
         return messageRepo
                 .findFirstByCompanionIdAndMessageKindOrderByCreatedAtDesc(companionId, "PROACTIVE")
                 .orElse(null);
     }
 
-    /** V8: 执行一次主动联系(草稿 + 注入聊天框 + 事件推送) —— 由 BehaviorEngine 调用 */
+    /** 执行一次主动联系(草稿 + 注入聊天框 + 事件推送) —— 由 BehaviorEngine 调用 */
     @Transactional
     public void execute(Companion c, ProactiveDecision decision, LocalDateTime now) {
         if (decision == null || !decision.act()) return;
@@ -434,10 +434,10 @@ public class ProactiveEngine {
     private void injectMessage(String companionId, String content) {
         var convs = conversationRepo.findByCompanionIdOrderByLastMessageAtDesc(companionId);
         if (convs.isEmpty()) return;
-        // V3: 主动消息进入聊天框, 标记 message_kind=PROACTIVE(仍是 Chat Message, 不是 Notification)
+        // 主动消息进入聊天框, 标记 message_kind=PROACTIVE(仍是 Chat Message, 不是 Notification)
         Message m = conversationService.addMessage(convs.get(0).getId(), "companion", content, null, true,
                 "PROACTIVE", null, null);
-        // V4: 主动消息经持久事件流实时推给前端
+        // 主动消息经持久事件流实时推给前端
         eventBus.publish(companionId, com.luxera.companion.event.CompanionEventType.COMPANION_MESSAGE,
                 Map.of("messageId", m.getId(), "conversationId", m.getConversationId(),
                         "content", content, "senderType", "companion", "proactive", true));

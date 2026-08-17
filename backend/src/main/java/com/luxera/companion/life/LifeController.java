@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
-/** "她今天在干嘛" / 连续生活(设计文档 V2.0 §32) */
+/** "她今天在干嘛" / 连续生活(设计文档 §32) */
 @RestController
 @RequestMapping("/api/companions/{companionId}/life")
 public class LifeController {

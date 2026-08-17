@@ -38,7 +38,7 @@ export default function CompanionCreate() {
   const [previewing, setPreviewing] = useState(false)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
-  // V8 §七: 用户显式选择的关系类型(Agent 世界中的真实关系状态)
+  // §七: 用户显式选择的关系类型(Agent 世界中的真实关系状态)
   const [relationshipType, setRelationshipType] = useState<RelationshipTypeValue | ''>('')
 
   async function compile() {
@@ -127,7 +127,7 @@ export default function CompanionCreate() {
           </button>
         </section>
 
-        {/* Step 1.5: 你和她是什么关系 (V8 §七: 真实关系状态, 不是 Prompt) */}
+        {/* Step 1.5: 你和她是什么关系 (§七: 真实关系状态, 不是 Prompt) */}
         {persona && (
           <section className="card mt-6 p-6 animate-fadeUp">
             <div className="mb-1 text-xs uppercase tracking-widest text-ember-soft">你们的关系</div>

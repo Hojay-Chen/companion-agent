@@ -6,7 +6,7 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 
 /**
- * 可用状态派生(V3 P1 §四十一~四十三): 从 作息 + 精力/压力/社交电量 派生当前 availability。
+ * 可用状态派生(P1 §四十一~四十三): 从 作息 + 精力/压力/社交电量 派生当前 availability。
  * 不建表 —— 它是状态的"投影", 由 AgentState + CompanionSchedule 实时计算。
  */
 @Component

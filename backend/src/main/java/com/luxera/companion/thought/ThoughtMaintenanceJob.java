@@ -6,7 +6,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
-/** 想法维护(设计文档 V2.0 §6.3): 24h 弱化, 72h 过期 —— 思想必须允许消失 */
+/** 想法维护(设计文档 §6.3): 24h 弱化, 72h 过期 —— 思想必须允许消失 */
 @Component
 public class ThoughtMaintenanceJob {
 

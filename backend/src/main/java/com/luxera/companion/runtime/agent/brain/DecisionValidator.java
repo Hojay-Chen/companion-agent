@@ -6,7 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * V6 §44 Decision Validator: 每次 Brain Decision 的一致性校验。
+ * §44 Decision Validator: 每次 Brain Decision 的一致性校验。
  * 检查决策是否符合当前活动/情绪/性格/关系, 是否与刚刚发生的事情矛盾。
  *
  * 优先轻量 Schema Validation + State Constraint(不额外调 LLM):

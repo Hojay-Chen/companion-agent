@@ -9,7 +9,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V6 §44 Decision Validator 测试:
+ * §44 Decision Validator 测试:
  * - 睡眠时不应回复 → READ_NO_REPLY
  * - 忙(开会)时不应立即回复 → READ_NO_REPLY
  * - 手机不在身边不能 CHECK_PHONE_FIRST → READ_NO_REPLY

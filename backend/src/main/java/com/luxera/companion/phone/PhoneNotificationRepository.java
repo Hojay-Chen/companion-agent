@@ -10,6 +10,6 @@ public interface PhoneNotificationRepository extends JpaRepository<PhoneNotifica
 
     List<PhoneNotification> findByMessageId(String messageId);
 
-    /** V8: 未读通知数(行为引擎判断"要不要看手机") */
+    /** 未读通知数(行为引擎判断"要不要看手机") */
     long countByCompanionIdAndReadFalse(String companionId);
 }

@@ -5,7 +5,7 @@ import com.luxera.companion.state.CompanionAvailability;
 import org.springframework.stereotype.Component;
 
 /**
- * 驱动力计算(V4 §十五/§十六): 根据 Appraisal + 内部状态 + 关系 + 可用状态 + 消息特征,
+ * 驱动力计算(§十五/§十六): 根据 Appraisal + 内部状态 + 关系 + 可用状态 + 消息特征,
  * 实时计算各行为倾向强度。确定性 World State(时间/活动/注意力)不交给 LLM。
  * 接收标量(由 InteractionPolicyEngine 从上下文传入), 供评分竞争。
  */

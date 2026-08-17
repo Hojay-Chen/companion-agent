@@ -21,7 +21,7 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/** 上下文加载器(设计文档 V2.0 §28/§29): 加载 Runtime 完整上下文 */
+/** 上下文加载器(设计文档 §28/§29): 加载 Runtime 完整上下文 */
 @Component
 public class ContextLoader {
 
@@ -97,7 +97,7 @@ public class ContextLoader {
                 scheduleDesc, toolResult, now);
     }
 
-    /** 加载学习上下文(设计文档 V2.0 §29): 供反思/记忆/人格学习使用 */
+    /** 加载学习上下文(设计文档 §29): 供反思/记忆/人格学习使用 */
     public LearningContext loadLearning(String userId, String companionId, List<String> recentExperienceSummary) {
         var companion = companionService.requireOwned(userId, companionId);
         var userModel = userModelService.summary(userId, companionId);

@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 /**
- * 消息投递服务(V5 §11): 消息生命周期的状态转换 + 事件发布。
+ * 消息投递服务(§11): 消息生命周期的状态转换 + 事件发布。
  * 让"送达 / 通知 / 注意到 / 打开 / 读到 / 回复"各阶段可追踪。
  */
 @Service

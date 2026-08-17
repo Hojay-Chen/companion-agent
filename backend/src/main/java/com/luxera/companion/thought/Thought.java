@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * 内部思想(设计文档 V2.0 §6)。
+ * 内部思想(设计文档 §6)。
  * Thought ≠ 输出: 可保留/压制/遗忘/转化为主动行为或长期理解, 但不自动展示给用户。
  */
 @Entity

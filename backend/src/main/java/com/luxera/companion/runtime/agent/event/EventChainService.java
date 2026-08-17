@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * V6 §21 Event Chain: 事件因果链 + 深度限制。
+ * §21 Event Chain: 事件因果链 + 深度限制。
  * 事件可以继续影响后续状态(出门吃饭→下雨→忘带伞→淋雨→心情下降→回忆→主动告诉用户),
  * 但必须控制 maxDepth = 3, 避免模型生成无限剧情。
  *
@@ -24,7 +24,7 @@ import java.util.Map;
 @Service
 public class EventChainService {
 
-    /** 事件链最大深度(V6 §21): 超过则不再延续, 防止无限剧情 */
+    /** 事件链最大深度(§21): 超过则不再延续, 防止无限剧情 */
     public static final int MAX_DEPTH = 3;
 
     private static final Logger log = LoggerFactory.getLogger(EventChainService.class);

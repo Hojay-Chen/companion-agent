@@ -6,7 +6,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/** 实体服务(V3 P2 §五十四): 记录/更新/检索用户长期提到的实体。 */
+/** 实体服务(P2 §五十四): 记录/更新/检索用户长期提到的实体。 */
 @Service
 public class MemoryEntityService {
 

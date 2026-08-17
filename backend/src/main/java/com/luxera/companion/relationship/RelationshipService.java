@@ -27,14 +27,14 @@ public class RelationshipService {
         return repo.findByUserIdAndCompanionId(userId, companionId).orElse(null);
     }
 
-    /** V8: 创建伴侣时按关系类型初始化维度(真实关系状态, 非 Prompt) */
+    /** 创建伴侣时按关系类型初始化维度(真实关系状态, 非 Prompt) */
     @Transactional
     public void initByType(Relationship r, String type) {
         RelationshipTypes.applyInitial(r, type);
         repo.save(r);
     }
 
-    /** V4 Appraisal: 微调信任/亲密度(不越过边界) */
+    /** Appraisal: 微调信任/亲密度(不越过边界) */
     @Transactional
     public void updateMetrics(String userId, String companionId, double trustDelta, double intimacyDelta) {
         repo.findByUserIdAndCompanionId(userId, companionId).ifPresent(r -> {
@@ -45,7 +45,7 @@ public class RelationshipService {
     }
 
     /**
-     * V8 §39: 关系维护压力。沉默越久, connectionPressure 越高(驱动主动联系);
+     * §39: 关系维护压力。沉默越久, connectionPressure 越高(驱动主动联系);
      * 互动后由 {@link com.luxera.companion.relationship.RelationshipEngine#onMessage} 归零。
      * 亲密关系压力增长更快(更想念), 但"刚认识"增长更慢(不打扰)。
      */
@@ -67,7 +67,7 @@ public class RelationshipService {
         });
     }
 
-    /** V8: 用户可调整关系类型(关系状态真实变更) */
+    /** 用户可调整关系类型(关系状态真实变更) */
     @Transactional
     public Relationship changeType(String userId, String companionId, String type) {
         Relationship r = require(userId, companionId);

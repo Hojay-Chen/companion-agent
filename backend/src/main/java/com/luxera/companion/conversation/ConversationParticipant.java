@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * V8 §五十二~§五十三 ConversationParticipant: 会话参与者。
+ * §五十二~§五十三 ConversationParticipant: 会话参与者。
  *
  * 把 Conversation 从"companionId 一对一"升级为"多参与者":
  * 一对一 = Agent + User; 群聊 = Agent + User + Alice + Bob(数据模型天然成立, UI 暂不开放群聊)。

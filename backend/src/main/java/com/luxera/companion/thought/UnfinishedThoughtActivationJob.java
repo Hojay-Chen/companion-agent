@@ -9,7 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 
 /**
- * V6 §31 Unfinished Thought 激活 Job: 周期扫描所有伴侣的未完成想法,
+ * §31 Unfinished Thought 激活 Job: 周期扫描所有伴侣的未完成想法,
  * 在"冷却期过后 + 优先级达标"时重新激活, 让 ProactiveEngine 能在未来想起它。
  *
  * 模拟真人: "想说的话被打断, 过了半小时想起, 就回去补一句"。

@@ -121,18 +121,18 @@ export interface Message {
   conversationId: string
   senderType: 'user' | 'companion' | 'system'
   content: string
-  /** V8: 客户端幂等键(乐观消息 → canonical 消息的对应键) */
+  /** 客户端幂等键(乐观消息 → canonical 消息的对应键) */
   clientMessageId?: string | null
   intent?: string | null
   emotion?: string | null
   topic?: string | null
   proactive?: boolean
-  /** V3: 会话模型归属 */
+  /** 会话模型归属 */
   sessionId?: string | null
   exchangeId?: string | null
   /** NORMAL/SHORT_ACK/PROACTIVE/FOLLOW_UP/SYSTEM/TOOL_RESULT */
   messageKind?: string | null
-  /** V4: DELIVERED/READ/RESPONDED/DEFERRED/IGNORED */
+  /** DELIVERED/READ/RESPONDED/DEFERRED/IGNORED */
   deliveryStatus?: string | null
   createdAt: string
 }
@@ -208,7 +208,7 @@ export interface Relationship {
   trust: number
   intimacy: number
   affection: number
-  /** V8: 多维关系 */
+  /** 多维关系 */
   tension?: number
   reciprocity?: number
   respect?: number
@@ -277,7 +277,7 @@ export interface MemoryLink {
   strength: number
 }
 
-/** V3 P2: 用户常提的实体(长期指代) */
+/** P2: 用户常提的实体(长期指代) */
 export interface MemoryEntity {
   id: string
   name: string

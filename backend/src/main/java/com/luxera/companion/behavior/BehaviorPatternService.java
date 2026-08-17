@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * V6 §45/§46 Behavior Pattern 服务: 行为模式学习。
+ * §45/§46 Behavior Pattern 服务: 行为模式学习。
  * 人物会逐渐形成习惯(用户晚上发消息→第二天回复, 工作时→不爱看手机)。
  * 这些模式随互动更新, 置信度随观察次数增长。
  *

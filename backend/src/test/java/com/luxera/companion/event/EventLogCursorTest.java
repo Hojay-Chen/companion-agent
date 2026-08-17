@@ -15,7 +15,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V8 §十七 SSE 游标 + 事件日志测试:
+ * §十七 SSE 游标 + 事件日志测试:
  * 1. publish 落日志(瞬态事件除外), payload 带 eventId
  * 2. after(cursor) 能回放错过的消息 —— 断线重连不丢消息
  * 3. 事件按 companion 隔离

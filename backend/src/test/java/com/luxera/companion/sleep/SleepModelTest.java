@@ -15,7 +15,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V7 §63 Sleep Runtime 场景测试:
+ * §63 Sleep Runtime 场景测试:
  * - 场景1: 连续多天睡眠时间不同(emergent), 不是每天固定
  * - 场景2: 午睡后当晚睡眠推迟
  * - 场景3: 深夜高睡意 + 强动机 → STAY_AWAKE(意志克服睡意)

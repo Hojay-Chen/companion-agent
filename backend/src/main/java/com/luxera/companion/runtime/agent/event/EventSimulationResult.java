@@ -3,7 +3,7 @@ package com.luxera.companion.runtime.agent.event;
 import java.util.List;
 
 /**
- * Event Simulation Agent 输出(V5 §28): 候选事件 + 概率 + 触发条件 + 可能后果。
+ * Event Simulation Agent 输出(§28): 候选事件 + 概率 + 触发条件 + 可能后果。
  * LLM 只提出候选, 真正是否发生由 World Runtime 决定。
  */
 public record EventSimulationResult(

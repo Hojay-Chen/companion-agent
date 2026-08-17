@@ -14,7 +14,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V6 §45/§46 Behavior Pattern 测试:
+ * §45/§46 Behavior Pattern 测试:
  * - 支持观测 → 模式创建, 置信度/强度上升
  * - 反例观测 → 置信度下降
  * - 深夜消息 → 学习"深夜回复慢"模式

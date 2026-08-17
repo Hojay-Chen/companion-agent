@@ -6,10 +6,10 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * 情绪归约器单元测试(V5 §99 + V6 §48/§49/§50):
+ * 情绪归约器单元测试(§99 + §48/§49/§50):
  * 所有情绪状态变更走 Reducer, 可追踪。
  *
- * V6 语义:
+ * 语义:
  * - 惯性(§48): 已有情绪先自然衰减(不瞬间归零), 新冲击叠加其上
  * - 边际递减(§49): 已有情绪越高, 新同向冲击影响越小
  * - 身体状态(§50): 困倦/饥饿/不适放大负面、抑制正面
@@ -90,7 +90,7 @@ class EmotionReducerTest {
         assertEquals("有点受伤", s.getMood());
     }
 
-    // ── V6 新增 ──────────────────────────────────────
+    // ── 新增 ──────────────────────────────────────
 
     @Test
     void inertiaKeepsResidualEmotion() {

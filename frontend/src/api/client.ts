@@ -102,8 +102,8 @@ function emitBlock(block: string, onEvent: (event: string, data: unknown) => voi
   }
 }
 
-/** V4: 持久事件流(GET /events), 断线自动重连 + 指数退避。
- *  V8 §17: 增加 SSE 游标 —— 记录每条事件 id, 重连时携带 Last-Event-ID,
+/** 持久事件流(GET /events), 断线自动重连 + 指数退避。
+ *  §17: 增加 SSE 游标 —— 记录每条事件 id, 重连时携带 Last-Event-ID,
  *  服务器回放断线期间错过的消息(消息永不丢, 不靠整表重载补)。 */
 export async function openEventStream(
   companionId: string,
@@ -120,7 +120,7 @@ export async function openEventStream(
     const headers: Record<string, string> = {}
     const token = getToken()
     if (token) headers['Authorization'] = `Bearer ${token}`
-    // V8: 游标续传 —— 上次收到的事件 id
+    // 游标续传 —— 上次收到的事件 id
     if (lastEventIdRef) headers['Last-Event-ID'] = lastEventIdRef
 
     try {

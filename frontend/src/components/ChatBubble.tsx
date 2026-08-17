@@ -9,7 +9,7 @@ export default function ChatBubble({
   content: string
   streaming?: boolean
   time?: string
-  /** V4: 自己消息状态(已发送/已读) */
+  /** 自己消息状态(已发送/已读) */
   status?: string
 }) {
   const isUser = sender === 'user'
@@ -31,7 +31,7 @@ export default function ChatBubble({
         }`}
       >
         {streaming && !content ? (
-          // V4: 她正在输入(三点动画)
+          // 她正在输入(三点动画)
           <span className="flex items-center gap-1 text-cocoa-400">
             <span className="typing-dot" />
             <span className="typing-dot" style={{ animationDelay: '0.15s' }} />

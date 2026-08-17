@@ -13,7 +13,7 @@ import javax.persistence.Table;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-/** 承诺(设计文档 V2.0 §10.2): "我答应过你的事情" */
+/** 承诺(设计文档 §10.2): "我答应过你的事情" */
 @Entity
 @Table(name = "promises", indexes = @Index(name = "idx_promise_rel", columnList = "relationship_id"))
 @Getter

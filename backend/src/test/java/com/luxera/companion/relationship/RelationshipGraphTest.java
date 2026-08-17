@@ -17,7 +17,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V8 §五~§八 Person + Relationship Graph 测试:
+ * §五~§八 Person + Relationship Graph 测试:
  * 1. 用户/Agent 都是 Person(id 与 user.id/companion.id 一致)
  * 2. 创建伴侣按关系类型初始化多维关系(恋人 vs 同事差异显著)
  * 3. 沉默使联系压力上升(关系维护需求 → 驱动主动联系)

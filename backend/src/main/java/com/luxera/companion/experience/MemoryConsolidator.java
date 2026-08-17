@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 记忆固话(设计文档 V2.0 §11.3 / §12): 不是每条 Experience 都进入 Memory。
+ * 记忆固话(设计文档 §11.3 / §12): 不是每条 Experience 都进入 Memory。
  * memory_score = importance × emotional_weight × relationship_weight × repetition × future_relevance
  * 高于阈值才 consolidation 为长期 Memory。
  */

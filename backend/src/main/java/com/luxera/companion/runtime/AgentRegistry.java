@@ -6,7 +6,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Agent 注册表(V5 §52/§53): 按名称注册认知 Agent。
+ * Agent 注册表(§52/§53): 按名称注册认知 Agent。
  * Runtime 按 Agent 类型固定注入技能, 不让 Agent 自己决定加载什么。
  */
 @Component

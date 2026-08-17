@@ -16,9 +16,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Agent 日常时间表(V7 重构)。
+ * Agent 日常时间表(重构)。
  *
- * V7 核心原则: 作息不是 Schedule, 而是 Emergent Behavior。
+ * 核心原则: 作息不是 Schedule, 而是 Emergent Behavior。
  * 睡眠状态完全由 {@link SleepModel}(睡眠压力 + 昼夜节律 + 动机)决定,
  * 不再有 "if time >= sleepTime → SLEEP" 的硬规则。
  *
@@ -69,7 +69,7 @@ public class CompanionSchedule {
      * 未睡 → 按社会活动时段派生。
      */
     public Activity activityFor(String companionId, LocalDateTime now) {
-        // V7: 睡眠是 emergent —— 由 SleepModel 决定, 不是时刻表
+        // 睡眠是 emergent —— 由 SleepModel 决定, 不是时刻表
         if (sleepModel.currentSleeping(companionId, now)) {
             return Activity.SLEEP;
         }
@@ -103,7 +103,7 @@ public class CompanionSchedule {
         return Activity.LATE_NIGHT;
     }
 
-    /** V7: 睡眠决策(供消息处理判断她会不会硬撑聊天) */
+    /** 睡眠决策(供消息处理判断她会不会硬撑聊天) */
     public SleepModel.SleepDecision sleepDecision(String companionId, LocalDateTime now,
                                                   double motivation, double socialEngagement) {
         return sleepModel.decideSleep(companionId, now, motivation, socialEngagement);

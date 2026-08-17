@@ -9,7 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 
 /**
- * V6 §30 Thread 维护 Job: 周期衰减线程状态。
+ * §30 Thread 维护 Job: 周期衰减线程状态。
  * ACTIVE/PAUSED 太久没消息 → RESUMABLE(可恢复); RESUMABLE 太久 → ABANDONED(被遗忘)。
  * 模拟真人"聊到一半去做别的事情, 过一段时间回来继续, 再久就忘了"。
  */

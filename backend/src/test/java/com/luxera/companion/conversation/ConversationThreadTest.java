@@ -12,7 +12,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V6 §30 Conversation Thread 单元测试:
+ * §30 Conversation Thread 单元测试:
  * - 首次消息创建 ACTIVE 线程
  * - 同话题复用线程
  * - 话题切换 → 旧线程 PAUSED, 开新线程

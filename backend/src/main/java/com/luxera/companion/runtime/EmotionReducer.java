@@ -4,10 +4,10 @@ import com.luxera.companion.state.AgentState;
 import org.springframework.stereotype.Component;
 
 /**
- * 情绪状态归约器(V5 §61/§99 + V6 §48/§49): EmotionDelta → AgentState。
+ * 情绪状态归约器(§61/§99 + §48/§49): EmotionDelta → AgentState。
  * 唯一允许修改情绪维度的入口。所有情绪变化必须经过这里, 可追踪。
  *
- * V6 增强:
+ * 增强:
  * - 状态惯性(§48): Emotion(t+1) = Emotion(t) + EventImpact - NaturalDecay,
  *   情绪不会因为事件结束就瞬间归零, 而是自然衰减。
  * - 边际递减(§49): 已有负面情绪很高时, 新的同向冲击影响递减(人不至于无限愤怒),
@@ -32,7 +32,7 @@ public class EmotionReducer implements StateReducer<EmotionDelta, AgentState> {
         double negativeAmp = 1 + bodyNegative * BODY_AMPLIFY;
         double positiveAmp = 1 - bodyNegative * 0.3;
 
-        // V6 §49 边际递减: 已有情绪越高, 同向新冲击越小
+        // §49 边际递减: 已有情绪越高, 同向新冲击越小
         double hurtDelta = delta.hurt() * diminishing(state.getHurt()) * negativeAmp;
         double angerDelta = delta.anger() * diminishing(state.getAnger()) * negativeAmp;
         double sadDelta = delta.sadness() * diminishing(state.getSadness()) * negativeAmp;
@@ -45,7 +45,7 @@ public class EmotionReducer implements StateReducer<EmotionDelta, AgentState> {
         state.setAnxiety(clamp(state.getAnxiety() + anxietyDelta));
         state.setWarmth(clamp(state.getWarmth() + warmthDelta));
 
-        // V6 §49 情绪叠加: 正面情绪维度(joy/affection)与负面并存
+        // §49 情绪叠加: 正面情绪维度(joy/affection)与负面并存
         if (warmthDelta > 0) {
             state.setJoy(clamp(state.getJoy() + warmthDelta));
             state.setAffection(clamp(state.getAffection() + warmthDelta * 0.8));

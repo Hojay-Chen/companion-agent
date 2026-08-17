@@ -3,7 +3,7 @@ package com.luxera.companion.behavior;
 import java.time.LocalDateTime;
 
 /**
- * V8 §三十五/§三十八 行为选择结果: 选中了什么、为什么、得分多少。
+ * §三十五/§三十八 行为选择结果: 选中了什么、为什么、得分多少。
  * (与遗留 BehaviorPolicyEngine 的 BehaviorDecision 区分)
  */
 public record BehaviorOutcome(

@@ -5,7 +5,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * V7 §50-§51 Behavioral Entropy: 行为熵。
+ * §50-§51 Behavioral Entropy: 行为熵。
  * 真人不是没有规律, 而是规律不会直接决定每一次行为。
  *
  * 判断"是否过于规律":

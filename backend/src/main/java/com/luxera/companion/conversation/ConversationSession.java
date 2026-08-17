@@ -13,7 +13,7 @@ import javax.persistence.Table;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-/** 一次连续聊天(设计文档 V3 §二十二): 09:00-09:30 是一个 Session, 与 Conversation(长期空间)区分 */
+/** 一次连续聊天(设计文档 §二十二): 09:00-09:30 是一个 Session, 与 Conversation(长期空间)区分 */
 @Entity
 @Table(name = "interaction_sessions", indexes = @Index(name = "idx_session_conv", columnList = "conversation_id"))
 @Getter

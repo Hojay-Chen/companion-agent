@@ -19,7 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Memory Agent(V5 §21-§25, P2): 检索 + 激活 + 显著性 + 时间推理 + 关系相关性的第二阶段。
+ * Memory Agent(§21-§25, P2): 检索 + 激活 + 显著性 + 时间推理 + 关系相关性的第二阶段。
  * 第一阶段廉价检索(向量/关键词) → 第二阶段 LLM 判断激活强度。
  * 回退: 用记忆的 retrievalStrength 特征排序。
  */

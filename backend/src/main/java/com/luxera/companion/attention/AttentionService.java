@@ -6,7 +6,7 @@ import com.luxera.companion.state.AgentState;
 import org.springframework.stereotype.Component;
 
 /**
- * 注意力场(V4 §六/§七): 不是"忙就不看手机", 而是"当前活动决定注意手机的概率分布"。
+ * 注意力场(§六/§七): 不是"忙就不看手机", 而是"当前活动决定注意手机的概率分布"。
  * 长时间工作注意力下降 → 手机响更容易被注意到(注意力低谷时反而容易分心)。
  * 输出: 一条用户消息被"注意到"并"查看"的概率, 以及查看的延迟。
  */

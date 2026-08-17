@@ -3,7 +3,7 @@ package com.luxera.companion.cognition;
 import org.springframework.stereotype.Service;
 
 /**
- * V7 §22-§23 Cognitive Wakeup: 事件驱动认知分级。
+ * §22-§23 Cognitive Wakeup: 事件驱动认知分级。
  * Agent 平时 IDLE(生活继续), 只有重要事件才唤醒认知系统。
  *
  * 唤醒等级:
@@ -42,7 +42,7 @@ public class CognitiveWakeupService {
     }
 
     /**
-     * V8 §三十一/§三十二 事件价值模型: 同一句话, 对不同关系的人唤醒不同。
+     * §三十一/§三十二 事件价值模型: 同一句话, 对不同关系的人唤醒不同。
      *
      * relationshipWeight 0-1(亲密度+好感):
      * - 亲密的人 → 社会相关性放大, 她更敏感("他失业了" vs "陌生人失业了")
@@ -81,7 +81,7 @@ public class CognitiveWakeupService {
         if (score >= 0.75 - 1e-9) return WakeLevel.DELIBERATION;
         if (score >= 0.55 - 1e-9) return WakeLevel.ATTENTION;
 
-        // V7 §23 修正: 用户发来的消息绝不 NO_WAKE —— 真人收到消息至少会"知道", 只是可能不深想。
+        // §23 修正: 用户发来的消息绝不 NO_WAKE —— 真人收到消息至少会"知道", 只是可能不深想。
         // NO_WAKE 只保留给低价值系统通知(优惠券等)。
         if ("MESSAGE".equals(input.eventType())) {
             // 亲密关系: 即使普通问候也值得认真看一眼

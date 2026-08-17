@@ -7,7 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * V6 §19 Memory Recall Probability: 记忆召回概率。
+ * §19 Memory Recall Probability: 记忆召回概率。
  * 人知道很多事情, 但不会每次都想起来 —— 只有超过阈值才进入人物当前认知。
  *
  * recallProbability = activation × salience 加权

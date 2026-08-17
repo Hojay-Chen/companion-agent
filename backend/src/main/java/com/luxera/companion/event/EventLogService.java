@@ -8,7 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Map;
 
 /**
- * V8 §17 事件日志服务: 将事件落库供 SSE 游标回放。
+ * §17 事件日志服务: 将事件落库供 SSE 游标回放。
  * 独立事务(REQUIRES_NEW): 即使事件发布失败也不影响业务主事务。
  */
 @Slf4j

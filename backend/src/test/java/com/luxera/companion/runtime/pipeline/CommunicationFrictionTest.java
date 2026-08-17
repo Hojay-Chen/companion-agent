@@ -17,7 +17,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * V6 §54 Communication Friction 测试:
+ * §54 Communication Friction 测试:
  * - defer 记录"看到了没回"(SEEN_NO_REPLY)
  * - 摩擦类型可指定(想回忘了/回一半被打断)
  * - noteWantedToReply 更新摩擦类型 + 复查计数 + 延后复查

@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 /**
- * 实体抽取(V3 P2 §五十四): 从对话中抽取用户提到的实体(人/公司/地点/餐厅/项目/电影/事件/话题)。
+ * 实体抽取(P2 §五十四): 从对话中抽取用户提到的实体(人/公司/地点/餐厅/项目/电影/事件/话题)。
  * 解决"那家公司/上次那个地方/他"这类长期指代 —— 让她的上下文里有"他在乎的那些名词"。
  * LLM 结构化抽取, 失败静默(不阻塞主链路)。
  */

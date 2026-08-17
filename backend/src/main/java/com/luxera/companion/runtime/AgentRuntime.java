@@ -26,7 +26,7 @@ import com.luxera.companion.runtime.agent.expression.ExpressionResult;
 import com.luxera.companion.relationship.Relationship;
 import com.luxera.companion.relationship.RelationshipService;
 import com.luxera.companion.runtime.pipeline.MessageDeliveryService;
-import com.luxera.companion.runtime.pipeline.V5MessagePipeline;
+import com.luxera.companion.runtime.pipeline.MessagePipeline;
 import com.luxera.companion.state.AgentStateService;
 import com.luxera.companion.state.AvailabilityService;
 import com.luxera.companion.state.CompanionAvailability;
@@ -41,7 +41,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * V7 §10-§21 Agent Runtime: 通信解耦。
+ * §10-§21 Agent Runtime: 通信解耦。
  *
  * 用户发消息 → POST /messages 立即持久化返回 → Agent Runtime 异步处理。
  * Agent 是否看到/是否回复/什么时候回复, 全部由 Runtime 决定,
@@ -51,7 +51,7 @@ import java.util.Map;
  */
 @Slf4j
 @Service
-public class V7AgentRuntime {
+public class AgentRuntime {
 
     private static final String SPLIT = "<split>";
 
@@ -61,7 +61,7 @@ public class V7AgentRuntime {
     private final SessionManager sessionManager;
     private final UserChatStyleService userChatStyleService;
     private final BehaviorLearningService behaviorLearningService;
-    private final V5MessagePipeline messagePipeline;
+    private final MessagePipeline messagePipeline;
     private final ConversationThreadService threadService;
     private final ExpressionAgent expressionAgent;
     private final MessageDeliveryService deliveryService;
@@ -80,10 +80,10 @@ public class V7AgentRuntime {
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.locks.ReentrantLock> locks =
             new java.util.concurrent.ConcurrentHashMap<>();
 
-    public V7AgentRuntime(ConversationService conversationService, PerceptionEngine perceptionEngine,
+    public AgentRuntime(ConversationService conversationService, PerceptionEngine perceptionEngine,
                           WorkingMemory workingMemory, SessionManager sessionManager,
                           UserChatStyleService userChatStyleService, BehaviorLearningService behaviorLearningService,
-                          V5MessagePipeline messagePipeline, ConversationThreadService threadService,
+                          MessagePipeline messagePipeline, ConversationThreadService threadService,
                           ExpressionAgent expressionAgent, MessageDeliveryService deliveryService,
                           InteractionPolicyEngine interactionPolicy, ResponseLatencyEngine latencyEngine,
                           AgentStateService agentStateService, AvailabilityService availabilityService,
@@ -116,7 +116,7 @@ public class V7AgentRuntime {
     }
 
     /**
-     * V8 §十一~§十四: 接收**已持久化**的用户消息并异步触发 Agent 处理。
+     * §十一~§十四: 接收**已持久化**的用户消息并异步触发 Agent 处理。
      * 消息落库已由 {@link com.luxera.companion.conversation.MessageCoreService} 在请求事务内完成;
      * 这里只做 Agent 认知处理(感知/流水线/回复), 永不参与消息的持久化。
      * 立即返回(不阻塞); Agent 的回复通过事件总线推送。
@@ -126,7 +126,7 @@ public class V7AgentRuntime {
             try {
                 process(userId, companionId, conversationId, userMessages);
             } catch (Exception e) {
-                log.error("[V7AgentRuntime] 处理消息失败 companion={}: {}", companionId, e.getMessage());
+                log.error("[AgentRuntime] 处理消息失败 companion={}: {}", companionId, e.getMessage());
             }
         });
     }
@@ -159,12 +159,12 @@ public class V7AgentRuntime {
                 } catch (Exception ignored) { }
             }
 
-            // 2. V5 消息流水线
+            // 2. 消息流水线
             PerceptionEngine.Perception burstPerception = perceptionEngine.perceive(decisionText);
-            V5MessagePipeline.PipelineResult pipelineResult = messagePipeline.process(
+            MessagePipeline.PipelineResult pipelineResult = messagePipeline.process(
                     userId, companionId, conversationId, userMessages, decisionText, burstPerception, now);
 
-            // V7 §15-§17 Phone Notification: 消息到达 → 手机通知 → heard/seen/opened/read 逐步推进
+            // §15-§17 Phone Notification: 消息到达 → 手机通知 → heard/seen/opened/read 逐步推进
             PhoneNotification phoneNotif = null;
             try {
                 phoneNotif = phoneNotificationService.create(companionId, conversationId, last.getId(),
@@ -174,14 +174,14 @@ public class V7AgentRuntime {
                 phoneNotif = phoneNotificationService.advance(phoneNotif, att, phoneAvailable, now);
             } catch (Exception ignored) { }
 
-            // V6 会话线程
+            // 会话线程
             try {
                 threadService.touch(conversationId, companionId, userId,
                         burstPerception != null ? burstPerception.topic() : null,
                         burstPerception != null ? burstPerception.emotion() : null, now);
             } catch (Exception ignored) { }
 
-            // V7 §22-§23 + V8 §三十二 Cognitive Wakeup: 低价值消息不唤醒 LLM 认知。
+            // §22-§23 + §三十二 Cognitive Wakeup: 低价值消息不唤醒 LLM 认知。
             // 关系权重: 亲密的人发来的消息 → 更敏感(关系影响认知)。
             Relationship wakeRel = relationshipService.find(userId, companionId);
             double relWeight = wakeRel != null
@@ -215,7 +215,7 @@ public class V7AgentRuntime {
             if (pipelineResult.isDeferred()) {
                 eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
                         Map.of("messageId", last.getId(), "status", "READ", "action", "DEFER"));
-                // V7 §35-§36: 创建意图"该回复他" → 之后可能突然想起(Intention Activation)
+                // §35-§36: 创建意图"该回复他" → 之后可能突然想起(Intention Activation)
                 try {
                     intentionService.create(companionId, userId,
                             "还没回复那句「" + truncate(decisionText, 30) + "」, 等忙完想补一句",
@@ -247,7 +247,7 @@ public class V7AgentRuntime {
             for (Message um : userMessages) {
                 deliveryService.read(companionId, um.getId());
             }
-            // V7: 通知标记已读
+            // 通知标记已读
             if (phoneNotif != null) {
                 try {
                     phoneNotificationService.markRead(last.getId(), now);
@@ -261,7 +261,7 @@ public class V7AgentRuntime {
                     state != null ? state.getEnergy() : 0.6,
                     state != null ? state.getStress() : 0.3, now,
                     availabilityService.current(companionId, now, state));
-            // V8 §八: 关系影响回复节奏 —— 熟悉/亲密 → 略快(更随意); 张力高/心情低落 → 更慢
+            // §八: 关系影响回复节奏 —— 熟悉/亲密 → 略快(更随意); 张力高/心情低落 → 更慢
             Relationship latencyRel = relationshipService.find(userId, companionId);
             if (latencyRel != null) {
                 double famIntim = latencyRel.getFamiliarity() * 0.5 + latencyRel.getIntimacy() * 0.5;
@@ -319,7 +319,7 @@ public class V7AgentRuntime {
 
     private InteractionPolicyEngine.InteractionInput buildInteractionInput(
             String userId, String companionId, String decisionText, LocalDateTime now,
-            V5MessagePipeline.PipelineResult pr) {
+            MessagePipeline.PipelineResult pr) {
         var state = agentStateService.get(companionId);
         Relationship rel = relationshipService.find(userId, companionId);
         com.luxera.companion.appraisal.AppraisalService.AppraisalResult appraisal =
@@ -337,7 +337,7 @@ public class V7AgentRuntime {
     }
 
     private ExpressionContext buildExpressionContext(String userId, String companionId, String decisionText,
-                                                     V5MessagePipeline.PipelineResult pr, InteractionDecision decision,
+                                                     MessagePipeline.PipelineResult pr, InteractionDecision decision,
                                                      List<Message> recent, LocalDateTime now) {
         var state = agentStateService.get(companionId);
         String mood = state != null ? state.getMood() : "平静";

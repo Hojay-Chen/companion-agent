@@ -3,7 +3,7 @@ package com.luxera.companion.behavior;
 import com.luxera.companion.proactive.ProactiveDecision;
 
 /**
- * V8 §三十五 行为候选: 一次"她此刻可能做什么"的候选。
+ * §三十五 行为候选: 一次"她此刻可能做什么"的候选。
  * score 为综合效用(价值 - 打断成本 + 关系/人格/随机修正)。
  */
 public record BehaviorCandidate(
