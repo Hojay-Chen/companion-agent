@@ -4,8 +4,11 @@ import com.luxera.companion.config.CurrentUser;
 import com.luxera.companion.persona.CompanionService;
 import com.luxera.companion.state.AgentState;
 import com.luxera.companion.state.AgentStateService;
+import lombok.Data;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -100,5 +103,19 @@ public class RelationshipController {
         companionService.requireOwned(userId, companionId);
         Relationship r = relationshipService.require(userId, companionId);
         return promiseService.openPromises(r.getId());
+    }
+
+    /** V8 §七: 用户可调整关系类型 —— 关系是真实状态, 可以改变 */
+    @PutMapping("/type")
+    public Relationship changeType(@PathVariable String companionId,
+                                   @RequestBody ChangeTypeRequest req) {
+        String userId = currentUser.requireUserId();
+        companionService.requireOwned(userId, companionId);
+        return relationshipService.changeType(userId, companionId, req.getType());
+    }
+
+    @Data
+    public static class ChangeTypeRequest {
+        private String type;
     }
 }

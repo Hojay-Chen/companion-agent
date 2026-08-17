@@ -23,16 +23,22 @@ public class CompanionService {
     private final LifeEventRepository lifeEvents;
     private final RelationshipRepository relationships;
     private final AgentStateRepository agentStates;
+    private final com.luxera.companion.person.PersonService personService;
+    private final com.luxera.companion.relationship.RelationshipService relationshipService;
 
     public CompanionService(CompanionRepository companions, PersonaService personaService,
                             PersonaCompiler compiler, LifeEventRepository lifeEvents,
-                            RelationshipRepository relationships, AgentStateRepository agentStates) {
+                            RelationshipRepository relationships, AgentStateRepository agentStates,
+                            com.luxera.companion.person.PersonService personService,
+                            com.luxera.companion.relationship.RelationshipService relationshipService) {
         this.companions = companions;
         this.personaService = personaService;
         this.compiler = compiler;
         this.lifeEvents = lifeEvents;
         this.relationships = relationships;
         this.agentStates = agentStates;
+        this.personService = personService;
+        this.relationshipService = relationshipService;
     }
 
     public Persona compile(String description) {
@@ -45,6 +51,12 @@ public class CompanionService {
 
     @Transactional
     public Companion create(String userId, Persona persona) {
+        return create(userId, persona, null);
+    }
+
+    /** V8: 创建伴侣 —— 同时建立 Person 身份层 + 按关系类型初始化真实关系状态 */
+    @Transactional
+    public Companion create(String userId, Persona persona, String relationshipType) {
         compiler.fillDefaults(persona);
         Persona p = persona;
         Companion c = new Companion();
@@ -55,11 +67,22 @@ public class CompanionService {
         personaService.saveInitial(c.getId(), p);
         seedLifeEvents(c.getId(), p);
 
+        // V8 §四/§七: Person 身份层(用户与 Agent 都是 Person)
+        personService.getOrCreateUser(userId);
+        personService.getOrCreateAgent(c);
+
+        // V8 §五/§六: 关系 —— 用户选择的关系类型是 Agent 世界的真实状态
         Relationship rel = new Relationship();
         rel.setUserId(userId);
         rel.setCompanionId(c.getId());
-        rel.setRelationshipType(p.getRelationship() != null && StringUtils.hasText(p.getRelationship().getType())
-                ? p.getRelationship().getType() : "girlfriend");
+        rel.setUserPersonId(userId);
+        rel.setAgentPersonId(c.getId());
+        String type = relationshipType != null && relationshipType.isBlank() ? null : relationshipType;
+        if (type == null) {
+            type = p.getRelationship() != null && StringUtils.hasText(p.getRelationship().getType())
+                    ? p.getRelationship().getType() : "friend";
+        }
+        relationshipService.initByType(rel, type);
         relationships.save(rel);
 
         AgentState st = new AgentState();

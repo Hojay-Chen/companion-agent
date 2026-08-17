@@ -2,7 +2,62 @@
 
 > **不是 Chatbot**：拥有稳定人格、连续人生、持续记忆，随时间与用户建立关系，并在合适的时候主动找你。
 >
-> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime + V4 Continuous Human Runtime + **V5 Continuous Person Runtime** + **V6 拟真人格与持续生活** + **V7 Human Runtime**。当前完成 **V2.0(44/44) + V3 P0/P1/P2 + V4 P0/P1/P2/P3 + V5 P0~P8 + V6 P0~P3 + V7 P0~P7**。
+> 设计依据：《Persistent AI Companion 产品与技术设计方案》v1.0（107 节）+ V2.0 重构方案 + V3 Interaction Runtime + V4 Continuous Human Runtime + **V5 Continuous Person Runtime** + **V6 拟真人格与持续生活** + **V7 Human Runtime** + **V8 Digital Person**。当前完成 **V2.0(44/44) + V3 P0/P1/P2 + V4 P0/P1/P2/P3 + V5 P0~P8 + V6 P0~P3 + V7 P0~P7 + V8 P0~P2**。
+
+---
+
+## V8 · Digital Person（2026-08）
+
+> **V7 是"让生活产生 AI 的行为"；V8 是"把 Agent 真正拆成两个世界：Chat Platform 是软件，Agent 是独立存在的人"。**
+>
+> 核心目标不变：**让用户无法仅通过聊天行为判断对方是 AI。**
+> V8 的四个骨架：**Chat Core 重构（消息永不丢） + Person/Relationship Graph（关系是真实状态） + World Event Engine（世界持续运行） + Behavior Engine（中央行为选择器）**。
+
+### V8 核心改造
+
+1. **Chat Core：消息同步落库（§十一~§十六）** — 根治"消息显示 → 刷新没了 → 过一会儿又回来"：
+   - `POST /messages` **在请求事务内同步落库**，返回 canonical messageId（不再由 Agent 异步线程入库）
+   - `clientMessageId` 幂等键：同会话重复提交返回同一条，不重复入库/不重复触发 Agent
+   - **Outbox after-commit**：Agent 处理在事务提交后异步触发（Agent 崩溃/LLM 超时/服务器重启都不丢消息）
+   - `MessageCoreService` 是用户消息的唯一真相源；前端收到事件**增量 upsert**，不再整表重载
+2. **SSE 游标（§十七）**：`event_log` 持久化事件日志，`GET /events` 支持 `Last-Event-ID` 断线重连回放 —— 网络断开/切后台/服务器重启都不丢实时消息
+3. **Person + Relationship Graph（§五~§八）**：
+   - `persons` 表：**User / Agent / OtherPerson 都是 Person**（id 沿用 user.id / companion.id，零迁移）
+   - 关系升级为多维状态：`familiarity / trust / intimacy / affection / tension / reciprocity / respect / dependence / connectionPressure`
+   - **创建伴侣时用户选择关系类型**（恋人/最好的朋友/朋友/姐姐/同事/同学/家人…）→ 真实初始化关系维度（不是 Prompt）
+   - 关系维护压力：沉默越久 `connectionPressure` 越高 → 驱动主动联系（"想你了"不是定时器，是关系系统产生了联系需求）
+4. **World Event Engine（§四十三~§四十七）**：`digital_world_events` 持久化世界事件（时间/生活/身体/社交/记忆/意图/外界/通信）。**世界每时每刻都在运行，不是用户发消息世界才开始**；用户消息只是其中一种事件
+5. **Behavior Engine（§三十四~§四十一）**：**中央行为选择器**，取代"15 分钟主动消息检查"：
+   - 每 5 分钟问一次"她此刻最可能做什么？"：继续生活 / 睡觉 / 看手机 / 主动联系用户 / 联系朋友 / 想起某事 / 发呆
+   - **主动联系只是候选之一**（价值 - 打断成本 + 关系/人格修正 + 随机扰动 → 概率化选择）
+   - 人格进入行为：外向/主动 → 更可能联系；内向 → 更多独处；张力高 → 更少主动
+   - 行为熵从"评估器"变成"控制器"：规律是统计规律，不决定每次行为
+6. **关系驱动认知（§三十一/§三十二）**：Cognitive Wakeup 加入关系权重 —— 同一句话，亲密的人发来唤醒更深；回复节奏也随熟悉度/张力变化
+7. **睡眠是行为候选（§二十八/§二十九）**：`SleepTickJob` 的入睡决策考虑"是否正在陪你聊" —— 深夜聊天她会硬撑，而不是到点被 tick 强制入睡
+8. **会话参与者（§五十二）**：`conversation_participants`（Agent + User），群聊数据模型天然成立（UI 暂不开放群聊）
+
+### V8 新增数据表
+
+| 表 | 用途 |
+|----|------|
+| `persons` | Person 身份层（USER/AGENT/OTHER 都是 Person） |
+| `conversation_participants` | 会话参与者（一对一 = Agent+User；未来群聊多参与者） |
+| `event_log` | SSE 事件日志（游标回放，消息永不丢） |
+| `digital_world_events` | 世界事件（数字人世界持续运行的基础设施） |
+
+### V8 新增列
+
+| 表 | 列 | 说明 |
+|----|-----|------|
+| `messages` | `client_message_id` | 客户端幂等键（同会话唯一） |
+| `relationships` | `tension/reciprocity/respect/dependence/connection_pressure` | 多维关系状态 |
+
+### V8 验收
+
+- `mvn clean test`：**全部测试全绿**（含新增 MessageCoreService / BehaviorEngine / RelationshipGraph / EventLogCursor / ConversationParticipant 测试）
+- `scripts/v8_check.sh`：同步落库(立即查库可见) / clientMessageId 幂等 / Person+关系类型落库 / 会话参与者 / SSE 游标重放 / 行为引擎 / Anti-AI 回归
+- `scripts/v5_check.sh` + `scripts/v6_check.sh` + `scripts/v7_check.sh`：V5/V6/V7 回归通过
+- 端到端：发送消息刷新后仍在（同步落库）；断线重连补回事件；深夜聊天不强制入睡；沉默后她会主动联系
 
 ---
 

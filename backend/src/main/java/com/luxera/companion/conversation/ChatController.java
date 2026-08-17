@@ -80,6 +80,8 @@ public class ChatController {
     private final ConversationThreadService threadService;
     /** V6: 行为模式学习 */
     private final com.luxera.companion.behavior.BehaviorLearningService behaviorLearningService;
+    /** V8: 会话参与者 */
+    private final ConversationParticipantService participantService;
     /** 每会话一个锁, 串行化同会话的消息处理(消息归并 + 生成) */
     private final java.util.concurrent.ConcurrentHashMap<String, ReentrantLock> conversationLocks = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -93,7 +95,8 @@ public class ChatController {
                           CurrentUser currentUser, TaskExecutor taskExecutor,
                           V5MessagePipeline messagePipeline, ExpressionAgent expressionAgent,
                           MessageDeliveryService deliveryService, ConversationThreadService threadService,
-                          com.luxera.companion.behavior.BehaviorLearningService behaviorLearningService) {
+                          com.luxera.companion.behavior.BehaviorLearningService behaviorLearningService,
+                          ConversationParticipantService participantService) {
         this.conversationService = conversationService;
         this.companionService = companionService;
         this.runtime = runtime;
@@ -115,6 +118,7 @@ public class ChatController {
         this.deliveryService = deliveryService;
         this.threadService = threadService;
         this.behaviorLearningService = behaviorLearningService;
+        this.participantService = participantService;
     }
 
     @GetMapping
@@ -146,6 +150,16 @@ public class ChatController {
         companionService.requireOwned(userId, companionId);
         conversationService.requireOwned(userId, conversationId);
         return conversationService.messages(conversationId);
+    }
+
+    /** V8 §五十二: 会话参与者(一对一 = Agent + User; 未来群聊多参与者) */
+    @GetMapping("/{conversationId}/participants")
+    public List<ConversationParticipant> participants(@PathVariable String companionId,
+                                                      @PathVariable String conversationId) {
+        String userId = currentUser.requireUserId();
+        companionService.requireOwned(userId, companionId);
+        conversationService.requireOwned(userId, conversationId);
+        return participantService.participants(conversationId);
     }
 
     /**

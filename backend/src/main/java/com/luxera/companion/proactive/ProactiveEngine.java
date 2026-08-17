@@ -85,9 +85,12 @@ public class ProactiveEngine {
         this.eventBus = eventBus;
     }
 
-    @Scheduled(cron = "${app.scheduler.proactive-cron}")
+    /**
+     * V8 §四十一: 定时主动检查已由 BehaviorEngine(行为 Tick)接管,
+     * 主动联系只是数字人的行为候选之一。此方法保留手动触发入口(Admin/测试)。
+     */
     public void runScheduled() {
-        run();
+        // 由 BehaviorEngine.evaluateAll 替代 —— 这里不再自动跑, 避免双发
     }
 
     @Transactional
@@ -164,9 +167,9 @@ public class ProactiveEngine {
         return actions;
     }
 
-    /** 决策引擎: 收集触发,计算预期价值与打断成本(设计文档 V2.0 §18) */
-    ProactiveDecision decide(Companion c, LocalDateTime now, LocalDateTime lastInteraction,
-                             Message lastProactive, boolean responsive) {
+    /** 决策引擎: 收集触发,计算预期价值与打断成本(设计文档 V2.0 §18) —— V8 作为行为候选生成器 */
+    public ProactiveDecision decide(Companion c, LocalDateTime now, LocalDateTime lastInteraction,
+                                    Message lastProactive, boolean responsive) {
         String userId = c.getUserId();
         int hour = now.getHour();
         Relationship rel = relationshipRepo.findByUserIdAndCompanionId(userId, c.getId()).orElse(null);
@@ -412,6 +415,22 @@ public class ProactiveEngine {
         return Math.max(0, Math.min(1, v));
     }
 
+    /** V8: 上次主动消息(BehaviorEngine 候选生成用) */
+    public Message lastProactive(String companionId) {
+        return messageRepo
+                .findFirstByCompanionIdAndMessageKindOrderByCreatedAtDesc(companionId, "PROACTIVE")
+                .orElse(null);
+    }
+
+    /** V8: 执行一次主动联系(草稿 + 注入聊天框 + 事件推送) —— 由 BehaviorEngine 调用 */
+    @Transactional
+    public void execute(Companion c, ProactiveDecision decision, LocalDateTime now) {
+        if (decision == null || !decision.act()) return;
+        String content = draftMessage(c, decision.trigger(), decision.content(), now);
+        injectMessage(c.getId(), content);
+        log.info("[主动消息] {}: {} (trigger={})", c.getName(), decision.title(), decision.trigger());
+    }
+
     private void injectMessage(String companionId, String content) {
         var convs = conversationRepo.findByCompanionIdOrderByLastMessageAtDesc(companionId);
         if (convs.isEmpty()) return;
@@ -420,7 +439,8 @@ public class ProactiveEngine {
                 "PROACTIVE", null, null);
         // V4: 主动消息经持久事件流实时推给前端
         eventBus.publish(companionId, com.luxera.companion.event.CompanionEventType.COMPANION_MESSAGE,
-                Map.of("messageId", m.getId(), "content", content, "senderType", "companion", "proactive", true));
+                Map.of("messageId", m.getId(), "conversationId", m.getConversationId(),
+                        "content", content, "senderType", "companion", "proactive", true));
     }
 
     private static boolean inDnd(int hour, int start, int end) {

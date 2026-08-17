@@ -14,6 +14,7 @@ import { api, openEventStream } from '@/api/client'
 import CompanionAvatar from '@/components/CompanionAvatar'
 import ChatBubble from '@/components/ChatBubble'
 import Drawer from '@/components/Drawer'
+import { relationshipTypeZh } from '@/lib/relationships'
 import type {
   AgentState,
   Companion,
@@ -67,11 +68,13 @@ export default function Chat() {
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const activeConvIdRef = useRef('')
+  const msgIdCounter = useRef(0)
 
   // ── V3 交互运行时: 连发聚合 + 打字指示器 ──
   const [gathering, setGathering] = useState(false)
   const [typing, setTyping] = useState(false)
-  const pendingBatchRef = useRef<string[]>([])
+  const pendingBatchRef = useRef<{ content: string; clientMessageId: string }[]>([])
   const gatherTimerRef = useRef<number | null>(null)
   const batchStartRef = useRef(0)
   const sendGapsRef = useRef<number[]>([])
@@ -138,7 +141,13 @@ export default function Chat() {
     return () => clearInterval(t)
   }, [loadUnread])
 
-  // V4: 持久事件流 —— 已读/打字/主动消息实时推送
+  // 保持当前会话 id 的 ref(事件处理器在异步回调中读取)
+  useEffect(() => {
+    activeConvIdRef.current = activeConvId
+  }, [activeConvId])
+
+  // V8 §十四 消息存储: 收到事件只做增量 upsert, 绝不整表重载。
+  // V4: 持久事件流 —— 已读/打字/主动消息实时推送(带 SSE 游标, 断线重放)
   useEffect(() => {
     if (!companionId) return
     let close: (() => void) | null = null
@@ -147,6 +156,9 @@ export default function Chat() {
     const onEvent = (event: string, data: unknown) => {
       if (cancelled) return
       const d = data as Record<string, unknown>
+      // V8: 事件按会话隔离(非当前会话的消息不混入当前列表)
+      const convId = String(d.conversationId ?? '')
+      if (convId && convId !== activeConvIdRef.current) return
       if (event === 'message_read') {
         const mid = String(d.messageId ?? '')
         if (mid) {
@@ -159,9 +171,35 @@ export default function Chat() {
         if (mid) setUserMsgStatus((m) => ({ ...m, [mid]: status }))
       } else if (event === 'companion_typing') {
         setTyping(Boolean(d.typing))
+      } else if (event === 'message_created') {
+        // V8: 用户消息已持久化 → temp 气泡替换为 canonical(按 clientMessageId 匹配)
+        const mid = String(d.messageId ?? '')
+        const cid = String(d.clientMessageId ?? '')
+        if (!mid) return
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === mid)) return prev // 已存在(幂等)
+          if (cid && prev.some((m) => m.clientMessageId === cid)) {
+            return prev.map((m) =>
+              m.clientMessageId === cid
+                ? { ...m, id: mid, deliveryStatus: String(d.status ?? 'DELIVERED') }
+                : m,
+            )
+          }
+          return [...prev, toMessage(mid, convId || activeConvIdRef.current, 'user', String(d.content ?? ''), cid)]
+        })
       } else if (event === 'companion_message') {
-        // 她主动发来的消息(主动/deferred 后续段) → 重载会话
-        loadMessages(activeConvId)
+        // V8: 她发来的消息 → 增量追加/去重, 不重载整个聊天记录
+        const mid = String(d.messageId ?? '')
+        const content = String(d.content ?? '')
+        if (!mid) return
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === mid)) return prev
+          const isProactive = d.proactive === true
+          const m = toMessage(mid, convId || activeConvIdRef.current, 'companion', content, undefined)
+          m.proactive = isProactive
+          m.messageKind = isProactive ? 'PROACTIVE' : 'NORMAL'
+          return [...prev, m]
+        })
         refreshConversations()
       } else if (event === 'ping') {
         // 心跳, 忽略
@@ -214,16 +252,58 @@ export default function Chat() {
     setStreamingText('')
     setTyping(false)
 
-    // V7 §12/§19 通信解耦: POST /messages 立即返回, 不阻塞等待 Agent。
-    // Agent 的回复通过 GET /events 推送(companion_message / companion_typing)。
+    // V8 §十三/§十四: POST /messages 携带 clientMessageId。
+    // 服务器**同步落库**返回 canonical 消息 → 本地 temp 气泡替换为真实 id;
+    // Agent 的回复经 GET /events 增量推送, 不再重载整个聊天记录。
     try {
-      await api.post(
-        `/api/companions/${companionId}/conversations/${activeConvId}/messages`,
-        { messages: batch.map((c) => ({ content: c })) },
+      const resp = await api.post<{
+        status: string
+        messageId: string
+        messages: Array<{
+          id: string
+          clientMessageId?: string
+          content: string
+          conversationId: string
+          senderType: string
+          deliveryStatus?: string
+          createdAt: string
+        }>
+      }>(
+        `/api/companions/${companionId}/conversations/${activeConvIdRef.current}/messages`,
+        { messages: batch.map((b) => ({ content: b.content, clientMessageId: b.clientMessageId })) },
       )
-      // 发送成功; 本地即时消息已上屏, 回复由事件流到达后重载
+      // temp → canonical 替换(按 clientMessageId 匹配; 若服务器没回传也由 message_created 事件兜底)
+      const canonicals = resp.messages || []
+      if (canonicals.length > 0) {
+        setMessages((prev) => {
+          const byCid = new Map(canonicals.filter((c) => c.clientMessageId).map((c) => [c.clientMessageId!, c]))
+          let changed = false
+          const next = prev.map((m) => {
+            if (m.id.startsWith('temp-') && m.clientMessageId && byCid.has(m.clientMessageId)) {
+              changed = true
+              const c = byCid.get(m.clientMessageId)!
+              return { ...m, id: c.id, conversationId: c.conversationId, deliveryStatus: c.deliveryStatus || 'DELIVERED' }
+            }
+            return m
+          })
+          return changed ? next : prev
+        })
+      }
     } catch (err) {
       setError((err as Error).message)
+      // V8: 发送失败 → 本地气泡标记失败(不让用户以为已发送)
+      setMessages((prev) => {
+        const ids = new Set(batch.map((b) => b.clientMessageId))
+        let changed = false
+        const next = prev.map((m) => {
+          if (m.id.startsWith('temp-') && m.clientMessageId && ids.has(m.clientMessageId)) {
+            changed = true
+            return { ...m, deliveryStatus: 'FAILED' }
+          }
+          return m
+        })
+        return changed ? next : prev
+      })
     } finally {
       setStreaming(false)
       setStreamingText('')
@@ -239,20 +319,23 @@ export default function Chat() {
     setInput('')
     setError('')
 
-    // 本地即时上屏
+    // V8: 每条乐观消息带唯一 clientMessageId(幂等 + temp→canonical 对应键)
+    const clientMessageId = `c-${Date.now()}-${msgIdCounter.current++}`
     const tempUser: Message = {
-      id: `temp-${Date.now()}-${pendingBatchRef.current.length}`,
+      id: `temp-${clientMessageId}`,
       conversationId: activeConvId,
       senderType: 'user',
       content,
+      clientMessageId,
       createdAt: new Date().toISOString(),
+      deliveryStatus: 'SENT',
     }
     setMessages((prev) => [...prev, tempUser])
 
     // 入聚合队列
     const nowMs = Date.now()
     const isFirst = pendingBatchRef.current.length === 0
-    pendingBatchRef.current = [...pendingBatchRef.current, content]
+    pendingBatchRef.current = [...pendingBatchRef.current, { content, clientMessageId }]
     if (isFirst) batchStartRef.current = nowMs
     recordGap(nowMs - (lastSendRef.current || nowMs))
     lastSendRef.current = nowMs
@@ -667,7 +750,27 @@ function userStatus(
   if (readMap[m.id]) return '已读'
   const st = statusMap[m.id] || m.deliveryStatus
   if (st === 'READ' || st === 'DEFERRED' || st === 'RESPONDED') return '已读'
+  if (st === 'SENT') return '发送中'
+  if (st === 'FAILED') return '发送失败'
   return '已发送'
+}
+
+/** V8: 事件 → Message 对象(增量 upsert 用) */
+function toMessage(
+  id: string,
+  conversationId: string,
+  senderType: 'user' | 'companion',
+  content: string,
+  clientMessageId?: string,
+): Message {
+  return {
+    id,
+    conversationId,
+    senderType,
+    content,
+    clientMessageId,
+    createdAt: new Date().toISOString(),
+  }
 }
 
 function timeAgo(iso: string): string {
@@ -913,7 +1016,7 @@ function RelationshipPanel({ companionId }: { companionId: string }) {
           <div className="flex items-center justify-between">
             <span className="font-editorial text-xl text-cocoa-50">{STAGE_ZH[rel.relationshipStage]}</span>
             <span className="text-xs text-cocoa-500">
-              {rel.startedAt ? format(new Date(rel.startedAt), 'yyyy年M月') : ''} 开始
+              {relationshipTypeZh(rel.relationshipType)} · {rel.startedAt ? format(new Date(rel.startedAt), 'yyyy年M月') : ''} 开始
             </span>
           </div>
           <div className="mt-3 space-y-1.5 text-xs text-cocoa-400">
@@ -921,10 +1024,16 @@ function RelationshipPanel({ companionId }: { companionId: string }) {
             <Meter label="信任" value={rel.trust} />
             <Meter label="亲密度" value={rel.intimacy} />
             <Meter label="好感" value={rel.affection} />
+            <Meter label="张力" value={rel.tension ?? 0} />
+            <Meter label="双向性" value={rel.reciprocity ?? 0} />
+            <Meter label="联系压力" value={rel.connectionPressure ?? 0} />
           </div>
           <p className="mt-3 text-xs text-cocoa-500">
             累计 {rel.messageCount} 条消息 · {rel.sharedExperienceCount} 段共同经历
           </p>
+          {rel.connectionPressure !== undefined && rel.connectionPressure > 0.4 && (
+            <p className="mt-2 text-xs text-ember-soft">有一阵没好好聊了,她心里惦记着。</p>
+          )}
         </div>
       )}
 

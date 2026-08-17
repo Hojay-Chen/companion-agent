@@ -17,7 +17,10 @@ public final class CompanionEventType {
     /** 她发的完整消息(主动/deferred 回复/ResponsePlan 后续段), 携带 message */
     public static final String COMPANION_MESSAGE = "companion_message";
 
-    /** 她此刻状态变化(availability), 携带 availability */
+    /** V8: 用户消息已持久化(同步落库后发出), 携带 messageId/clientMessageId/content/status */
+    public static final String MESSAGE_CREATED = "message_created";
+
+    /** V8: 她此刻状态变化(availability), 携带 availability */
     public static final String COMPANION_STATE = "companion_state";
 
     /** 系统事件 */

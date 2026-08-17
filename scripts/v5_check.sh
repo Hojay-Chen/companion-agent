@@ -101,11 +101,35 @@ sleep 1
 
 # ── 测试 4: Agent 痕迹 ──
 note "测试4: Agent 痕迹(Emotion 必记录; Brain/Memory 仅在'注意到'后调用 —— V5 §73)"
-# 发第二条消息, 让异步记忆抽取完成后再查 memory trace
+# 发第二条消息, 让异步记忆抽取完成后再查 memory trace。
+# 注意: 注意力是概率性的 —— 白天也可能"在忙没注意到"(V4 §六/§七),
+# 此时不调用 Brain/Memory 正是 V5 §73 的正确行为, 不能误判为缺 trace。
+NOTICED=0
 if [ "$NIGHT" -eq 0 ]; then
-  curl -s -N -m 90 -X POST "$BASE/api/companions/$CID/conversations/$CONV/chat" \
+  R2=$(curl -s -N -m 90 -X POST "$BASE/api/companions/$CID/conversations/$CONV/chat" \
     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-    -d '{"content":"其实我最近有点累,想跟你聊聊"}' > /dev/null 2>&1 || true
+    -d '{"content":"其实我最近有点累,想跟你聊聊"}' \
+    | $PY -c "
+import sys, json
+cur=None; buf=[]; action=None
+def flush():
+    global cur, buf, action
+    if cur is None: return
+    raw=''.join(buf)
+    try: obj=json.loads(raw)
+    except Exception: obj={}
+    if cur=='done': action=obj.get('action')
+    cur=None; buf=[]
+for line in sys.stdin:
+    line=line.rstrip('\n')
+    if not line: flush()
+    elif line.startswith('event:'): cur=line[6:].strip()
+    elif line.startswith('data:'): buf.append(line[5:].strip())
+flush()
+print(action or '')
+" 2>/dev/null || echo "")
+  # "她没注意到" 或未决断 → 视为未注意到
+  if [ -n "$R2" ] && [ "$R2" != "IGNORE" ]; then NOTICED=1; fi
   sleep 2
 fi
 TRACES=$(curl -s "$BASE/api/companions/$CID/v5/traces" -H "Authorization: Bearer $TOKEN")
@@ -113,10 +137,10 @@ EMO=$(echo "$TRACES" | $PY -c "import sys,json;d=json.load(sys.stdin);print('Y' 
 BRAIN=$(echo "$TRACES" | $PY -c "import sys,json;d=json.load(sys.stdin);print('Y' if any(t.get('agent')=='brain' for t in d) else 'N')")
 MEM=$(echo "$TRACES" | $PY -c "import sys,json;d=json.load(sys.stdin);print('Y' if any(t.get('agent')=='memory' for t in d) else 'N')")
 [ "$EMO" = "Y" ] && ok "emotion trace 记录" || fail "缺 emotion trace"
-if [ "$NIGHT" -eq 1 ]; then
-  # 夜间消息未被注意到 → 不调用 Brain/Memory(正确: 没必要决策没看到的消息)
-  [ "$BRAIN" = "N" ] && ok "brain 未唤醒(消息未注意到, 符合 V5 §73)" || fail "夜间不应唤醒 brain"
-  [ "$MEM" = "N" ] && ok "memory 未唤醒(消息未注意到)" || fail "夜间不应唤醒 memory"
+if [ "$NIGHT" -eq 1 ] || [ "$NOTICED" -eq 0 ]; then
+  # 消息未被注意到 → 不调用 Brain/Memory(正确: 没必要决策没看到的消息, V5 §73)
+  [ "$BRAIN" = "N" ] && ok "brain 未唤醒(消息未注意到, 符合 V5 §73)" || fail "未注意到时不应唤醒 brain"
+  [ "$MEM" = "N" ] && ok "memory 未唤醒(消息未注意到)" || fail "未注意到时不应唤醒 memory"
 else
   [ "$BRAIN" = "Y" ] && ok "brain trace 记录" || fail "缺 brain trace"
   [ "$MEM" = "Y" ] && ok "memory trace 记录" || fail "缺 memory trace"

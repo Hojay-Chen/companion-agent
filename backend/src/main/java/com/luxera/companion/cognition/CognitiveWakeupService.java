@@ -38,7 +38,22 @@ public class CognitiveWakeupService {
      * 规则优先(确定性), 复杂冲突可升级到 LLM(当前阶段全规则)。
      */
     public WakeLevel evaluate(WakeupInput input) {
+        return evaluate(input, 0.5);
+    }
+
+    /**
+     * V8 §三十一/§三十二 事件价值模型: 同一句话, 对不同关系的人唤醒不同。
+     *
+     * relationshipWeight 0-1(亲密度+好感):
+     * - 亲密的人 → 社会相关性放大, 她更敏感("他失业了" vs "陌生人失业了")
+     * - 陌生/普通 → 社会相关性被压低, 浅层唤醒
+     */
+    public WakeLevel evaluate(WakeupInput input, double relationshipWeight) {
         if (input == null) return WakeLevel.NO_WAKE;
+        double relWeight = Math.max(0, Math.min(1, relationshipWeight));
+        // 关系修正: 亲密关系放大社会相关性(0.5 → 1.0 区间), 陌生关系压低(0.5 → 0.2)
+        double socialRelevance = input.socialRelevance() * (0.4 + relWeight * 1.1);
+        socialRelevance = Math.max(0, Math.min(1, socialRelevance));
 
         // 事件类型硬规则
         if ("NOTIFICATION".equals(input.eventType())) {
@@ -56,20 +71,25 @@ public class CognitiveWakeupService {
                 return WakeLevel.DELIBERATION;
             }
             if (containsAny(input.content(), "哈哈", "hh", "笑死", "嘻嘻")) {
-                return WakeLevel.MICRO_WAKE;
+                // 亲密的人发"哈哈" → 值得看一眼; 普通关系 → 轻量注意
+                return relWeight >= 0.6 ? WakeLevel.ATTENTION : WakeLevel.MICRO_WAKE;
             }
         }
 
-        // 综合评分: importance + emotional + social(加 epsilon 防浮点精度误判)
-        double score = input.importance() * 0.4 + input.emotionalImpact() * 0.3 + input.socialRelevance() * 0.3;
+        // 综合评分: importance + emotional + 关系修正后的 social
+        double score = input.importance() * 0.4 + input.emotionalImpact() * 0.3 + socialRelevance * 0.3;
         if (score >= 0.75 - 1e-9) return WakeLevel.DELIBERATION;
         if (score >= 0.55 - 1e-9) return WakeLevel.ATTENTION;
 
         // V7 §23 修正: 用户发来的消息绝不 NO_WAKE —— 真人收到消息至少会"知道", 只是可能不深想。
         // NO_WAKE 只保留给低价值系统通知(优惠券等)。
         if ("MESSAGE".equals(input.eventType())) {
+            // 亲密关系: 即使普通问候也值得认真看一眼
+            if (relWeight >= 0.6 && input.socialRelevance() >= 0.3) {
+                return WakeLevel.ATTENTION;
+            }
             // 普通问候/寒暄(社交相关性足够) → 至少 ATTENTION(值得看一眼)
-            if (input.socialRelevance() >= 0.4 || score >= 0.3 - 1e-9) {
+            if (socialRelevance >= 0.4 || score >= 0.3 - 1e-9) {
                 return WakeLevel.ATTENTION;
             }
             return WakeLevel.MICRO_WAKE;

@@ -37,13 +37,15 @@ public class AdminController {
     private final ThoughtEngine thoughtEngine;
     private final OpenLoopService openLoopService;
     private final com.luxera.companion.agent.CompanionCognitiveRuntime cognitiveRuntime;
+    private final com.luxera.companion.behavior.BehaviorEngine behaviorEngine;
 
     public AdminController(ReflectionService reflectionService, ProactiveEngine proactiveEngine,
                            BirthdayService birthdayService, PersonaEvolutionService personaEvolutionService,
                            LifeRuntime lifeRuntime, CompanionRepository companionRepo,
                            ExperienceProcessor experienceProcessor, ThoughtMaintenanceJob thoughtMaintenanceJob,
                            ThoughtEngine thoughtEngine, OpenLoopService openLoopService,
-                           com.luxera.companion.agent.CompanionCognitiveRuntime cognitiveRuntime) {
+                           com.luxera.companion.agent.CompanionCognitiveRuntime cognitiveRuntime,
+                           com.luxera.companion.behavior.BehaviorEngine behaviorEngine) {
         this.reflectionService = reflectionService;
         this.proactiveEngine = proactiveEngine;
         this.birthdayService = birthdayService;
@@ -55,6 +57,7 @@ public class AdminController {
         this.thoughtEngine = thoughtEngine;
         this.openLoopService = openLoopService;
         this.cognitiveRuntime = cognitiveRuntime;
+        this.behaviorEngine = behaviorEngine;
     }
 
     @PostMapping("/reflection/run")
@@ -154,5 +157,21 @@ public class AdminController {
             ticked++;
         }
         return Map.of("ticked", ticked);
+    }
+
+    // ── V8 行为引擎 ─────────────────────────────
+
+    @PostMapping("/behavior/run")
+    public Map<String, Object> behaviorRun() {
+        behaviorEngine.evaluateAll(LocalDateTime.now());
+        return Map.of("run", true);
+    }
+
+    @PostMapping("/behavior/run/{companionId}")
+    public Map<String, Object> behaviorRunFor(@PathVariable String companionId) {
+        var outcome = behaviorEngine.evaluate(companionId, LocalDateTime.now(), "ADMIN");
+        return Map.of("action", outcome != null ? String.valueOf(outcome.action()) : "none",
+                "trigger", outcome != null ? outcome.trigger() : null,
+                "score", outcome != null ? Math.round(outcome.score() * 100) / 100.0 : 0);
     }
 }

@@ -116,50 +116,53 @@ public class V7AgentRuntime {
     }
 
     /**
-     * 接收用户消息并异步触发 Agent 处理。
+     * V8 §十一~§十四: 接收**已持久化**的用户消息并异步触发 Agent 处理。
+     * 消息落库已由 {@link com.luxera.companion.conversation.MessageCoreService} 在请求事务内完成;
+     * 这里只做 Agent 认知处理(感知/流水线/回复), 永不参与消息的持久化。
      * 立即返回(不阻塞); Agent 的回复通过事件总线推送。
      */
-    public void submit(String userId, String companionId, String conversationId, List<String> contents) {
+    public void submit(String userId, String companionId, String conversationId, List<Message> userMessages) {
         taskExecutor.execute(() -> {
             try {
-                process(userId, companionId, conversationId, contents);
+                process(userId, companionId, conversationId, userMessages);
             } catch (Exception e) {
                 log.error("[V7AgentRuntime] 处理消息失败 companion={}: {}", companionId, e.getMessage());
             }
         });
     }
 
-    /** Agent 异步处理一条/一批用户消息(完整认知链) */
-    public void process(String userId, String companionId, String conversationId, List<String> contents) {
+    /** Agent 异步处理已入库的用户消息(完整认知链) */
+    public void process(String userId, String companionId, String conversationId, List<Message> userMessages) {
+        if (userMessages == null || userMessages.isEmpty()) return;
         var lock = locks.computeIfAbsent(conversationId, k -> new java.util.concurrent.locks.ReentrantLock());
         lock.lock();
         try {
             LocalDateTime now = LocalDateTime.now();
+            List<String> contents = new ArrayList<>();
+            for (Message um : userMessages) {
+                if (um.getContent() != null && !um.getContent().isBlank()) contents.add(um.getContent());
+            }
+            if (contents.isEmpty()) return;
             String decisionText = String.join("。", contents);
+            Message last = userMessages.get(userMessages.size() - 1);
 
-            // 1. 持久化用户消息 + 感知 + 会话归属 + 工作记忆 + 行为学习
-            Message last = null;
-            List<Message> userMsgs = new ArrayList<>();
-            for (String content : contents) {
-                PerceptionEngine.Perception perception = perceptionEngine.perceive(content);
-                Message m = conversationService.addMessage(conversationId, "user", content, perception, false);
+            // 1. 消息已在请求线程落库(MessageCoreService)。这里只做感知后处理:
+            //    会话归属 + 工作记忆 + 聊天风格 + 行为学习(不入库消息本身)
+            for (Message m : userMessages) {
                 sessionManager.assign(m, userId, companionId, now);
+                PerceptionEngine.Perception p = perceptionEngine.perceive(m.getContent());
                 workingMemory.record(companionId, conversationId,
-                        new WorkingMemory.RecentLine("user", content, m.getCreatedAt()), perception);
-                userChatStyleService.record(companionId, userId, content, m.getCreatedAt());
+                        new WorkingMemory.RecentLine("user", m.getContent(), m.getCreatedAt()), p);
+                userChatStyleService.record(companionId, userId, m.getContent(), m.getCreatedAt());
                 try {
-                    behaviorLearningService.onUserMessage(companionId, now, perception.emotion());
+                    behaviorLearningService.onUserMessage(companionId, now, p.emotion());
                 } catch (Exception ignored) { }
-                eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
-                        Map.of("messageId", m.getId(), "status", "DELIVERED"));
-                userMsgs.add(m);
-                last = m;
             }
 
             // 2. V5 消息流水线
             PerceptionEngine.Perception burstPerception = perceptionEngine.perceive(decisionText);
             V5MessagePipeline.PipelineResult pipelineResult = messagePipeline.process(
-                    userId, companionId, conversationId, userMsgs, decisionText, burstPerception, now);
+                    userId, companionId, conversationId, userMessages, decisionText, burstPerception, now);
 
             // V7 §15-§17 Phone Notification: 消息到达 → 手机通知 → heard/seen/opened/read 逐步推进
             PhoneNotification phoneNotif = null;
@@ -178,7 +181,11 @@ public class V7AgentRuntime {
                         burstPerception != null ? burstPerception.emotion() : null, now);
             } catch (Exception ignored) { }
 
-            // V7 §22-§23 Cognitive Wakeup: 低价值消息不唤醒 LLM 认知(避免"对每条消息都认真思考")
+            // V7 §22-§23 + V8 §三十二 Cognitive Wakeup: 低价值消息不唤醒 LLM 认知。
+            // 关系权重: 亲密的人发来的消息 → 更敏感(关系影响认知)。
+            Relationship wakeRel = relationshipService.find(userId, companionId);
+            double relWeight = wakeRel != null
+                    ? (wakeRel.getIntimacy() * 0.6 + wakeRel.getAffection() * 0.4) : 0.3;
             CognitiveWakeupService.WakeLevel wake = cognitiveWakeupService.evaluate(
                     new CognitiveWakeupService.WakeupInput(
                             "MESSAGE", decisionText,
@@ -190,7 +197,7 @@ public class V7AgentRuntime {
                                     ? Math.abs(pipelineResult.emotion().delta().hurt())
                                     + Math.abs(pipelineResult.emotion().delta().anger())
                                     + Math.abs(pipelineResult.emotion().delta().sadness()) : 0,
-                            0.3, 0.5));
+                            0.3, 0.5), relWeight);
             if (!cognitiveWakeupService.requiresCognition(wake)) {
                 // 低价值消息(如"哈哈"): 消息已入库, 但不打断她的生活 → 不生成回复
                 eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
@@ -237,7 +244,7 @@ public class V7AgentRuntime {
             // 已读延迟(忙/疲劳 → 慢)
             long readDelay = attention != null ? attention.inspectDelayMs() : 0;
             if (readDelay > 0) sleep(readDelay);
-            for (Message um : userMsgs) {
+            for (Message um : userMessages) {
                 deliveryService.read(companionId, um.getId());
             }
             // V7: 通知标记已读
@@ -254,6 +261,12 @@ public class V7AgentRuntime {
                     state != null ? state.getEnergy() : 0.6,
                     state != null ? state.getStress() : 0.3, now,
                     availabilityService.current(companionId, now, state));
+            // V8 §八: 关系影响回复节奏 —— 熟悉/亲密 → 略快(更随意); 张力高/心情低落 → 更慢
+            Relationship latencyRel = relationshipService.find(userId, companionId);
+            if (latencyRel != null) {
+                double famIntim = latencyRel.getFamiliarity() * 0.5 + latencyRel.getIntimacy() * 0.5;
+                latency = (long) (latency * (1.15 - famIntim * 0.35 + latencyRel.getTension() * 0.3));
+            }
             boolean showTyping = decision.commitment.level >= com.luxera.companion.interaction.ResponseCommitment.CASUAL.level;
             if (showTyping) {
                 eventBus.publish(companionId, CompanionEventType.COMPANION_TYPING, Map.of("typing", true));
@@ -278,7 +291,8 @@ public class V7AgentRuntime {
             workingMemory.record(companionId, conversationId,
                     new WorkingMemory.RecentLine("companion", first, assistant.getCreatedAt()), null);
             eventBus.publish(companionId, CompanionEventType.COMPANION_MESSAGE,
-                    Map.of("messageId", assistant.getId(), "content", first, "senderType", "companion"));
+                    Map.of("messageId", assistant.getId(), "conversationId", conversationId,
+                            "content", first, "senderType", "companion"));
 
             // 后续段: 延迟后逐条写库 + 推送(像真人隔一下又补一句)
             for (int i = 1; i < chunks.size(); i++) {
@@ -290,7 +304,8 @@ public class V7AgentRuntime {
                 workingMemory.record(companionId, conversationId,
                         new WorkingMemory.RecentLine("companion", seg, m.getCreatedAt()), null);
                 eventBus.publish(companionId, CompanionEventType.COMPANION_MESSAGE,
-                        Map.of("messageId", m.getId(), "content", seg, "senderType", "companion"));
+                        Map.of("messageId", m.getId(), "conversationId", conversationId,
+                                "content", seg, "senderType", "companion"));
             }
 
             // 对方要走 → 记录边界

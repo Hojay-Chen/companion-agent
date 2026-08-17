@@ -102,14 +102,17 @@ function emitBlock(block: string, onEvent: (event: string, data: unknown) => voi
   }
 }
 
-/** V4: 持久事件流(GET /events), 断线自动重连 + 指数退避 */
+/** V4: 持久事件流(GET /events), 断线自动重连 + 指数退避。
+ *  V8 §17: 增加 SSE 游标 —— 记录每条事件 id, 重连时携带 Last-Event-ID,
+ *  服务器回放断线期间错过的消息(消息永不丢, 不靠整表重载补)。 */
 export async function openEventStream(
   companionId: string,
-  onEvent: (event: string, data: unknown) => void,
+  onEvent: (event: string, data: unknown, eventId?: string) => void,
 ): Promise<() => void> {
   let closed = false
   let controller: AbortController | null = null
   let retryMs = 1000
+  let lastEventIdRef: string | null = null
 
   async function connect() {
     if (closed) return
@@ -117,6 +120,8 @@ export async function openEventStream(
     const headers: Record<string, string> = {}
     const token = getToken()
     if (token) headers['Authorization'] = `Bearer ${token}`
+    // V8: 游标续传 —— 上次收到的事件 id
+    if (lastEventIdRef) headers['Last-Event-ID'] = lastEventIdRef
 
     try {
       const res = await fetch(`/api/companions/${companionId}/events`, {
@@ -139,7 +144,9 @@ export async function openEventStream(
         while ((idx = buffer.indexOf('\n\n')) !== -1) {
           const block = buffer.slice(0, idx)
           buffer = buffer.slice(idx + 2)
-          emitBlock(block, onEvent)
+          emitBlockWithId(block, onEvent, (id) => {
+            lastEventIdRef = id
+          })
         }
       }
     } catch (err) {
@@ -158,5 +165,27 @@ export async function openEventStream(
   return () => {
     closed = true
     if (controller) controller.abort()
+  }
+}
+
+function emitBlockWithId(
+  block: string,
+  onEvent: (event: string, data: unknown, eventId?: string) => void,
+  onId: (id: string) => void,
+) {
+  let event = 'message'
+  let data = ''
+  let id: string | undefined
+  for (const line of block.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim()
+    else if (line.startsWith('data:')) data += line.slice(5).trim()
+    else if (line.startsWith('id:')) id = line.slice(3).trim()
+  }
+  if (id) onId(id)
+  if (!data) return
+  try {
+    onEvent(event, JSON.parse(data), id)
+  } catch {
+    onEvent(event, data, id)
   }
 }

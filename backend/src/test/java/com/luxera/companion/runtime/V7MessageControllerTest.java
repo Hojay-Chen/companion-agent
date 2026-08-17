@@ -22,9 +22,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * V7 §12/§19 POST /messages 通信解耦测试:
- * - 发送消息立即返回(不阻塞等待 Agent)
- * - Agent Runtime 异步持久化用户消息
+ * V8 §十一~§十六 POST /messages Chat Core 测试:
+ * - 用户消息**同步落库**(刷新不丢, 服务器重启不丢)
+ * - clientMessageId 幂等(同会话重复提交不重复入库)
+ * - Agent 异步处理(请求不阻塞)
  */
 @ActiveProfiles("test")
 @SpringBootTest
@@ -74,21 +75,34 @@ class V7MessageControllerTest {
                 .andExpect(status().is4xxClientError());
     }
 
+    /** V8: Agent 处理已持久化的消息(测试中直接同步调用), 消息由 MessageCoreService 先落库 */
     @Test
-    void agentRuntimeAsyncPersistsUserMessage() {
+    void agentRuntimeProcessesPersistedMessages() {
         String content = "你好,我在这里";
+        Message persisted = messageRepository.save(userMessage(content));
         // 同步处理(测试中直接调用 process, 不走异步线程)
-        v7AgentRuntime.process("v7-user", companionId, conversationId, java.util.List.of(content));
-        // 用户消息应入库
-        boolean found = messageRepository.findByConversationIdOrderByCreatedAtAsc(conversationId).stream()
-                .anyMatch(m -> "user".equals(m.getSenderType()) && content.equals(m.getContent()));
-        assertTrue(found, "Agent Runtime 应持久化用户消息");
+        v7AgentRuntime.process("v7-user", companionId, conversationId, java.util.List.of(persisted));
+        // 消息已在库中(同步持久化保证), Agent 处理不重复入库
+        long userCount = messageRepository.findByConversationIdOrderByCreatedAtAsc(conversationId).stream()
+                .filter(m -> "user".equals(m.getSenderType()) && content.equals(m.getContent()))
+                .count();
+        assertEquals(1, userCount, "消息应恰好一条(同步落库 + Agent 不重复入库)");
     }
 
     @Test
     void agentRuntimeProcessDoesNotThrow() {
         // 空内容/异常场景不应导致运行时崩溃
+        Message persisted = messageRepository.save(userMessage("测试消息"));
         assertDoesNotThrow(() -> v7AgentRuntime.process(
-                "v7-user", companionId, conversationId, java.util.List.of("测试消息")));
+                "v7-user", companionId, conversationId, java.util.List.of(persisted)));
+    }
+
+    private Message userMessage(String content) {
+        Message m = new Message();
+        m.setConversationId(conversationId);
+        m.setSenderType("user");
+        m.setContent(content);
+        m.setDeliveryStatus(com.luxera.companion.runtime.pipeline.MessageLifecycle.DELIVERED);
+        return messageRepository.save(m);
     }
 }

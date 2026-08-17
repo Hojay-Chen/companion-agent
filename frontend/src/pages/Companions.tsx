@@ -4,6 +4,7 @@ import { Heart, LogOut, Plus, Settings } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth'
 import { useCompanionStore } from '@/stores/companion'
 import CompanionAvatar from '@/components/CompanionAvatar'
+import { relationshipTypeZh } from '@/lib/relationships'
 
 const STAGE_ZH: Record<string, string> = {
   new: '初识',
@@ -89,7 +90,7 @@ export default function Companions() {
               </div>
               <h3 className="mt-4 font-editorial text-xl text-cocoa-50">{c.name}</h3>
               <p className="mt-0.5 text-sm text-cocoa-400">
-                {c.age !== null && c.age !== undefined ? `${c.age} 岁` : ''} · {c.relationshipType === 'girlfriend' ? '恋人' : c.relationshipType === 'boyfriend' ? '恋人' : '朋友'}
+                {c.age !== null && c.age !== undefined ? `${c.age} 岁` : ''} · {relationshipTypeZh(c.relationshipType)}
               </p>
               <div className="mt-3 flex items-center gap-2">
                 <span className="chip bg-ember/15 text-ember-soft">

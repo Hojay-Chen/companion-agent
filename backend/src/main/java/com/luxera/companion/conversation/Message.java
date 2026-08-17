@@ -12,12 +12,14 @@ import javax.persistence.Id;
 import javax.persistence.Index;
 import javax.persistence.PrePersist;
 import javax.persistence.Table;
+import javax.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.UUID;
 
 @Entity
-@Table(name = "messages", indexes = @Index(name = "idx_messages_conv", columnList = "conversation_id"))
+@Table(name = "messages", indexes = @Index(name = "idx_messages_conv", columnList = "conversation_id"),
+        uniqueConstraints = @UniqueConstraint(name = "uk_messages_client", columnNames = {"conversation_id", "client_message_id"}))
 @Getter
 @Setter
 public class Message {
@@ -28,6 +30,10 @@ public class Message {
 
     @Column(name = "conversation_id", nullable = false, length = 36)
     private String conversationId;
+
+    /** V8: 客户端幂等键(用户消息), 同会话内唯一; agent/系统消息为空 */
+    @Column(name = "client_message_id", length = 64)
+    private String clientMessageId;
 
     /** user | companion | system */
     @Column(name = "sender_type", nullable = false, length = 16)

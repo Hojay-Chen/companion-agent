@@ -13,6 +13,9 @@ public interface MessageRepository extends JpaRepository<Message, String> {
     List<Message> findTop200ByConversationIdOrderByCreatedAtDesc(String conversationId);
     long countByConversationId(String conversationId);
 
+    /** V8: 幂等键查询(clientMessageId 同会话唯一) */
+    Optional<Message> findByConversationIdAndClientMessageId(String conversationId, String clientMessageId);
+
     @Query("select m from Message m where m.senderType = 'user' and m.createdAt >= :since "
             + "and m.conversationId in (select c.id from Conversation c where c.companionId = :companionId)")
     List<Message> findUserMessagesSince(@Param("companionId") String companionId,

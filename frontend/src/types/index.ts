@@ -121,6 +121,8 @@ export interface Message {
   conversationId: string
   senderType: 'user' | 'companion' | 'system'
   content: string
+  /** V8: 客户端幂等键(乐观消息 → canonical 消息的对应键) */
+  clientMessageId?: string | null
   intent?: string | null
   emotion?: string | null
   topic?: string | null
@@ -206,6 +208,11 @@ export interface Relationship {
   trust: number
   intimacy: number
   affection: number
+  /** V8: 多维关系 */
+  tension?: number
+  reciprocity?: number
+  respect?: number
+  connectionPressure?: number
   sharedExperienceCount: number
   messageCount: number
   lastInteractionAt?: string | null

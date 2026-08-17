@@ -2,16 +2,21 @@ package com.luxera.companion.life;
 
 import com.luxera.companion.agent.CompanionSchedule;
 import com.luxera.companion.experience.ExperienceProcessor;
+import com.luxera.companion.world.WorldEvent;
+import com.luxera.companion.world.WorldEventEngine;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 生活运行时(设计文档 V2.0 §5.5 / §17): 事件驱动 + 时间推进 + 关键时刻唤醒。
  * Level 0-1: 纯时间推进 + 规则, 不调用 LLM。
+ * V8 §四十六: 生活活动的变化是数字人世界中的事件(世界每时每刻都在运行,
+ * 而不是只有用户发消息世界才开始)。
  */
 @Component
 public class LifeRuntime {
@@ -21,15 +26,17 @@ public class LifeRuntime {
     private final LifeActivityRepository activityRepo;
     private final CompanionSchedule schedule;
     private final ExperienceProcessor experienceProcessor;
+    private final WorldEventEngine worldEventEngine;
 
     public LifeRuntime(CompanionLifeService lifeService, LifeSimulationService simulation,
                        LifeActivityRepository activityRepo, CompanionSchedule schedule,
-                       ExperienceProcessor experienceProcessor) {
+                       ExperienceProcessor experienceProcessor, WorldEventEngine worldEventEngine) {
         this.lifeService = lifeService;
         this.simulation = simulation;
         this.activityRepo = activityRepo;
         this.schedule = schedule;
         this.experienceProcessor = experienceProcessor;
+        this.worldEventEngine = worldEventEngine;
     }
 
     /** 推进一个伴侣的连续生活 */
@@ -63,9 +70,15 @@ public class LifeRuntime {
         markActivities(companionId, today, now);
         lifeService.save(life);
 
-        // 进入有意义的阶段 → 记录一条生活经历(Level 1)
-        if (prevPhase != null && !prevPhase.equals(activity.name()) && notableTransition(activity)) {
-            experienceProcessor.recordLifeEvent(companionId, activityTitle(activity), null, 0.4, 0.3);
+        // 进入有意义的阶段 → 记录一条生活经历(Level 1) + 世界事件(世界持续运行)
+        if (prevPhase != null && !prevPhase.equals(activity.name())) {
+            if (notableTransition(activity)) {
+                experienceProcessor.recordLifeEvent(companionId, activityTitle(activity), null, 0.4, 0.3);
+            }
+            worldEventEngine.publish(companionId, WorldEventEngine.TYPE_ACTIVITY_STARTED,
+                    WorldEvent.SRC_LIFE, companionId, null,
+                    Map.of("activity", activity.name(), "title", activityTitle(activity),
+                            "location", locationFor(activity)), 0.3);
         }
     }
 

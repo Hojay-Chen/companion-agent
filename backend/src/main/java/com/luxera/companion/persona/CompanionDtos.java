@@ -37,6 +37,8 @@ public final class CompanionDtos {
     public static class CreateRequest {
         private Persona persona;
         private String greeting;
+        /** V8: 用户显式选择的关系类型(lover/best_friend/friend/...), 缺省取 persona.relationship.type */
+        private String relationshipType;
     }
 
     @Data

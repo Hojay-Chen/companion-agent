@@ -44,6 +44,15 @@ public class RelationshipEngine {
         r.setIntimacy(clamp(r.getIntimacy() + 0.0004));
         r.setAffection(clamp(r.getAffection() + 0.0005));
 
+        // V8 §八: 关系影响情绪敏感度 & 双向性随互动上升; 联系压力在联系后回落(关系维护)
+        r.setReciprocity(clamp(r.getReciprocity() + 0.0003));
+        if ("angry".equals(emotion) || "frustrated".equals(emotion) || "sad".equals(emotion)) {
+            r.setTension(clamp(r.getTension() + 0.0008));
+        } else if ("happy".equals(emotion) || "joy".equals(emotion) || "share_joy".equals(intent)) {
+            r.setTension(clamp(r.getTension() - 0.001));
+        }
+        r.setConnectionPressure(0.0);
+
         int msgs = r.getMessageCount();
         if (msgs == 1) {
             addMilestone(r, "first_conversation", "第一次对话",
@@ -142,6 +151,9 @@ public class RelationshipEngine {
             addMilestone(r, "conflict", "一次不愉快",
                     "因为" + cause + ",你表达了不满。", 0.55);
             r.setAffection(clamp(r.getAffection() - 0.01));
+            // V8: 冲突 → 张力上升, 双向性略降
+            r.setTension(clamp(r.getTension() + 0.02));
+            r.setReciprocity(clamp(r.getReciprocity() - 0.004));
             relRepo.save(r);
         });
     }
@@ -154,6 +166,8 @@ public class RelationshipEngine {
                     "你们把话说开了,关系反而更近了一点。", 0.62);
             r.setTrust(clamp(r.getTrust() + 0.008));
             r.setIntimacy(clamp(r.getIntimacy() + 0.006));
+            // V8: 修复 → 张力下降
+            r.setTension(clamp(r.getTension() - 0.03));
             relRepo.save(r);
         });
     }

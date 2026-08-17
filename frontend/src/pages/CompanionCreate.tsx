@@ -4,6 +4,7 @@ import { ArrowLeft, Sparkles } from 'lucide-react'
 import { api } from '@/api/client'
 import { useCompanionStore } from '@/stores/companion'
 import CompanionAvatar from '@/components/CompanionAvatar'
+import { RELATIONSHIP_TYPES, relationshipTypeZh, type RelationshipTypeValue } from '@/lib/relationships'
 import type { Companion, Persona } from '@/types'
 
 const TRAIT_ZH: Record<string, string> = {
@@ -37,6 +38,8 @@ export default function CompanionCreate() {
   const [previewing, setPreviewing] = useState(false)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
+  // V8 §七: 用户显式选择的关系类型(Agent 世界中的真实关系状态)
+  const [relationshipType, setRelationshipType] = useState<RelationshipTypeValue | ''>('')
 
   async function compile() {
     if (!description.trim()) return
@@ -75,7 +78,10 @@ export default function CompanionCreate() {
     setCreating(true)
     setError('')
     try {
-      const c = await api.post<Companion>('/api/companions', { persona })
+      const c = await api.post<Companion>('/api/companions', {
+        persona,
+        relationshipType: relationshipType || undefined,
+      })
       addCompanion(c)
       navigate(`/companions/${c.id}`, { replace: true })
     } catch (err) {
@@ -121,6 +127,35 @@ export default function CompanionCreate() {
           </button>
         </section>
 
+        {/* Step 1.5: 你和她是什么关系 (V8 §七: 真实关系状态, 不是 Prompt) */}
+        {persona && (
+          <section className="card mt-6 p-6 animate-fadeUp">
+            <div className="mb-1 text-xs uppercase tracking-widest text-ember-soft">你们的关系</div>
+            <h2 className="font-editorial text-xl text-cocoa-50">你和她是什么关系?</h2>
+            <p className="mt-1 text-sm text-cocoa-400">
+              这会成为她世界里真实的关系状态:她对你的熟悉、信任、亲昵都会从它开始。
+            </p>
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {RELATIONSHIP_TYPES.map((t) => (
+                <button
+                  key={t.value}
+                  onClick={() => setRelationshipType(t.value as RelationshipTypeValue)}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition ${
+                    relationshipType === t.value
+                      ? 'border-ember-soft/60 bg-ember/15'
+                      : 'border-cocoa-700 bg-cocoa-850 hover:border-cocoa-500'
+                  }`}
+                >
+                  <div className={`text-sm ${relationshipType === t.value ? 'text-ember-soft' : 'text-cocoa-100'}`}>
+                    {t.label}
+                  </div>
+                  <div className="mt-0.5 text-[11px] leading-snug text-cocoa-500">{t.desc}</div>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* Step 2: 预览 */}
         {persona && (
           <section className="card mt-6 p-6 animate-fadeUp">
@@ -130,7 +165,12 @@ export default function CompanionCreate() {
               <div>
                 <h3 className="font-editorial text-2xl text-cocoa-50">{name}</h3>
                 <p className="text-sm text-cocoa-400">
-                  {persona.identity?.gender === 'male' ? '男性' : '女性'} · {persona.relationship?.type === 'friend' ? '朋友' : '恋人'}
+                  {persona.identity?.gender === 'male' ? '男性' : '女性'} ·{' '}
+                  {relationshipType
+                    ? relationshipTypeZh(relationshipType)
+                    : persona.relationship?.type
+                      ? relationshipTypeZh(persona.relationship.type)
+                      : '朋友'}
                 </p>
               </div>
             </div>

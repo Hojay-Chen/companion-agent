@@ -95,6 +95,8 @@ app:
     unfinished-thought-cron: 0 */15 * * * *
     # V7: 睡眠模型推进(Coarse Tick, 每2分钟) — 睡眠压力/节律演化 + 睡眠决策
     sleep-tick-cron: 0 */2 * * * *
+    # V8: 行为 Tick(每5分钟) — 中央行为选择器(主动联系/睡觉/看手机/联系朋友/继续生活)
+    behavior-tick-cron: 0 */5 * * * *
     # V7: 手机通知生命周期推进
     phone-tick-cron: 0 * * * * *
 

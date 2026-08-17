@@ -14,10 +14,16 @@ public class ConversationService {
 
     private final ConversationRepository convRepo;
     private final MessageRepository msgRepo;
+    private final ConversationParticipantService participantService;
+    private final com.luxera.companion.persona.CompanionRepository companionRepo;
 
-    public ConversationService(ConversationRepository convRepo, MessageRepository msgRepo) {
+    public ConversationService(ConversationRepository convRepo, MessageRepository msgRepo,
+                               ConversationParticipantService participantService,
+                               com.luxera.companion.persona.CompanionRepository companionRepo) {
         this.convRepo = convRepo;
         this.msgRepo = msgRepo;
+        this.participantService = participantService;
+        this.companionRepo = companionRepo;
     }
 
     /** 首次打开聊天时创建带问候语的初始会话 */
@@ -25,13 +31,16 @@ public class ConversationService {
     public Conversation getOrCreateGreeting(String userId, String companionId, Companion companion) {
         List<Conversation> list = convRepo.findByUserIdAndCompanionIdOrderByLastMessageAtDesc(userId, companionId);
         if (!list.isEmpty()) {
-            return list.get(0);
+            Conversation existing = list.get(0);
+            seedParticipants(existing, userId, companion);
+            return existing;
         }
         Conversation conv = new Conversation();
         conv.setUserId(userId);
         conv.setCompanionId(companionId);
         conv.setTitle("初见 · " + companion.getName());
         convRepo.save(conv);
+        seedParticipants(conv, userId, companion);
         if (companion.getGreeting() != null && !companion.getGreeting().isBlank()) {
             Message msg = new Message();
             msg.setConversationId(conv.getId());
@@ -51,7 +60,19 @@ public class ConversationService {
         conv.setUserId(userId);
         conv.setCompanionId(companionId);
         conv.setTitle(title == null || title.isBlank() ? "新的对话" : title);
-        return convRepo.save(conv);
+        convRepo.save(conv);
+        // V8: 会话参与者(Agent + User), 幂等
+        companionRepo.findById(companionId).ifPresent(c -> seedParticipants(conv, userId, c));
+        return conv;
+    }
+
+    /** V8 §五十二: 注册会话参与者(群聊数据模型的地基) */
+    private void seedParticipants(Conversation conv, String userId, Companion companion) {
+        try {
+            participantService.seed(conv, userId, companion);
+        } catch (Exception e) {
+            // 参与者注册失败不影响会话主流程
+        }
     }
 
     @Transactional(readOnly = true)
@@ -106,6 +127,16 @@ public class ConversationService {
     public Message addMessage(String conversationId, String senderType, String content,
                               PerceptionEngine.Perception perception, boolean proactive,
                               String messageKind, String sessionId, String exchangeId) {
+        return addMessage(conversationId, senderType, content, perception, proactive,
+                messageKind, sessionId, exchangeId, null);
+    }
+
+    /** V8: 带客户端幂等键的消息落库(用户消息同步持久化核心) */
+    @Transactional
+    public Message addMessage(String conversationId, String senderType, String content,
+                              PerceptionEngine.Perception perception, boolean proactive,
+                              String messageKind, String sessionId, String exchangeId,
+                              String clientMessageId) {
         Conversation conv = convRepo.findById(conversationId)
                 .orElseThrow(() -> new javax.persistence.EntityNotFoundException("会话不存在"));
         Message m = new Message();
@@ -121,6 +152,7 @@ public class ConversationService {
         if (messageKind != null) m.setMessageKind(messageKind);
         if (sessionId != null) m.setSessionId(sessionId);
         if (exchangeId != null) m.setExchangeId(exchangeId);
+        if (clientMessageId != null) m.setClientMessageId(clientMessageId);
         m = msgRepo.save(m);
         conv.setMessageCount(conv.getMessageCount() + 1);
         conv.setLastMessageAt(m.getCreatedAt());

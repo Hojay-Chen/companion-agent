@@ -66,7 +66,7 @@ public class CompanionController {
             throw new IllegalArgumentException("persona 不能为空");
         }
         String userId = currentUser.requireUserId();
-        Companion c = companionService.create(userId, req.getPersona());
+        Companion c = companionService.create(userId, req.getPersona(), req.getRelationshipType());
         return toDto(userId, c);
     }
 
