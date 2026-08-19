@@ -22,7 +22,7 @@ public class MemoryDecayService {
     }
 
     /** 每周一 04:30 归档超过 180 天、重要性低、很少被回忆的记忆 */
-    @Scheduled(cron = "0 30 4 * * MON")
+    @Scheduled(cron = "${app.scheduler.memory-decay-cron:0 30 4 * * MON}")
     @Transactional
     public void decayOldMemories() {
         LocalDateTime cutoff = LocalDateTime.now().minusDays(180);

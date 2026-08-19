@@ -86,7 +86,7 @@ public class PendingMessageReevaluationJob {
         this.perceptionEngine = perceptionEngine;
     }
 
-    @Scheduled(cron = "0 */1 * * * *")
+    @Scheduled(cron = "${app.scheduler.pending-recheck-cron:0 */1 * * * *}")
     @Transactional
     public void run() {
         List<PendingMessageState> due = pendingService.dueForReview(LocalDateTime.now());

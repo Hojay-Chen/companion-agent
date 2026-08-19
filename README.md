@@ -7,15 +7,29 @@
 
 ---
 
-## V10 · 三系统边界与因果链落地（2026-08 · 第一轮）
+## V10 · 三系统边界与因果链落地（2026-08）
 
 > **方案依据**：《Companion Agent V10 Detailed Architecture》—— V10 不是"收到消息就调 LLM 回复"的聊天机器人，
 > 而是 **Persistent Digital Person System**：Chat Platform（外部世界）/ Client Simulator Platform（数字人的设备与身体）/
 > Digital Human Platform（数字人的生活、意识、认知与行动）三个独立系统，固定因果链
 > **World → Event → Perception → Awareness → Cognition → Decision → Action → Reality**。
->
-> **本轮目标**：在现有单体中建立三大边界（不破坏 V9 功能），把 Chat 写路径收口到 Simulator，
-> 把消息入口收口到事件链，真实行为开始写入 Reality Ledger。
+
+### V10 第二轮 · 感知策略化 + 决策策略化（2026-08）
+
+1. **Perception Runtime（Strategy Pattern）**：`digitalhuman.perception` —— 4 级感知
+   NONE/SUBCONSCIOUS/AWARE/FOCUSED（阈值 0.2/0.5/0.8）；`MessageNotificationStrategy`
+   （声音/震动/静音/勿扰 + 距离/噪声/活动注意力修正，全程规则无 LLM）、`LifeEventStrategy`、
+   `TimeEventStrategy`；`SnapshotFactory`（Adapter）从 AgentState/PhoneState/Schedule 提取快照。
+   **同一消息在不同环境下可能被感知或完全不知道**。
+2. **Decision Runtime（Policy Pattern）**：`digitalhuman.decision` —— sealed `PersonDecision`
+   （Ignore/InspectDevice/Reply/DelayReply/ChangeActivity）；`DecisionPolicyEngine` 按 @Order
+   确定性执行 Ignore→ReplyLater→ReplyNow→ChangeActivity→InspectDevice。
+   **Agent 可以决定忽略、查看、立即回复或稍后回复**。
+3. **完整链路编排**：`PerceptionDecisionOrchestrator` —— ExternalEvent → Perception → Decision；
+   诊断端点 `GET /api/v10/perception/explain`（验收可视化）。
+4. **顺带修复**：高频定时 Job（排程动作/已读复查/记忆衰减）硬编码 cron 抢占测试连接池 → 配置化。
+
+### V10 第一轮 · 三系统边界（2026-08）
 
 ### V10 核心升级（第一轮）
 

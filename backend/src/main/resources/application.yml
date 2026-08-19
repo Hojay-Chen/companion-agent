@@ -104,6 +104,12 @@ app:
     behavior-tick-cron: 0 */5 * * * *
     # 手机通知生命周期推进
     phone-tick-cron: 0 * * * * *
+    # 排程动作轮询(默认每 20 秒; 测试环境禁用)
+    scheduled-action-cron: '*/20 * * * * *'
+    # 已读未回复复查(默认每分钟; 测试环境禁用)
+    pending-recheck-cron: '0 */1 * * * *'
+    # 记忆衰减归档(默认周一 04:30; 测试环境禁用)
+    memory-decay-cron: '0 30 4 * * MON'
 
   # 主动消息打断控制
   proactive:

@@ -32,4 +32,7 @@ app:
     unfinished-thought-cron: 0 0 0 1 1 *
     sleep-tick-cron: 0 0 0 1 1 *
     phone-tick-cron: 0 0 0 1 1 *
+    scheduled-action-cron: 0 0 0 1 1 *
+    pending-recheck-cron: 0 0 0 1 1 *
+    memory-decay-cron: 0 0 0 1 1 *
     behavior-tick-cron: 0 0 0 1 1 *

@@ -23,7 +23,7 @@ public class ScheduledActionJob {
         this.dispatcher = dispatcher;
     }
 
-    @Scheduled(cron = "*/20 * * * * *")
+    @Scheduled(cron = "${app.scheduler.scheduled-action-cron:*/20 * * * * *}")
     public void processDue() {
         List<ScheduledAction> due = service.dueActions(LocalDateTime.now());
         if (due.isEmpty()) return;
