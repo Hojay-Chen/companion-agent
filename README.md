@@ -14,6 +14,19 @@
 > Digital Human Platform（数字人的生活、意识、认知与行动）三个独立系统，固定因果链
 > **World → Event → Perception → Awareness → Cognition → Decision → Action → Reality**。
 
+### V10 第四轮 · Life Scheduler + Relationship Projection（2026-08）
+
+1. **Life Scheduler（事件驱动 + 时间触发，V10 §7.4）**：`digitalhuman.life` ——
+   `LifeEventScheduler` 接口 + `life_schedule` 表（同 scheduleId 幂等）；
+   `LifeScheduleJob`（每 20 秒，配置化）到点分发；`LifeEventDispatcher` 幂等收尾活动
+   （ACTIVE→DONE + Reality Ledger ACTIVITY_ENDED）。**生活准点变化，不靠轮询猜**；
+   活动创建即排程结束事件（tick 退化为兜底，双路径幂等）。
+2. **Relationship Projection（V10 §17，Projection Pattern）**：`digitalhuman.relationship` ——
+   `RelationshipProjector`（纯函数：账本 → 互动摘要）；`reconcile` 以账本修正关系事实字段
+   （messageCount/lastInteractionAt）；每日核对 Job（配置化）+ 诊断端点
+   `GET /api/v10/relationship/projection`。**关系事实层只信 Reality Ledger（Memory 不能覆盖 Reality）**。
+3. **新增表**：`life_schedule`。
+
 ### V10 第三轮 · Outbox 可靠发布 + stateVersion 乐观锁（2026-08）
 
 1. **Outbox（双写一致性，V10 §21.3）**：`digitalhuman.outbox` —— `outbox_event` 表

@@ -1,6 +1,9 @@
 package com.luxera.companion.life;
 
 import com.luxera.companion.agent.CompanionSchedule;
+import com.luxera.companion.digitalhuman.life.LifeEventType;
+import com.luxera.companion.digitalhuman.life.LifeEventScheduler;
+import com.luxera.companion.digitalhuman.life.ScheduledLifeEvent;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -8,6 +11,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Map;
 
 /** 生活模拟: 按作息生成当天活动(Level 0, 不调用 LLM) */
 @Service
@@ -16,12 +20,16 @@ public class LifeSimulationService {
     private final CompanionSchedule schedule;
     private final LifeActivityRepository activityRepo;
     private final ActivitySpecProvider specProvider;
+    /** V10 §7.4: 生活事件排程器(活动结束时间触发) */
+    private final LifeEventScheduler lifeEventScheduler;
 
     public LifeSimulationService(CompanionSchedule schedule, LifeActivityRepository activityRepo,
-                                 ActivitySpecProvider specProvider) {
+                                 ActivitySpecProvider specProvider,
+                                 LifeEventScheduler lifeEventScheduler) {
         this.schedule = schedule;
         this.activityRepo = activityRepo;
         this.specProvider = specProvider;
+        this.lifeEventScheduler = lifeEventScheduler;
     }
 
     /** 若当天还没有活动, 则按作息生成 PLANNED 活动 */
@@ -52,6 +60,19 @@ public class LifeSimulationService {
             a.setPhoneAvailability(spec.phoneAvailability());
             a.setMoodEffect(spec.moodEffect());
             activityRepo.save(a);
+
+            // V10 §7.4: 时间触发 —— 活动创建即排程"活动结束"事件(到点准点收尾,
+            // 不依赖轮询 tick 发现超时; 幂等 scheduleId)
+            if (a.getPlannedEnd() != null) {
+                try {
+                    lifeEventScheduler.schedule(ScheduledLifeEvent.of(
+                            "activity-end-" + a.getId(), companionId, LifeEventType.ACTIVITY_END,
+                            a.getPlannedEnd(),
+                            Map.of("activityId", a.getId(), "type", b.type(), "title", b.title())));
+                } catch (Exception e) {
+                    // 排程失败不影响活动创建(tick 轮询兜底)
+                }
+            }
         }
     }
 

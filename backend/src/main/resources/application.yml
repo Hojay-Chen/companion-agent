@@ -112,6 +112,10 @@ app:
     memory-decay-cron: '0 30 4 * * MON'
     # V10 Outbox 可靠发布轮询(默认每 5 秒; 测试环境禁用)
     outbox-relay-cron: '*/5 * * * * *'
+    # V10 生活事件时间触发(默认每 20 秒; 测试环境禁用)
+    life-schedule-cron: '*/20 * * * * *'
+    # V10 关系事实与 Reality 核对(默认每日 04:00; 测试环境禁用)
+    relationship-projection-cron: '0 0 4 * * *'
 
   # 主动消息打断控制
   proactive:

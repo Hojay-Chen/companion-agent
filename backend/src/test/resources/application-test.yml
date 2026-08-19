@@ -36,4 +36,6 @@ app:
     pending-recheck-cron: 0 0 0 1 1 *
     memory-decay-cron: 0 0 0 1 1 *
     outbox-relay-cron: 0 0 0 1 1 *
+    life-schedule-cron: 0 0 0 1 1 *
+    relationship-projection-cron: 0 0 0 1 1 *
     behavior-tick-cron: 0 0 0 1 1 *
