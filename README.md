@@ -14,6 +14,20 @@
 > Digital Human Platform（数字人的生活、意识、认知与行动）三个独立系统，固定因果链
 > **World → Event → Perception → Awareness → Cognition → Decision → Action → Reality**。
 
+### V10 第五轮 · Conversation Runtime 唯一文本入口 + Prompt 分层缓存（2026-08）
+
+1. **Conversation Runtime（V10 §15，MVP 验收 14）**：`digitalhuman.conversation` ——
+   `ConversationRequest`（Builder，分层 Prompt：Stable Prefix/Semi-Stable/Dynamic Suffix）→
+   `ConversationRuntime.generateDrafts` 唯一文本生产管道：LLM → 输出契约解析 →
+   质量闸门 → 失败重生成（≤2 次）→ 仍失败**不生成**（像真人没说出口）。
+   `ProactiveEngine` 主动消息已收口到本管道（过旁白/AI 腔闸门）。
+2. **Prompt 分层缓存（V10 §19）**：`PromptLayerCache` —— 稳定层 SHA-256 哈希缓存
+   （同 hash 不重复渲染，动态内容绝不进缓存，人格变化 hash 自然失效）+ 命中率统计，
+   诊断端点 `GET /api/v10/conversation/cache-stats`。
+3. **PLAN_REMINDER 接入**：计划到点 → 时间触发激活（PLANNED → ACTIVE，V10 §7.3 状态机）；
+   `LifeRuntime` 创建计划即排程提醒。
+4. **MVP 14 条验收全部落地**（见 docs/V10-iteration-round5.md 对照表）。
+
 ### V10 第四轮 · Life Scheduler + Relationship Projection（2026-08）
 
 1. **Life Scheduler（事件驱动 + 时间触发，V10 §7.4）**：`digitalhuman.life` ——

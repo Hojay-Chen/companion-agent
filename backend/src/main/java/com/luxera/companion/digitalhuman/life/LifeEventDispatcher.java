@@ -23,10 +23,13 @@ public class LifeEventDispatcher {
 
     private final LifeActivityRepository activityRepository;
     private final RealityLedger realityLedger;
+    private final com.luxera.companion.plan.PlanService planService;
 
-    public LifeEventDispatcher(LifeActivityRepository activityRepository, RealityLedger realityLedger) {
+    public LifeEventDispatcher(LifeActivityRepository activityRepository, RealityLedger realityLedger,
+                               com.luxera.companion.plan.PlanService planService) {
         this.activityRepository = activityRepository;
         this.realityLedger = realityLedger;
+        this.planService = planService;
     }
 
     /** 分发一条到点事件; 返回是否成功(失败由 LifeScheduleJob 标记 FAILED) */
@@ -71,9 +74,24 @@ public class LifeEventDispatcher {
         return true;
     }
 
-    /** 计划提醒: 计划到点激活(PLANNED → EXECUTING) —— 后续轮次接入 PlanService */
+    /**
+     * 计划提醒: 计划到点 → 激活执行(PLANNED → EXECUTING, V10 §7.3 Plan 状态机)。
+     * 计划是概率性的(可能不去); 激活不等于完成 —— 是否真的执行由后续行为决策决定。
+     */
     private boolean handlePlanReminder(LifeScheduleRecord record) {
-        log.debug("[LifeScheduler] {} PLAN_REMINDER 待接入: {}", record.getPersonId(), record.getScheduleId());
-        return true;
+        String planId = record.getPayload() == null ? null
+                : record.getPayload().get("planId") == null ? null
+                : record.getPayload().get("planId").toString();
+        if (planId == null) {
+            return false;
+        }
+        try {
+            planService.activate(record.getPersonId(), planId, "计划到点,开始执行");
+            log.info("[LifeScheduler] {} 计划到点激活: {}", record.getPersonId(), planId);
+            return true;
+        } catch (Exception e) {
+            log.warn("[LifeScheduler] 计划激活失败 plan={}: {}", planId, e.getMessage());
+            return false;
+        }
     }
 }

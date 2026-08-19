@@ -28,11 +28,14 @@ public class LifeRuntime {
     private final ExperienceProcessor experienceProcessor;
     private final WorldEventEngine worldEventEngine;
     private final com.luxera.companion.plan.PlanService planService;
+    /** V10 §7.4: 生活事件排程器(计划到点提醒) */
+    private final com.luxera.companion.digitalhuman.life.LifeEventScheduler lifeEventScheduler;
 
     public LifeRuntime(CompanionLifeService lifeService, LifeSimulationService simulation,
                        LifeActivityRepository activityRepo, CompanionSchedule schedule,
                        ExperienceProcessor experienceProcessor, WorldEventEngine worldEventEngine,
-                       com.luxera.companion.plan.PlanService planService) {
+                       com.luxera.companion.plan.PlanService planService,
+                       com.luxera.companion.digitalhuman.life.LifeEventScheduler lifeEventScheduler) {
         this.lifeService = lifeService;
         this.simulation = simulation;
         this.activityRepo = activityRepo;
@@ -40,6 +43,7 @@ public class LifeRuntime {
         this.experienceProcessor = experienceProcessor;
         this.worldEventEngine = worldEventEngine;
         this.planService = planService;
+        this.lifeEventScheduler = lifeEventScheduler;
     }
 
     /** 推进一个伴侣的连续生活 */
@@ -119,8 +123,21 @@ public class LifeRuntime {
                 case "PLANNED" -> {
                     // 规划时就建立计划(概率性: 她打算做, 但可能不去)
                     if (!exists) {
-                        planService.create(companionId, "ACTIVITY", title, 0.6, 0.5,
+                        var plan = planService.create(companionId, "ACTIVITY", title, 0.6, 0.5,
                                 a.getPlannedStart(), null, null);
+                        // V10 §7.4: 计划到点提醒(时间触发; 到点由 LifeEventDispatcher 激活计划)
+                        if (plan.getExpectedTime() != null) {
+                            try {
+                                lifeEventScheduler.schedule(
+                                        com.luxera.companion.digitalhuman.life.ScheduledLifeEvent.of(
+                                                "plan-reminder-" + plan.getId(), companionId,
+                                                com.luxera.companion.digitalhuman.life.LifeEventType.PLAN_REMINDER,
+                                                plan.getExpectedTime(),
+                                                Map.of("planId", plan.getId(), "title", plan.getTitle())));
+                            } catch (Exception ignored) {
+                                // 排程失败不影响计划本身
+                            }
+                        }
                     }
                 }
                 case "ACTIVE" -> {

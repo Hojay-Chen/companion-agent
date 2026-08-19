@@ -6,9 +6,6 @@ import com.luxera.companion.conversation.ConversationRepository;
 import com.luxera.companion.conversation.ConversationService;
 import com.luxera.companion.conversation.Message;
 import com.luxera.companion.conversation.MessageRepository;
-import com.luxera.companion.llm.ChatRequest;
-import com.luxera.companion.llm.LlmMessage;
-import com.luxera.companion.llm.LlmRouter;
 import com.luxera.companion.openloop.OpenLoop;
 import com.luxera.companion.openloop.OpenLoopService;
 import com.luxera.companion.persona.Companion;
@@ -53,21 +50,24 @@ public class ProactiveEngine {
     private final ConversationService conversationService;
     private final NotificationService notificationService;
     private final ReminderRepository reminderRepo;
-    private final LlmRouter llm;
+
     private final CompanionSchedule schedule;
     private final OpenLoopService openLoopService;
     private final ThoughtService thoughtService;
     private final com.luxera.companion.state.AgentStateService agentStateService;
     private final com.luxera.companion.event.CompanionEventBus eventBus;
+    /** V10 §15: 唯一聊天文本生产入口(主动消息也必须过质量闸门) */
+    private final com.luxera.companion.digitalhuman.conversation.ConversationRuntime conversationRuntime;
 
     public ProactiveEngine(AppProperties props, CompanionRepository companionRepo, PersonaService personaService,
                            RelationshipRepository relationshipRepo, MessageRepository messageRepo,
                            ConversationRepository conversationRepo, ConversationService conversationService,
                            NotificationService notificationService,
-                           ReminderRepository reminderRepo, LlmRouter llm, CompanionSchedule schedule,
+                           ReminderRepository reminderRepo, CompanionSchedule schedule,
                            OpenLoopService openLoopService, ThoughtService thoughtService,
                            com.luxera.companion.state.AgentStateService agentStateService,
-                           com.luxera.companion.event.CompanionEventBus eventBus) {
+                           com.luxera.companion.event.CompanionEventBus eventBus,
+                           com.luxera.companion.digitalhuman.conversation.ConversationRuntime conversationRuntime) {
         this.props = props;
         this.companionRepo = companionRepo;
         this.personaService = personaService;
@@ -77,12 +77,13 @@ public class ProactiveEngine {
         this.conversationService = conversationService;
         this.notificationService = notificationService;
         this.reminderRepo = reminderRepo;
-        this.llm = llm;
+
         this.schedule = schedule;
         this.openLoopService = openLoopService;
         this.thoughtService = thoughtService;
         this.agentStateService = agentStateService;
         this.eventBus = eventBus;
+        this.conversationRuntime = conversationRuntime;
     }
 
     /**
@@ -312,18 +313,24 @@ public class ProactiveEngine {
                 personaDesc = persona.getPersonality().getSummary();
             }
             String scheduleDesc = schedule.describe(c.getId(), c.getName(), now);
-            String system = "你是" + c.getName() + ",一个真实的人。" + personaDesc
-                    + "。" + scheduleDesc
-                    + "。你打算主动给用户发一条消息,"
-                    + "场景:" + triggerDesc(trigger) + "。请自然地说 2-3 句,像发微信,不要解释你是 AI,不要问号堆砌。";
-            var r = llm.chat(ChatRequest.builder()
-                    .messages(List.of(LlmMessage.system(system), LlmMessage.user("现在给用户发这条主动消息吧。")))
+            // V10 §15: 唯一文本生成入口 —— 分层 Prompt + 输出质量闸门(禁旁白/AI 腔) + 重试
+            com.luxera.companion.digitalhuman.conversation.ConversationRequest request =
+                    com.luxera.companion.digitalhuman.conversation.ConversationRequest.builder(
+                            c.getId(), c.getName(), "现在给用户发这条主动消息吧。")
+                    .stable("你是" + c.getName() + ",一个真实的人。")
+                    .stable(personaDesc)
+                    .stable("你打算主动给用户发一条消息, 场景:" + triggerDesc(trigger)
+                            + "。请自然地说 2-3 句, 像发微信, 不要解释你是 AI, 不要问号堆砌。")
+                    .semiStable(scheduleDesc)
                     .temperature(0.9)
-                    .metadata(Map.of("companionName", c.getName()))
-                    .build());
-            String content = r.getContent() == null ? "" : r.getContent().trim();
-            if (content.length() >= 5 && content.length() <= 120) {
-                return content;
+                    .maxLength(120)
+                    .build();
+            var drafts = conversationRuntime.generateDrafts(request);
+            if (!drafts.isEmpty()) {
+                String content = drafts.get(0).text().trim();
+                if (content.length() >= 5 && content.length() <= 120) {
+                    return content;
+                }
             }
         } catch (Exception e) {
             log.debug("主动消息 LLM 生成失败,回退模板: {}", e.getMessage());
