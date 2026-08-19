@@ -40,12 +40,14 @@ public class MessageCoreService {
     private final AgentRuntime agentRuntime;
     private final CompanionService companionService;
     private final com.luxera.companion.world.WorldEventEngine worldEventEngine;
+    private final com.luxera.companion.digitalhuman.outbox.OutboxPublisher outboxPublisher;
 
     public MessageCoreService(ConversationService conversationService,
                               MessageRepository messageRepository, PerceptionEngine perceptionEngine,
                               CompanionEventBus eventBus, AgentRuntime agentRuntime,
                               CompanionService companionService,
-                              com.luxera.companion.world.WorldEventEngine worldEventEngine) {
+                              com.luxera.companion.world.WorldEventEngine worldEventEngine,
+                              com.luxera.companion.digitalhuman.outbox.OutboxPublisher outboxPublisher) {
         this.conversationService = conversationService;
         this.messageRepository = messageRepository;
         this.perceptionEngine = perceptionEngine;
@@ -53,6 +55,7 @@ public class MessageCoreService {
         this.agentRuntime = agentRuntime;
         this.companionService = companionService;
         this.worldEventEngine = worldEventEngine;
+        this.outboxPublisher = outboxPublisher;
     }
 
     /**
@@ -134,6 +137,25 @@ public class MessageCoreService {
             } else {
                 // 无事务上下文(理论不发生): 直接异步
                 agentRuntime.submit(userId, companionId, conversationId, toProcess);
+            }
+
+            // V10 §21.3 Outbox 兜底: 与消息落库同事务入队 —— 若进程在提交后、afterCommit
+            // 触发前崩溃, 由 OutboxRelayJob 补发(确定性 eventId 与 live 路径一致,
+            // processed_event 幂等保证不重复处理)。
+            try {
+                Message lastMsg = newMessages.get(newMessages.size() - 1);
+                outboxPublisher.enqueue("msg-delivered-" + lastMsg.getId(), companionId,
+                        com.luxera.companion.digitalhuman.event.ExternalEventType.CHAT_MESSAGE_DELIVERED,
+                        Map.of(
+                                "userId", userId,
+                                "companionId", companionId,
+                                "conversationId", conversationId,
+                                "messageIds", newMessages.stream().map(Message::getId).toList(),
+                                "source", "chat-platform",
+                                "phase", "live",
+                                "dedupKey", companionId + "-" + conversationId + "-" + lastMsg.getId() + "-live"));
+            } catch (Exception ignored) {
+                // Outbox 入队失败不影响主流程(即时路径 still 生效)
             }
         }
 

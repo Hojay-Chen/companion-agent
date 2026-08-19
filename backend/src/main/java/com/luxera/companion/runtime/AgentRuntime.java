@@ -89,6 +89,8 @@ public class AgentRuntime {
     private final TaskExecutor taskExecutor;
     private final com.luxera.companion.cognitive.CognitiveSessionService cognitiveSessionService;
     private final com.luxera.companion.reality.RealityConsistencyChecker realityChecker;
+    /** V10 §21.1: 状态版本门(LLM 旧结果不能覆盖新状态) */
+    private final com.luxera.companion.digitalhuman.state.StateVersionGate stateVersionGate;
     /** V9: per-agent 单写者锁(同 agent 的写入串行, 防止并发覆盖状态) */
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.locks.ReentrantLock> locks =
             new java.util.concurrent.ConcurrentHashMap<>();
@@ -117,6 +119,7 @@ public class AgentRuntime {
                           TaskExecutor taskExecutor,
                           com.luxera.companion.cognitive.CognitiveSessionService cognitiveSessionService,
                           com.luxera.companion.reality.RealityConsistencyChecker realityChecker,
+                          com.luxera.companion.digitalhuman.state.StateVersionGate stateVersionGate,
                           SimulatorClient simulatorClient, RealityLedger realityLedger,
                           EventProcessingChain eventProcessingChain, EventRouter eventRouter,
                           ConversationOutputValidator outputValidator) {
@@ -143,6 +146,7 @@ public class AgentRuntime {
         this.taskExecutor = taskExecutor;
         this.cognitiveSessionService = cognitiveSessionService;
         this.realityChecker = realityChecker;
+        this.stateVersionGate = stateVersionGate;
         this.simulatorClient = simulatorClient;
         this.realityLedger = realityLedger;
         this.eventProcessingChain = eventProcessingChain;
@@ -484,6 +488,8 @@ public class AgentRuntime {
 
             // 生成
             String expressionHint = describeExpression(expression);
+            // V10 §21.1: LLM 调用前快照状态版本 —— 返回时版本已变则结果作废(不覆盖新状态)
+            long stateVersionBeforeLlm = stateVersionGate.snapshot(companionId);
             CompanionRuntime.ChatOutcome outcome = runtime.generate(userId, companionId, conversationId,
                     last.getId(), decisionText, recent, null, decision, expressionHint, path);
             String reply = outcome.reply();
@@ -512,6 +518,15 @@ public class AgentRuntime {
                         Map.of("messageId", last.getId(), "status", "READ", "action", "REALITY_CONFLICT",
                                 "reason", conflict));
                 log.info("[AgentRuntime] {} 回复与 Reality 冲突, 未发送: {}", companionId, conflict);
+                return;
+            }
+
+            // V10 §21.1: 提交前校验状态版本 —— LLM 期间状态已变(其他线程/任务) → 结果作废
+            if (!stateVersionGate.tryCommit(companionId, stateVersionBeforeLlm)) {
+                // 旧结果不能覆盖新状态(MVP 验收 12): 像真人一样"想了半天但情况已经变了"
+                eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
+                        Map.of("messageId", last.getId(), "status", "READ", "action", "STATE_VERSION_CONFLICT"));
+                log.info("[AgentRuntime] {} 状态版本冲突, 丢弃基于旧状态的回复", companionId);
                 return;
             }
 

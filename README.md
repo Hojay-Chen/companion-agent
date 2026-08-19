@@ -14,6 +14,18 @@
 > Digital Human Platform（数字人的生活、意识、认知与行动）三个独立系统，固定因果链
 > **World → Event → Perception → Awareness → Cognition → Decision → Action → Reality**。
 
+### V10 第三轮 · Outbox 可靠发布 + stateVersion 乐观锁（2026-08）
+
+1. **Outbox（双写一致性，V10 §21.3）**：`digitalhuman.outbox` —— `outbox_event` 表
+   （event_key 唯一幂等入队 / PENDING→PUBLISHED / 失败退避重试超限 FAILED）；
+   `OutboxPublisher` 业务事务内入队；`OutboxRelayJob`（每 5 秒，配置化）投递到事件链。
+   用户消息落库同事务入队兜底 —— 进程崩溃后由 Relay 补发，确定性 eventId + processed_event
+   幂等保证**补发/重放绝不重复处理**；未来换 MQ 只改 Relay 投递目标。
+2. **StateVersionGate（LLM 旧结果丢弃，V10 §21.1，MVP 验收 12）**：`digitalhuman.state` ——
+   LLM 调用前快照版本，返回后乐观提交；版本已变 → 结果作废（不覆盖新状态）。
+   已接入回复生成路径（防御层）。
+3. **新增表**：`outbox_event`。
+
 ### V10 第二轮 · 感知策略化 + 决策策略化（2026-08）
 
 1. **Perception Runtime（Strategy Pattern）**：`digitalhuman.perception` —— 4 级感知

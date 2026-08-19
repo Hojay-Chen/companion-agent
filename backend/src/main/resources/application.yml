@@ -110,6 +110,8 @@ app:
     pending-recheck-cron: '0 */1 * * * *'
     # 记忆衰减归档(默认周一 04:30; 测试环境禁用)
     memory-decay-cron: '0 30 4 * * MON'
+    # V10 Outbox 可靠发布轮询(默认每 5 秒; 测试环境禁用)
+    outbox-relay-cron: '*/5 * * * * *'
 
   # 主动消息打断控制
   proactive:
