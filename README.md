@@ -14,6 +14,17 @@
 > Digital Human Platform（数字人的生活、意识、认知与行动）三个独立系统，固定因果链
 > **World → Event → Perception → Awareness → Cognition → Decision → Action → Reality**。
 
+### V10 第六轮 · PersonActor 全面接管 + 复查决策策略化（2026-08）
+
+1. **Person Actor 全面接管（V10 §20）**：消息提交从全局线程池迁移到 per-person mailbox
+   （**严格 FIFO：提交顺序=执行顺序**）；空闲 30s 自动回收（不累积线程，回收后自动重建）；
+   `process` 同步路径锁统一到 registry（同步/异步互斥，状态修改永不走并发）；任务异常隔离。
+2. **已读复查决策策略化（V10 §13）**：`PendingMessageReevaluationJob` 策略预筛 ——
+   忙/疲惫时 DecisionPolicyEngine 判定 DelayReply（延后复查，不打扰认知、省一次 LLM）；
+   其余走原有 Brain 决策。真人忙的时候"想起也不会立刻回"。
+3. **迭代总结**：6 轮迭代完成 —— MVP 14 条验收全部落地、V10 §24 模式对照表全部落位、
+   全量 262 测试全绿（新增 71 个）、修复 7 项既有问题。详见 docs/V10-iteration-round6.md。
+
 ### V10 第五轮 · Conversation Runtime 唯一文本入口 + Prompt 分层缓存（2026-08）
 
 1. **Conversation Runtime（V10 §15，MVP 验收 14）**：`digitalhuman.conversation` ——

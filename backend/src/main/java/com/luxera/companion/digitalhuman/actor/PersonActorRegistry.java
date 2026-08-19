@@ -20,14 +20,17 @@ public class PersonActorRegistry {
     private final Map<String, PersonActor> actors = new ConcurrentHashMap<>();
     private final Map<String, Object> perPersonLocks = new ConcurrentHashMap<>();
 
-    /** 提交任务到指定 Person 的 mailbox(异步, 串行执行) */
+    /** 提交任务到指定 Person 的 mailbox(异步, 严格 FIFO 串行执行) */
     public void tell(String personId, Runnable task) {
-        PersonActor actor = actors.computeIfAbsent(personId, k -> {
-            PersonActor created = new PersonActor(k, t ->
-                    log.error("[PersonActor] {} 任务异常: {}", k, t.getMessage()));
-            log.debug("[PersonActorRegistry] 创建 actor: {}", k);
-            return created;
-        });
+        PersonActor actor = actors.get(personId);
+        if (actor == null || !actor.alive()) {
+            // 空闲回收后重建: 先清死引用, 再 putIfAbsent(并发提交竞争安全)
+            actors.remove(personId, actor);
+            PersonActor fresh = new PersonActor(personId, t ->
+                    log.error("[PersonActor] {} 任务异常: {}", personId, t.getMessage()));
+            PersonActor existing = actors.putIfAbsent(personId, fresh);
+            actor = existing != null ? existing : fresh;
+        }
         actor.tell(task);
     }
 

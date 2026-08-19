@@ -41,7 +41,6 @@ import com.luxera.companion.state.AgentStateService;
 import com.luxera.companion.state.AvailabilityService;
 import com.luxera.companion.usermodel.UserChatStyleService;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
@@ -86,14 +85,12 @@ public class AgentRuntime {
     private final CompanionEventBus eventBus;
     private final CompanionSchedule schedule;
     private final CompanionRuntime runtime;
-    private final TaskExecutor taskExecutor;
     private final com.luxera.companion.cognitive.CognitiveSessionService cognitiveSessionService;
     private final com.luxera.companion.reality.RealityConsistencyChecker realityChecker;
     /** V10 §21.1: 状态版本门(LLM 旧结果不能覆盖新状态) */
     private final com.luxera.companion.digitalhuman.state.StateVersionGate stateVersionGate;
-    /** V9: per-agent 单写者锁(同 agent 的写入串行, 防止并发覆盖状态) */
-    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.locks.ReentrantLock> locks =
-            new java.util.concurrent.ConcurrentHashMap<>();
+    /** V10 §20: Person Actor 注册表(per-person mailbox FIFO + 统一串行互斥) */
+    private final com.luxera.companion.digitalhuman.actor.PersonActorRegistry personActorRegistry;
 
     /** V10: Simulator Client(数字人访问外部聊天世界的唯一入口) */
     private final SimulatorClient simulatorClient;
@@ -116,10 +113,10 @@ public class AgentRuntime {
                           RelationshipService relationshipService, PhoneNotificationService phoneNotificationService,
                           CognitiveWakeupService cognitiveWakeupService, IntentionService intentionService,
                           CompanionEventBus eventBus, CompanionSchedule schedule, CompanionRuntime runtime,
-                          TaskExecutor taskExecutor,
                           com.luxera.companion.cognitive.CognitiveSessionService cognitiveSessionService,
                           com.luxera.companion.reality.RealityConsistencyChecker realityChecker,
                           com.luxera.companion.digitalhuman.state.StateVersionGate stateVersionGate,
+                          com.luxera.companion.digitalhuman.actor.PersonActorRegistry personActorRegistry,
                           SimulatorClient simulatorClient, RealityLedger realityLedger,
                           EventProcessingChain eventProcessingChain, EventRouter eventRouter,
                           ConversationOutputValidator outputValidator) {
@@ -143,10 +140,10 @@ public class AgentRuntime {
         this.eventBus = eventBus;
         this.schedule = schedule;
         this.runtime = runtime;
-        this.taskExecutor = taskExecutor;
         this.cognitiveSessionService = cognitiveSessionService;
         this.realityChecker = realityChecker;
         this.stateVersionGate = stateVersionGate;
+        this.personActorRegistry = personActorRegistry;
         this.simulatorClient = simulatorClient;
         this.realityLedger = realityLedger;
         this.eventProcessingChain = eventProcessingChain;
@@ -180,10 +177,13 @@ public class AgentRuntime {
      * 带处理阶段的事件提交。阶段纳入确定性 eventId:
      * - live(实时送达)与 catchup(醒来补处理)是两次独立处理时机, 互不短路;
      * - 同一阶段的同批重试/重放仍被幂等短路。
+     *
+     * V10 §20: 提交进入 Person Actor mailbox(严格 FIFO) —— 同 Person 处理顺序
+     * = 提交顺序, 不同 Person 并行; 空闲回收线程, 不累积。
      */
     public void submitWithPhase(String userId, String companionId, String conversationId,
                                 List<Message> userMessages, String phase) {
-        taskExecutor.execute(() -> {
+        personActorRegistry.tell(companionId, () -> {
             try {
                 if (userMessages == null || userMessages.isEmpty()) return;
                 String lastMessageId = userMessages.get(userMessages.size() - 1).getId();
@@ -289,10 +289,10 @@ public class AgentRuntime {
     /** Agent 异步处理已入库的用户消息(完整认知链) */
     public void process(String userId, String companionId, String conversationId, List<Message> userMessages) {
         if (userMessages == null || userMessages.isEmpty()) return;
-        // V9 §17: per-agent 单写者队列
-        var lock = locks.computeIfAbsent(companionId, k -> new java.util.concurrent.locks.ReentrantLock());
-        lock.lock();
-        try {
+        // V10 §20: per-person 统一串行设施(与 PersonActor mailbox 同一互斥体;
+        // 同步调用路径与异步 mailbox 路径互斥, 状态修改永不走并发)
+        Object lock = personActorRegistry.lockOf(companionId);
+        synchronized (lock) {
             // V10 §4: 确保 Simulator 会话已建立(幂等; 直接调用 process 的路径也保证可用)
             simulatorClient.openSession(companionId);
             LocalDateTime now = LocalDateTime.now();
@@ -587,8 +587,6 @@ public class AgentRuntime {
             if (decision.action == InteractionAction.END_CONVERSATION) {
                 sessionManager.boundary(userId, companionId, conversationId, "SOFT_END", decision.reason);
             }
-        } finally {
-            lock.unlock();
         }
     }
 

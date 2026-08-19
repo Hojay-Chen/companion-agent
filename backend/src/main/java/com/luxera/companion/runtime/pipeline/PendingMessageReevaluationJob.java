@@ -13,6 +13,7 @@ import com.luxera.companion.interaction.InteractionDecision;
 import com.luxera.companion.interaction.InteractionPolicyEngine;
 import com.luxera.companion.persona.CompanionService;
 import com.luxera.companion.phone.PhoneStateService;
+import com.luxera.companion.relationship.Relationship;
 import com.luxera.companion.relationship.RelationshipService;
 import com.luxera.companion.runtime.AgentTraceService;
 import com.luxera.companion.runtime.ScheduledActionService;
@@ -56,6 +57,10 @@ public class PendingMessageReevaluationJob {
     private final DrivesService drivesService;
     private final AgentTraceService traceService;
     private final PerceptionEngine perceptionEngine;
+    /** V10 §13: 决策策略(复查预筛 —— 忙/疲惫时直接延后, 不打扰认知) */
+    private final com.luxera.companion.digitalhuman.decision.DecisionPolicyEngine decisionPolicyEngine;
+    /** V10: 状态快照工厂(策略输入) */
+    private final com.luxera.companion.digitalhuman.perception.SnapshotFactory snapshotFactory;
 
     public PendingMessageReevaluationJob(PendingMessageService pendingService, BrainAgent brainAgent,
                                          CompanionRuntime runtime, ConversationService conversationService,
@@ -66,7 +71,9 @@ public class PendingMessageReevaluationJob {
                                          PhoneStateService phoneStateService, AvailabilityService availabilityService,
                                          CompanionSchedule schedule, InteractionPolicyEngine interactionPolicy,
                                          DrivesService drivesService, AgentTraceService traceService,
-                                         PerceptionEngine perceptionEngine) {
+                                         PerceptionEngine perceptionEngine,
+                                         com.luxera.companion.digitalhuman.decision.DecisionPolicyEngine decisionPolicyEngine,
+                                         com.luxera.companion.digitalhuman.perception.SnapshotFactory snapshotFactory) {
         this.pendingService = pendingService;
         this.brainAgent = brainAgent;
         this.runtime = runtime;
@@ -84,6 +91,8 @@ public class PendingMessageReevaluationJob {
         this.drivesService = drivesService;
         this.traceService = traceService;
         this.perceptionEngine = perceptionEngine;
+        this.decisionPolicyEngine = decisionPolicyEngine;
+        this.snapshotFactory = snapshotFactory;
     }
 
     @Scheduled(cron = "${app.scheduler.pending-recheck-cron:0 */1 * * * *}")
@@ -119,6 +128,31 @@ public class PendingMessageReevaluationJob {
         String relationshipStage = rel != null ? rel.getRelationshipStage() : "new";
         double closeness = state != null ? state.getEmotionalCloseness() : 0.3;
         PerceptionEngine.Perception perception = perceptionEngine.perceive(p.getSenderText());
+
+        // V10 §13: 决策策略预筛 —— 她记得这条消息(FOCUSED); 忙/疲惫 → 策略直接判定
+        // "稍后再回"(DelayReply), 不打扰认知(省一次 LLM 调用); 其余情况走原有 Brain 决策。
+        try {
+            double importance = reviewImportance(perception, p.getSenderText());
+            com.luxera.companion.digitalhuman.decision.DecisionContext decisionContext =
+                    com.luxera.companion.digitalhuman.decision.DecisionContext.of(
+                            companionId, null, com.luxera.companion.digitalhuman.perception.PerceptionLevel.FOCUSED,
+                            importance,
+                            snapshotFactory.life(companionId, now),
+                            snapshotFactory.mind(companionId),
+                            relationshipSnapshot(rel));
+            com.luxera.companion.digitalhuman.decision.DecisionPolicyEngine.DecisionOutcome policyDecision =
+                    decisionPolicyEngine.decide(decisionContext);
+            if (policyDecision.decision() instanceof com.luxera.companion.digitalhuman.decision.PersonDecision.DelayReplyDecision delay) {
+                // 忙/疲惫 → 再延后(真人忙的时候想起也不会立刻回)
+                scheduledActionService.schedule(companionId, ScheduledActionService.RE_EVALUATE_MESSAGE,
+                        now.plusMinutes(delay.delayMinutes()),
+                        Map.of("pendingMessageId", p.getMessageId()));
+                log.info("[已读复查] {} 忙/疲惫, 策略延后 {} 分钟再复查", companionId, delay.delayMinutes());
+                return;
+            }
+        } catch (Exception e) {
+            log.debug("[已读复查] 策略预筛失败, 走原决策: {}", e.getMessage());
+        }
 
         InteractionDecision baseline = interactionPolicy.decide(new InteractionPolicyEngine.InteractionInput(
                 p.getSenderText(), perception.intent(), perception.emotion(),
@@ -162,6 +196,37 @@ public class PendingMessageReevaluationJob {
             // 放下这件事(人偶尔会忘记回)
             pendingService.markExpired(p.getMessageId());
         }
+    }
+
+    /** 复查重要性: 情绪信号/催问词/长度 → 高; 否则中 */
+    private static double reviewImportance(PerceptionEngine.Perception perception, String text) {
+        String emotion = perception == null ? null : perception.emotion();
+        boolean emotional = emotion != null
+                && !List.of("neutral", "calm", "happy").contains(emotion);
+        boolean urgent = text != null && containsAny(text,
+                "在吗", "怎么不", "不回", "回我", "急事", "紧急", "忙吗");
+        boolean longText = text != null && text.length() > 60;
+        if (emotional || urgent) return 0.7;
+        if (longText) return 0.6;
+        return 0.5;
+    }
+
+    private static com.luxera.companion.digitalhuman.decision.RelationshipSnapshot relationshipSnapshot(
+            Relationship rel) {
+        if (rel == null) {
+            return com.luxera.companion.digitalhuman.decision.RelationshipSnapshot.of(
+                    "new", 0, 0, 0, 0);
+        }
+        return com.luxera.companion.digitalhuman.decision.RelationshipSnapshot.of(
+                rel.getRelationshipStage(), rel.getIntimacy(), rel.getFamiliarity(),
+                rel.getTension(), rel.getConnectionPressure());
+    }
+
+    private static boolean containsAny(String s, String... keys) {
+        for (String k : keys) {
+            if (s != null && s.contains(k)) return true;
+        }
+        return false;
     }
 
     private void reply(PendingMessageState p, String userId, BrainDecision decision) {

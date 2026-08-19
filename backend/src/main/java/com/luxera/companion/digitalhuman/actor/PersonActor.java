@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -14,13 +15,18 @@ import java.util.function.Consumer;
  * 核心原则(V10 §20):
  * - 同一个 Person 的状态修改串行(mailbox 队列 + 单消费者线程);
  * - 不同 Person 并行(每个 Person 独立 Actor);
- * - 事件进入 Mailbox, 由 Actor 依次消费, 绝不并发触碰同一 Person 状态。
+ * - 事件进入 Mailbox, 由 Actor 依次消费(严格 FIFO: 提交顺序 = 执行顺序),
+ *   绝不并发触碰同一 Person 状态。
  *
  * 实现: 每 Person 一个 {@link BlockingQueue}(mailbox) + 一个守护消费者线程;
- * 空闲时阻塞等待, 不占 CPU; 优雅关闭时排空剩余任务。
+ * 空闲 IDLE_TIMEOUT 后自动退出(回收线程资源, 测试环境不累积线程);
+ * 优雅关闭时排空剩余任务。
  */
 @Slf4j
 public class PersonActor {
+
+    /** 空闲回收: 队列空闲超过该时长 → worker 退出(下次 tell 自动重建) */
+    static final long IDLE_TIMEOUT_MILLIS = 30_000;
 
     private final String personId;
     private final BlockingQueue<Runnable> mailbox;
@@ -39,26 +45,36 @@ public class PersonActor {
 
     private void drain(Consumer<Throwable> errorSink) {
         while (running.get() || !mailbox.isEmpty()) {
+            Runnable task;
             try {
-                Runnable task = mailbox.take();
-                queueDepth.decrementAndGet();
-                try {
-                    task.run();
-                    processedCount.incrementAndGet();
-                } catch (Throwable t) {
-                    if (errorSink != null) {
-                        try {
-                            errorSink.accept(t);
-                        } catch (Exception ignored) {
-                            log.warn("[PersonActor] {} errorSink 失败: {}", personId, ignored.getMessage());
-                        }
-                    } else {
-                        log.error("[PersonActor] {} 任务执行失败: {}", personId, t.getMessage());
-                    }
-                }
+                task = running.get() ? mailbox.poll(IDLE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+                        : mailbox.take();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 if (!running.get()) break;
+                continue;
+            }
+            if (task == null) {
+                // 空闲超时且没有新任务 → 自动回收(保持 running=false 前检查竞争)
+                if (running.get() && mailbox.isEmpty()) {
+                    running.set(false);
+                }
+                break;
+            }
+            queueDepth.decrementAndGet();
+            try {
+                task.run();
+                processedCount.incrementAndGet();
+            } catch (Throwable t) {
+                if (errorSink != null) {
+                    try {
+                        errorSink.accept(t);
+                    } catch (Exception ignored) {
+                        log.warn("[PersonActor] {} errorSink 失败: {}", personId, ignored.getMessage());
+                    }
+                } else {
+                    log.error("[PersonActor] {} 任务执行失败: {}", personId, t.getMessage());
+                }
             }
         }
     }
