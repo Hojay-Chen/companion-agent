@@ -97,7 +97,8 @@ class BehaviorEngineTest {
         return relationshipRepository.save(r);
     }
 
-    private static final LocalDateTime TEST_NOON = LocalDateTime.of(2026, 8, 18, 15, 0);
+    // 相对当前时间: ProactiveEngine 内部使用真实时钟, 固定日期会随时间漂移(2026-08-19 起失败)
+    private static final LocalDateTime TEST_NOON = LocalDateTime.now();
 
     @Test
     void evaluateAlwaysProducesDecision() {

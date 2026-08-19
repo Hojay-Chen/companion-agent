@@ -72,7 +72,8 @@ public class WakeupCatchUpService {
             Conversation conv = conversationRepository.findById(e.getKey()).orElse(null);
             if (conv == null) continue;
             try {
-                agentRuntime.submit(userId, companionId, e.getKey(), e.getValue());
+                // catchup 阶段: 与实时送达(live)是两次独立处理时机, 不互相幂等短路
+                agentRuntime.submitWithPhase(userId, companionId, e.getKey(), e.getValue(), "catchup");
                 total += e.getValue().size();
             } catch (Exception ex) {
                 log.debug("[WakeupCatchUp] 补处理失败 conv={}: {}", e.getKey(), ex.getMessage());

@@ -11,6 +11,14 @@ import com.luxera.companion.conversation.ConversationService;
 import com.luxera.companion.conversation.ConversationThreadService;
 import com.luxera.companion.conversation.Message;
 import com.luxera.companion.conversation.SessionManager;
+import com.luxera.companion.digitalhuman.conversation.ChatMessageDraft;
+import com.luxera.companion.digitalhuman.conversation.ConversationOutputValidator;
+import com.luxera.companion.digitalhuman.event.EventProcessingChain;
+import com.luxera.companion.digitalhuman.event.EventRouter;
+import com.luxera.companion.digitalhuman.event.ExternalEvent;
+import com.luxera.companion.digitalhuman.event.ExternalEventType;
+import com.luxera.companion.digitalhuman.reality.RealityEventType;
+import com.luxera.companion.digitalhuman.reality.RealityLedger;
 import com.luxera.companion.event.CompanionEventBus;
 import com.luxera.companion.event.CompanionEventType;
 import com.luxera.companion.intention.IntentionService;
@@ -26,18 +34,20 @@ import com.luxera.companion.runtime.agent.brain.BrainDecision;
 import com.luxera.companion.runtime.agent.expression.ExpressionResult;
 import com.luxera.companion.relationship.Relationship;
 import com.luxera.companion.relationship.RelationshipService;
-import com.luxera.companion.runtime.pipeline.MessageDeliveryService;
 import com.luxera.companion.runtime.pipeline.MessagePipeline;
+import com.luxera.companion.simulator.CapabilityResult;
+import com.luxera.companion.simulator.SimulatorClient;
 import com.luxera.companion.state.AgentStateService;
 import com.luxera.companion.state.AvailabilityService;
-import com.luxera.companion.state.CompanionAvailability;
 import com.luxera.companion.usermodel.UserChatStyleService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
 
+import javax.annotation.PostConstruct;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -65,7 +75,6 @@ public class AgentRuntime {
     private final MessagePipeline messagePipeline;
     private final ConversationThreadService threadService;
     private final ExpressionAgent expressionAgent;
-    private final MessageDeliveryService deliveryService;
     private final InteractionPolicyEngine interactionPolicy;
     private final ResponseLatencyEngine latencyEngine;
     private final AgentStateService agentStateService;
@@ -84,11 +93,22 @@ public class AgentRuntime {
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.locks.ReentrantLock> locks =
             new java.util.concurrent.ConcurrentHashMap<>();
 
+    /** V10: Simulator Client(数字人访问外部聊天世界的唯一入口) */
+    private final SimulatorClient simulatorClient;
+    /** V10: Reality Ledger(真实经历 append-only 账本) */
+    private final RealityLedger realityLedger;
+    /** V10: 外部事件处理链(Validation → Dedup → Route) */
+    private final EventProcessingChain eventProcessingChain;
+    /** V10: 事件路由注册表 */
+    private final EventRouter eventRouter;
+    /** V10: 聊天输出质量闸门(禁旁白/舞台动作/AI 腔) */
+    private final ConversationOutputValidator outputValidator;
+
     public AgentRuntime(ConversationService conversationService, PerceptionEngine perceptionEngine,
                           WorkingMemory workingMemory, SessionManager sessionManager,
                           UserChatStyleService userChatStyleService, BehaviorLearningService behaviorLearningService,
                           MessagePipeline messagePipeline, ConversationThreadService threadService,
-                          ExpressionAgent expressionAgent, MessageDeliveryService deliveryService,
+                          ExpressionAgent expressionAgent,
                           InteractionPolicyEngine interactionPolicy, ResponseLatencyEngine latencyEngine,
                           AgentStateService agentStateService, AvailabilityService availabilityService,
                           RelationshipService relationshipService, PhoneNotificationService phoneNotificationService,
@@ -96,7 +116,10 @@ public class AgentRuntime {
                           CompanionEventBus eventBus, CompanionSchedule schedule, CompanionRuntime runtime,
                           TaskExecutor taskExecutor,
                           com.luxera.companion.cognitive.CognitiveSessionService cognitiveSessionService,
-                          com.luxera.companion.reality.RealityConsistencyChecker realityChecker) {
+                          com.luxera.companion.reality.RealityConsistencyChecker realityChecker,
+                          SimulatorClient simulatorClient, RealityLedger realityLedger,
+                          EventProcessingChain eventProcessingChain, EventRouter eventRouter,
+                          ConversationOutputValidator outputValidator) {
         this.conversationService = conversationService;
         this.perceptionEngine = perceptionEngine;
         this.workingMemory = workingMemory;
@@ -106,7 +129,6 @@ public class AgentRuntime {
         this.messagePipeline = messagePipeline;
         this.threadService = threadService;
         this.expressionAgent = expressionAgent;
-        this.deliveryService = deliveryService;
         this.interactionPolicy = interactionPolicy;
         this.latencyEngine = latencyEngine;
         this.agentStateService = agentStateService;
@@ -121,22 +143,143 @@ public class AgentRuntime {
         this.taskExecutor = taskExecutor;
         this.cognitiveSessionService = cognitiveSessionService;
         this.realityChecker = realityChecker;
+        this.simulatorClient = simulatorClient;
+        this.realityLedger = realityLedger;
+        this.eventProcessingChain = eventProcessingChain;
+        this.eventRouter = eventRouter;
+        this.outputValidator = outputValidator;
     }
 
     /**
-     * §十一~§十四: 接收**已持久化**的用户消息并异步触发 Agent 处理。
+     * V10 §9: 注册消息送达事件路由 —— 用户消息先成为外部事件,
+     * 经事件链(Validation → Dedup → Route)进入数字人认知, 而不是直接注入消息内容。
+     */
+    @PostConstruct
+    public void registerEventRoutes() {
+        eventRouter.register(ExternalEventType.CHAT_MESSAGE_DELIVERED, this::onChatMessageDelivered);
+    }
+
+    /**
+     * V10 §1.2 因果链入口: 接收**已持久化**的用户消息, 转为外部事件后进入事件链。
      * 消息落库已由 {@link com.luxera.companion.conversation.MessageCoreService} 在请求事务内完成;
      * 这里只做 Agent 认知处理(感知/流水线/回复), 永不参与消息的持久化。
      * 立即返回(不阻塞); Agent 的回复通过事件总线推送。
+     *
+     * V10 边界: 事件 payload 只携带 messageIds 引用, 不含消息内容 ——
+     * 数字人通过 Simulator Client 的 ReadMessagesCapability 自行"查看"消息内容。
      */
     public void submit(String userId, String companionId, String conversationId, List<Message> userMessages) {
+        submitWithPhase(userId, companionId, conversationId, userMessages, "live");
+    }
+
+    /**
+     * 带处理阶段的事件提交。阶段纳入确定性 eventId:
+     * - live(实时送达)与 catchup(醒来补处理)是两次独立处理时机, 互不短路;
+     * - 同一阶段的同批重试/重放仍被幂等短路。
+     */
+    public void submitWithPhase(String userId, String companionId, String conversationId,
+                                List<Message> userMessages, String phase) {
         taskExecutor.execute(() -> {
             try {
-                process(userId, companionId, conversationId, userMessages);
+                if (userMessages == null || userMessages.isEmpty()) return;
+                String lastMessageId = userMessages.get(userMessages.size() - 1).getId();
+                // 确定性事件 id: 同阶段同批消息重试/重放时幂等短路
+                ExternalEvent event = ExternalEvent.withDeterministicId(
+                        companionId, ExternalEventType.CHAT_MESSAGE_DELIVERED,
+                        companionId + "-" + conversationId + "-" + lastMessageId + "-" + phase,
+                        Map.of(
+                                "userId", userId,
+                                "companionId", companionId,
+                                "conversationId", conversationId,
+                                "messageIds", userMessages.stream().map(Message::getId).toList(),
+                                "source", "chat-platform",
+                                "phase", phase));
+                eventProcessingChain.process(event);
             } catch (Exception e) {
                 log.error("[AgentRuntime] 处理消息失败 companion={}: {}", companionId, e.getMessage());
             }
         });
+    }
+
+    /** 从 SendMessage Capability 结果构建轻量 Message(纯内存, 不落库) */
+    private static Message fromSendResult(String conversationId, String content, String kind,
+                                          CapabilityResult result) {
+        Message m = new Message();
+        m.setId(result.str("messageId"));
+        m.setConversationId(conversationId);
+        m.setSenderType("companion");
+        m.setContent(content);
+        m.setMessageKind(kind);
+        m.setDeliveryStatus("DELIVERED");
+        if (result.str("createdAt") != null) {
+            try {
+                m.setCreatedAt(LocalDateTime.parse(result.str("createdAt")
+                        .substring(0, 19).replace('T', ' ')));
+            } catch (Exception ignored) {
+                m.setCreatedAt(LocalDateTime.now());
+            }
+        }
+        return m;
+    }
+
+    /**
+     * V10 §9.2 事件路由终点: 消息送达事件 → 数字人"查看"消息(Simulator Capability)
+     * → 进入完整认知链。消息内容始终通过 Simulator 读取, 不直接注入。
+     */
+    void onChatMessageDelivered(ExternalEvent event) {
+        String companionId = event.personId();
+        String conversationId = event.str("conversationId");
+        String userId = event.str("userId");
+        @SuppressWarnings("unchecked")
+        List<String> messageIds = (List<String>) event.get("messageIds");
+        if (conversationId == null || messageIds == null || messageIds.isEmpty()) return;
+
+        // 数字人通过模拟客户端读取消息内容(ReadMessagesCapability)
+        simulatorClient.openSession(companionId);
+        CapabilityResult read = simulatorClient.readMessages(companionId, conversationId, 0);
+        if (!read.success()) {
+            log.warn("[AgentRuntime] 读取消息失败 companion={}: {}", companionId, read.message());
+            return;
+        }
+        List<Message> messages = rebuildMessages(conversationId, messageIds, read);
+        if (messages.isEmpty()) return;
+        process(userId, companionId, conversationId, messages);
+    }
+
+    /** 从 Simulator 读取的消息视图重建轻量 Message(纯内存, 不落库) */
+    @SuppressWarnings("unchecked")
+    private static List<Message> rebuildMessages(String conversationId, List<String> messageIds,
+                                                 CapabilityResult read) {
+        List<Map<String, Object>> views = (List<Map<String, Object>>) read.get("messages");
+        if (views == null) return List.of();
+        Map<String, Map<String, Object>> byId = new LinkedHashMap<>();
+        for (Map<String, Object> view : views) {
+            byId.put(String.valueOf(view.get("id")), view);
+        }
+        List<Message> out = new ArrayList<>();
+        for (String id : messageIds) {
+            Map<String, Object> view = byId.get(id);
+            if (view == null) continue;
+            Message m = new Message();
+            m.setId(id);
+            m.setConversationId(conversationId);
+            m.setSenderType(view.get("senderType") == null ? "user" : view.get("senderType").toString());
+            m.setContent(view.get("content") == null ? "" : view.get("content").toString());
+            m.setDeliveryStatus(view.get("deliveryStatus") == null ? "DELIVERED" : view.get("deliveryStatus").toString());
+            m.setMessageKind(view.get("messageKind") == null ? "NORMAL" : view.get("messageKind").toString());
+            m.setSessionId(view.get("sessionId") == null ? null : view.get("sessionId").toString());
+            m.setExchangeId(view.get("exchangeId") == null ? null : view.get("exchangeId").toString());
+            if (view.get("createdAt") != null) {
+                try {
+                    m.setCreatedAt(LocalDateTime.parse(view.get("createdAt").toString()
+                            .substring(0, 19).replace('T', ' ')));
+                } catch (Exception ignored) {
+                    m.setCreatedAt(LocalDateTime.now());
+                }
+            }
+            out.add(m);
+        }
+        return out;
     }
 
     /** Agent 异步处理已入库的用户消息(完整认知链) */
@@ -146,6 +289,8 @@ public class AgentRuntime {
         var lock = locks.computeIfAbsent(companionId, k -> new java.util.concurrent.locks.ReentrantLock());
         lock.lock();
         try {
+            // V10 §4: 确保 Simulator 会话已建立(幂等; 直接调用 process 的路径也保证可用)
+            simulatorClient.openSession(companionId);
             LocalDateTime now = LocalDateTime.now();
             List<String> contents = new ArrayList<>();
             for (Message um : userMessages) {
@@ -258,6 +403,9 @@ public class AgentRuntime {
             if (pipelineResult.isIgnored() && !urged) {
                 eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
                         Map.of("messageId", last.getId(), "status", "DELIVERED", "action", "IGNORE"));
+                appendReality(companionId, RealityEventType.MESSAGE_IGNORED,
+                        Map.of("messageId", last.getId(), "conversationId", conversationId,
+                                "reason", pipelineResult.reason()), null, null);
                 return;
             }
             // 4. 看到了但不回(DEFER) → 已读(整个会话), 后续复查; 但被连发催问时, 真人会被催着回
@@ -266,6 +414,10 @@ public class AgentRuntime {
                 markAllConversationRead(companionId, conversationId, userMessages, now);
                 eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
                         Map.of("messageId", last.getId(), "status", "READ", "action", "DEFER"));
+                appendReality(companionId, RealityEventType.MESSAGE_DEFERRED,
+                        Map.of("messageId", last.getId(), "conversationId", conversationId,
+                                "reason", pipelineResult.reason(),
+                                "reviewAt", now.plusMinutes(60).toString()), null, null);
                 // §35-§36: 创建意图"该回复他" → 之后可能突然想起(Intention Activation)
                 try {
                     intentionService.create(companionId, userId,
@@ -363,24 +515,52 @@ public class AgentRuntime {
                 return;
             }
 
-            // 拆分回复段
+            // 拆分回复段(V10 §15.3: 发送前必须通过输出质量闸门)
             List<String> chunks = splitReply(reply);
             String first = chunks.get(0).trim();
-            Message assistant = conversationService.addMessage(conversationId, "companion", first, null, false,
-                    kind, last.getSessionId(), last.getExchangeId());
+            String validationIssue = outputValidator.validate(ChatMessageDraft.of(0, first));
+            if (validationIssue != null) {
+                // 未通过: 像真人一样"没说出口", 不发送(或在此重新生成 —— 由调用方决定)
+                log.info("[AgentRuntime] {} 回复未通过输出验证, 未发送: {}", companionId, validationIssue);
+                eventBus.publish(companionId, CompanionEventType.USER_MESSAGE_STATUS,
+                        Map.of("messageId", last.getId(), "status", "READ", "action", "OUTPUT_REJECTED",
+                                "reason", validationIssue));
+                return;
+            }
+            // V10 §4.3: 发送必须通过 Simulator Capability(Command Pattern), 而非直接写 Chat
+            CapabilityResult sendResult = simulatorClient.sendMessage(companionId, conversationId,
+                    "companion", first, kind, "agent-reply-" + last.getId() + "-0");
+            if (!sendResult.success()) {
+                log.warn("[AgentRuntime] 回复发送失败: {}", sendResult.message());
+                return;
+            }
+            Message assistant = fromSendResult(conversationId, first, kind, sendResult);
             workingMemory.record(companionId, conversationId,
                     new WorkingMemory.RecentLine("companion", first, assistant.getCreatedAt()), null);
             eventBus.publish(companionId, CompanionEventType.COMPANION_MESSAGE,
                     Map.of("messageId", assistant.getId(), "conversationId", conversationId,
                             "content", first, "senderType", "companion"));
+            appendReality(companionId, RealityEventType.MESSAGE_SENT,
+                    Map.of("messageId", assistant.getId(), "conversationId", conversationId,
+                            "replyTo", last.getId(), "text", first), null, null);
 
-            // 后续段: 延迟后逐条写库 + 推送(像真人隔一下又补一句)
+            // 后续段: 延迟后逐条发送(像真人隔一下又补一句)
             for (int i = 1; i < chunks.size(); i++) {
                 String seg = chunks.get(i).trim();
                 if (seg.isEmpty()) continue;
+                String segValidation = outputValidator.validate(ChatMessageDraft.of(i, seg));
+                if (segValidation != null) {
+                    log.info("[AgentRuntime] {} 后续段未通过输出验证, 跳过: {}", companionId, segValidation);
+                    continue;
+                }
                 sleep(900 + (long) (Math.random() * 900));
-                Message m = conversationService.addMessage(conversationId, "companion", seg, null, false,
-                        kind, last.getSessionId(), last.getExchangeId());
+                CapabilityResult segResult = simulatorClient.sendMessage(companionId, conversationId,
+                        "companion", seg, kind, "agent-reply-" + last.getId() + "-" + i);
+                if (!segResult.success()) {
+                    log.warn("[AgentRuntime] 后续段发送失败: {}", segResult.message());
+                    continue;
+                }
+                Message m = fromSendResult(conversationId, seg, kind, segResult);
                 workingMemory.record(companionId, conversationId,
                         new WorkingMemory.RecentLine("companion", seg, m.getCreatedAt()), null);
                 eventBus.publish(companionId, CompanionEventType.COMPANION_MESSAGE,
@@ -469,23 +649,47 @@ public class AgentRuntime {
 
     /**
      * 她拿起手机看到整个会话 → 该会话全部未读用户消息一并变已读(真人行为, 不是只读最新一条)。
-     * 逐条 deliveryService.read(会发布 message_read 事件, 前端实时更新勾勾)。
+     * V10 §4.3: 已读是客户端动作, 通过 Simulator Capability(UpdateDeliveryStatus) 落库,
+     * 并逐条发布 message_read 事件(前端实时更新勾勾)。
      */
     private void markAllConversationRead(String companionId, String conversationId,
                                          List<Message> userMessages, LocalDateTime now) {
         try {
+            java.util.Set<String> unread = new java.util.LinkedHashSet<>();
             for (Message m : conversationService.messages(conversationId)) {
                 if (!"user".equals(m.getSenderType())) continue;
                 if (m.getDeliveryStatus() == null
                         || "READ".equals(m.getDeliveryStatus())
                         || "IGNORED".equals(m.getDeliveryStatus())) continue;  // 已读/已忽略跳过
-                deliveryService.read(companionId, m.getId());
+                unread.add(m.getId());
+            }
+            if (unread.isEmpty()) return;
+            CapabilityResult result = simulatorClient.updateDeliveryStatus(companionId, unread, "READ");
+            if (!result.success()) {
+                log.warn("[AgentRuntime] 批量已读失败: {}", result.message());
+                return;
+            }
+            for (String messageId : unread) {
+                eventBus.publish(companionId, CompanionEventType.MESSAGE_READ, Map.of("messageId", messageId));
                 try {
-                    phoneNotificationService.markRead(m.getId(), now);
+                    phoneNotificationService.markRead(messageId, now);
                 } catch (Exception ignored) { }
             }
+            appendReality(companionId, RealityEventType.MESSAGE_READ,
+                    Map.of("messageIds", unread, "conversationId", conversationId,
+                            "count", unread.size()), null, null);
         } catch (Exception e) {
             log.debug("[AgentRuntime] 批量已读失败: {}", e.getMessage());
+        }
+    }
+
+    /** V10 §8: 真实行为写入 Reality Ledger(append-only; 失败不阻断主流程) */
+    private void appendReality(String companionId, RealityEventType type, Map<String, Object> payload,
+                               String correlationId, String causationId) {
+        try {
+            realityLedger.append(companionId, type, payload, correlationId, causationId);
+        } catch (Exception e) {
+            log.warn("[AgentRuntime] Reality Ledger 写入失败 {} {}: {}", companionId, type, e.getMessage());
         }
     }
 

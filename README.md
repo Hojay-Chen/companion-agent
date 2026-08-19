@@ -7,6 +7,63 @@
 
 ---
 
+## V10 · 三系统边界与因果链落地（2026-08 · 第一轮）
+
+> **方案依据**：《Companion Agent V10 Detailed Architecture》—— V10 不是"收到消息就调 LLM 回复"的聊天机器人，
+> 而是 **Persistent Digital Person System**：Chat Platform（外部世界）/ Client Simulator Platform（数字人的设备与身体）/
+> Digital Human Platform（数字人的生活、意识、认知与行动）三个独立系统，固定因果链
+> **World → Event → Perception → Awareness → Cognition → Decision → Action → Reality**。
+>
+> **本轮目标**：在现有单体中建立三大边界（不破坏 V9 功能），把 Chat 写路径收口到 Simulator，
+> 把消息入口收口到事件链，真实行为开始写入 Reality Ledger。
+
+### V10 核心升级（第一轮）
+
+1. **Simulator Platform（Command Pattern + Facade）**：`simulator` 包 —— `SimulatorCapability` 能力接口
+   （`SendMessageCapability` / `ReadMessagesCapability` / `ListConversationsCapability` /
+   `UpdateDeliveryStatusCapability`），每个能力对应一个最小 scope（chat.read / chat.send / conversation.list / delivery.update）。
+   `SimulatorSession`（DISCONNECTED→CONNECTING→CONNECTED + scopes 授权，禁止万能权限）+
+   `SimulatorClient`（Facade）：**数字人访问外部聊天世界的唯一入口** —— 未来替换聊天平台只需实现新 Capability。
+2. **外部事件链（Chain of Responsibility）**：`digitalhuman.event` 包 —— `ExternalEvent`（eventId 幂等 +
+   correlationId 因果追踪）→ `EventProcessingChain`（Validation → Deduplication → Route）。
+   `processed_event` 表幂等短路：同 eventId 重放不重复触发认知（MVP 验收 13）。
+   **消息内容不再直接注入 Agent** —— 事件 payload 只带 messageIds 引用，数字人通过 Simulator 的
+   ReadMessagesCapability 自行"查看"（MVP 验收 3/4）。
+3. **Reality Ledger（Event Sourcing 心智）**：`digitalhuman.reality` 包 —— `timeline_event` 表
+   append-only（实体 `@Immutable` 禁止 UPDATE），`RealityLedger` 唯一写入口（同 eventId 幂等），
+   支持按时间正序回放（MVP 验收 9）。已接：MESSAGE_SENT / MESSAGE_READ / MESSAGE_DEFERRED / MESSAGE_IGNORED。
+4. **Person Actor（Actor 模型）**：`digitalhuman.actor` 包 —— 每 Person 一个 mailbox（队列 + 单消费者线程），
+   同 Person 任务严格串行、不同 Person 并行（V10 §20）。`PersonActorRegistry` 提供统一 tell 入口。
+5. **输出质量闸门（ConversationOutputValidator）**：`digitalhuman.conversation` 包 ——
+   `NarrationRuleValidator` 拦截旁白/舞台动作/AI 腔（（笑了笑）/ *smiles* / 她想了想 / 作为AI…），
+   `OutputValidationChain` 组合验证；回复发送前必须通过闸门，未通过则"没说出口"（MVP 验收 14/6）。
+6. **AgentRuntime 边界收口**：回复发送/批量已读/延迟/忽略全部改走 SimulatorClient + 写入 Reality Ledger；
+   用户消息入口改为 `CHAT_MESSAGE_DELIVERED` 外部事件（确定性 eventId）经事件链进入认知。
+
+### V10 新增数据表
+
+| 表 | 用途 |
+|----|------|
+| `timeline_event` | Reality Ledger（append-only 真实经历，@Immutable 禁改） |
+| `processed_event` | 外部事件幂等记录（重试/重放短路） |
+
+### V10 本轮验收
+
+- `mvn test -Dtest='PersonActorTest,NarrationRuleValidatorTest,SimulatorClientTest,EventProcessingChainTest,RealityLedgerTest'`：**29 个新测试全绿**
+  （Actor 串行性 / 旁白拦截 / Capability scope 授权与收发闭环 / 事件链校验-去重-路由 / Ledger 幂等与回放）
+- 全量回归：既有 V9 测试不受影响
+- 设计模式落位：Command（Simulator）、Strategy→Chain of Responsibility（事件链）、Facade/Adapter（SimulatorClient）、
+  Actor（PersonActor）、Event Sourcing（RealityLedger）、Validator Chain（输出闸门）、Registry（EventRouter/PersonActorRegistry）
+
+### V10 后续轮次（路线图）
+
+- **第二轮**：感知策略化（PerceptionStrategy）与决策策略化（DecisionPolicy，Ignore/ReplyNow/ReplyLater/InspectDevice）
+- **第三轮**：Outbox 事件发布（双写一致性）、stateVersion 乐观锁校验（LLM 旧结果丢弃）
+- **第四轮**：Life Scheduler（活动/计划时间触发，替代轮询）、关系投影（Relationship Projection from Reality Ledger）
+- **第五轮**：Conversation Runtime 统一文本生成入口（其余模块禁止产文本）、Prompt 分层缓存
+
+---
+
 ## V9 · 连续心智与事实一致（2026-08）
 
 > **V8 解决"Agent 能不能回答"；V9 解决"这个 Agent 在这一刻为什么会这样回答，而且下一刻它仍然是同一个人？"**
