@@ -102,6 +102,8 @@ public class AgentRuntime {
     private final EventRouter eventRouter;
     /** V10: 聊天输出质量闸门(禁旁白/舞台动作/AI 腔) */
     private final ConversationOutputValidator outputValidator;
+    /** V10 §4: Strangler 入口 — V10 感知决策影子对比 + 短路 */
+    private final com.luxera.companion.digitalhuman.hotpath.V10HotpathGateway v10Hotpath;
 
     public AgentRuntime(ConversationService conversationService, PerceptionEngine perceptionEngine,
                           WorkingMemory workingMemory, SessionManager sessionManager,
@@ -119,7 +121,8 @@ public class AgentRuntime {
                           com.luxera.companion.digitalhuman.actor.PersonActorRegistry personActorRegistry,
                           SimulatorClient simulatorClient, RealityLedger realityLedger,
                           EventProcessingChain eventProcessingChain, EventRouter eventRouter,
-                          ConversationOutputValidator outputValidator) {
+                          ConversationOutputValidator outputValidator,
+                          com.luxera.companion.digitalhuman.hotpath.V10HotpathGateway v10Hotpath) {
         this.conversationService = conversationService;
         this.perceptionEngine = perceptionEngine;
         this.workingMemory = workingMemory;
@@ -149,6 +152,7 @@ public class AgentRuntime {
         this.eventProcessingChain = eventProcessingChain;
         this.eventRouter = eventRouter;
         this.outputValidator = outputValidator;
+        this.v10Hotpath = v10Hotpath;
     }
 
     /**

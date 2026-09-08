@@ -5,6 +5,7 @@ import com.luxera.companion.event.CompanionEventBus;
 import com.luxera.companion.event.CompanionEventType;
 import com.luxera.companion.persona.CompanionService;
 import com.luxera.companion.runtime.AgentRuntime;
+import com.luxera.companion.simulator.server.SimulatorWebSocketController;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -41,13 +42,15 @@ public class MessageCoreService {
     private final CompanionService companionService;
     private final com.luxera.companion.world.WorldEventEngine worldEventEngine;
     private final com.luxera.companion.digitalhuman.outbox.OutboxPublisher outboxPublisher;
+    private final SimulatorWebSocketController simulatorController;
 
     public MessageCoreService(ConversationService conversationService,
                               MessageRepository messageRepository, PerceptionEngine perceptionEngine,
                               CompanionEventBus eventBus, AgentRuntime agentRuntime,
                               CompanionService companionService,
                               com.luxera.companion.world.WorldEventEngine worldEventEngine,
-                              com.luxera.companion.digitalhuman.outbox.OutboxPublisher outboxPublisher) {
+                              com.luxera.companion.digitalhuman.outbox.OutboxPublisher outboxPublisher,
+                              SimulatorWebSocketController simulatorController) {
         this.conversationService = conversationService;
         this.messageRepository = messageRepository;
         this.perceptionEngine = perceptionEngine;
@@ -56,6 +59,7 @@ public class MessageCoreService {
         this.companionService = companionService;
         this.worldEventEngine = worldEventEngine;
         this.outboxPublisher = outboxPublisher;
+        this.simulatorController = simulatorController;
     }
 
     /**
@@ -127,21 +131,22 @@ public class MessageCoreService {
         // Outbox → Agent: 事务提交后才异步处理(保证 Agent 读到的消息已提交)
         if (anyNew && !newMessages.isEmpty()) {
             final List<Message> toProcess = new ArrayList<>(newMessages);
+            final List<String> msgIds = newMessages.stream().map(Message::getId).toList();
             if (TransactionSynchronizationManager.isSynchronizationActive()) {
                 TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                     @Override
                     public void afterCommit() {
                         agentRuntime.submit(userId, companionId, conversationId, toProcess);
+                        // V10 §63: 推送 WS 事件给在线 simulator(DH 侧的数字人)
+                        pushWsEvent(conversationId, companionId, msgIds);
                     }
                 });
             } else {
-                // 无事务上下文(理论不发生): 直接异步
                 agentRuntime.submit(userId, companionId, conversationId, toProcess);
+                pushWsEvent(conversationId, companionId, msgIds);
             }
 
-            // V10 §21.3 Outbox 兜底: 与消息落库同事务入队 —— 若进程在提交后、afterCommit
-            // 触发前崩溃, 由 OutboxRelayJob 补发(确定性 eventId 与 live 路径一致,
-            // processed_event 幂等保证不重复处理)。
+            // V10 §21.3 Outbox 兜底: 与消息落库同事务入队
             try {
                 Message lastMsg = newMessages.get(newMessages.size() - 1);
                 outboxPublisher.enqueue("msg-delivered-" + lastMsg.getId(), companionId,
@@ -150,16 +155,29 @@ public class MessageCoreService {
                                 "userId", userId,
                                 "companionId", companionId,
                                 "conversationId", conversationId,
-                                "messageIds", newMessages.stream().map(Message::getId).toList(),
+                                "messageIds", msgIds,
                                 "source", "chat-platform",
                                 "phase", "live",
                                 "dedupKey", companionId + "-" + conversationId + "-" + lastMsg.getId() + "-live"));
             } catch (Exception ignored) {
-                // Outbox 入队失败不影响主流程(即时路径 still 生效)
             }
         }
 
         return new SendResult(com.luxera.companion.runtime.pipeline.MessageLifecycle.DELIVERED, persisted);
+    }
+
+    /** V10 §63: 推送 chat.message.delivered WS 事件给在线 simulator */
+    private void pushWsEvent(String conversationId, String companionId, List<String> msgIds) {
+        try {
+            var payload = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                    .put("topic", "chat.message.delivered")
+                    .put("conversationId", conversationId)
+                    .put("companionId", companionId);
+            var ids = payload.putArray("messageIds");
+            for (String id : msgIds) ids.add(id);
+            SimulatorWebSocketController.publishEvent("chat.message.delivered", payload);
+        } catch (Exception ignored) {
+        }
     }
 
     /** 发送条目(前端乐观消息的幂等键) */
