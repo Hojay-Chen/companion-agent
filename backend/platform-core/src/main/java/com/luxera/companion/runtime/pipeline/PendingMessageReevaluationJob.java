@@ -96,10 +96,17 @@ public class PendingMessageReevaluationJob {
     }
 
     @Scheduled(cron = "${app.scheduler.pending-recheck-cron:0 */1 * * * *}")
-    @Transactional
     public void run() {
-        List<PendingMessageState> due = pendingService.dueForReview(LocalDateTime.now());
+        List<PendingMessageState> due;
+        try {
+            due = pendingService.dueForReview(LocalDateTime.now());
+        } catch (Exception e) {
+            log.warn("[已读复查] 查询到期消息失败: {}", e.getMessage());
+            return;
+        }
         if (due.isEmpty()) return;
+        // 逐条独立处理: 单条异常不污染其他条目(不设批量 @Transactional,
+        // 各 service 的写方法已各自维护事务, 避免一条失败→整批 rollback-only)
         for (PendingMessageState p : due) {
             try {
                 reevaluate(p);
