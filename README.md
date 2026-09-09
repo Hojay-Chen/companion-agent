@@ -7,6 +7,79 @@
 
 ---
 
+## V10 完整重构 · 三系统物理解耦 + 拟人化表达层（2026-09）
+
+> **本轮依据**：《Companion Agent V10 完全解耦实施方案》9 轮重构 —— 把"V10 词汇贴在 V9 骨头上"的
+> 现状升级为真正的三系统解耦：Chat Platform ↔ Simulator（DHCP v1 WebSocket 协议）↔ Digital Human，
+> 并落地完整拟人化表达层，让用户聊天时无法分辨对方是真人还是数字人。
+
+### 重构成果（9 轮，全量 275 测试全绿）
+
+**架构解耦（R1-R4）**：
+1. **Maven 多模块拆分**：`backend/` 拆为 `contracts`（纯 DTO 协议模块，无 Spring/JPA）+ `platform-core`
+   （过渡单体，后续轮次再拆 chat-platform / digital-human-platform 两进程）。
+   边界守卫 `scripts/check-v10.sh`（grep）+ `contracts` ArchUnit 测试双重校验依赖方向。
+2. **DHCP v1 协议（contracts.dhcp）**：`DhcpFrame` + 11 种帧类型（CONNECT/AUTH/SUBSCRIBE/EVENT/
+   EVENT_ACK/COMMAND/COMMAND_RESULT/PING/PONG/ERROR/DISCONNECT）+ 配对/令牌/命令 DTO。
+3. **Simulator WebSocket 服务端（R2）**：`/ws/simulator` JSR-356 端点 ——
+   `SimulatorPairingService`（6 位配对码 + 一次性 secret + bcrypt + tokenVersion 吊销机制）、
+   `SimulatorTokenService`（短期 JWT，独立密钥）、`SimulatorCommandDispatcher`
+   （4 种命令 scope 校验 + 幂等）、`SpringConfigurator`（端点 Spring 管理）。
+   `WebSocketConfig` 用 `WebServerInitializedEvent` 延迟导出（解决 WsSci 时序问题，兼容 MOCK 测试）。
+4. **ChatSimulatorConnector（R3，DH 侧 WS 客户端）**：每 companion 一设备连接（CONNECT→AUTH→SUBSCRIBE
+   →心跳→命令收发）；`ChatSimulatorClient` 门面（sendMessage/readMessages/updateDeliveryStatus/
+   listConversations 全走 WS 命令，idempotencyKey 幂等）。`MessageCoreService.afterCommit` 推送
+   `chat.message.delivered` WS 事件给在线 simulator —— **数据面彻底经 WS，共享 JPA 依赖断开**。
+
+**Strangler 热路径切换（R4/R6）**：
+5. **V10HotpathGateway 接入 AgentRuntime.process**：三模式（纯 V9 / shadow 影子对比 / enabled 切流）。
+   V10 感知决策编排器（PerceptionDecisionOrchestrator）在 V9 pipeline 之前评估：
+   shadow 模式只记录 V10 vs V9 决策 diff（`ShadowDecisionRecorder`）；enabled 模式下
+   `NOT_PERCEIVED` → 短路不处理、`DELAY` → 短路延迟回复。**防御式设计：任何 V10 异常不阻断 V9 主链路，
+   绝不污染主事务**。配置开关 `app.v10.hotpath.{enabled,shadow}`。
+
+**拟人化表达层（R5，8 引擎全套）**：
+6. **`digitalhuman.expression` 包**（每项独立开关 `app.v10.human-likeness.*`）：
+   - `TypingRhythmEngine`：思考间隔 200-1500ms、中文 25-40 字/分钟、段间隔 ×(1+stress×0.5−intimacy×0.2)
+   - `TypoEngine`：自然错字（拼音近音 的/得/地 + 形近字 已/己 + 20% 漏字），非中文不碰，
+     受 精力↓/压力↑/困倦↑ 加成（各 +0.015）
+   - `HesitationEngine`：低注意/低信心时句尾 `...`/`嗯...`/句首 `那个.../其实...`/弱化词
+   - `EmotionContinuityFilter`：近 5 分钟情绪基调连贯，强度差 >0.4 提示微调（不突变）
+   - `PhysioExpressionFilter`：maxChars = 200×(energy×0.4+(1−sleep)×0.3+(1−illness)×0.3)，
+     周末 ×1.15 松散；疲惫时错字率自动升高
+   - `PersonaVoiceCompiler`+`PersonaVoiceProfile`：口音/口头禅/微习惯/emoji 率/句尾风格 注入 stablePrefix
+   - `PersonaFingerprint`：8 字节 SHA-256 指纹注入 userPrompt 首行（隐式区分，不同 companion 不趋同）
+   - `MemoryDriftPolicy`：亲密度 <0.7 禁主动引用记忆、同一记忆 24h 不重复引用、引用 ≤30 字摘要
+7. **ConversationRuntime 集成**：稳定层追加（生理预算/情绪连贯/人设口音）→ prompt 缓存 hash 参与计算；
+   LLM 输出后处理（错字/犹豫只改最终文本，不进 prompt 避免污染缓存）→ 输出闸门不破。
+   `ConversationRequest` 增加拟人化输入（personaLanguage/emotion/physio/relationship，安全默认值向后兼容）。
+
+**生产修复 + 应用平台（R9）**：
+8. **事务 rollback 毒化修复**：`PendingMessageReevaluationJob.run()` 移除批量 `@Transactional`
+   —— 原先单条 reevaluate 异常被 catch 吞掉但事务已标记 rollback-only，提交时抛
+   `UnexpectedRollbackException`，**一条坏消息会堵塞整批复查**（生产隐患，非测试问题）。
+9. **Application Platform 骨架 + Game POC（V10 §32-§36）**：`dh_application` 表 + `ApplicationRegistry`
+   （种子 hello-world/tictactoe）+ 井字棋 `GameSession`（局面 JSON、胜负/平局判定、GAME_EVENT 事件）+
+   `/api/v10/applications` + `/api/v10/games/tictactoe/*` REST 端点。真人可与 Agent 对弈。
+10. **部署脚本修正**：`scripts/deploy.sh` 适配多模块（jar 路径 platform-core/target，打包+健康检查）。
+
+### 新增数据表
+
+| 表 | 用途 |
+|----|------|
+| `simulator_devices` | Simulator 设备（配对码/secretHash/tokenVersion/状态机 PAIRING→ACTIVE→REVOKED） |
+| `dh_application` | Application Platform 应用注册（code/manifest/权限） |
+| `dh_game_session` | 井字棋对局（roomId/局面 JSON/胜负状态） |
+
+### 重构验收
+
+- `mvn clean test`：**275 测试全绿（0 失败 0 错误）**，含 16 个 Simulator WS 测试
+  （真实 WebSocket 握手 + 4 种命令 + 落库校验）、8 个拟人化引擎单测、4 个井字棋判定测试
+- `scripts/check-v10.sh`：边界守卫（chat 禁引 digitalhuman / DH 禁引 chatplatform / contracts 无环）
+- 全部 9 轮独立提交推送，每轮全量测试绿
+
+---
+
 ## V10 · 三系统边界与因果链落地（2026-08）
 
 > **方案依据**：《Companion Agent V10 Detailed Architecture》—— V10 不是"收到消息就调 LLM 回复"的聊天机器人，
