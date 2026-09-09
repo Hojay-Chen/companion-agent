@@ -26,6 +26,9 @@ public final class CompanionEventType {
     /** 系统事件 */
     public static final String SYSTEM_EVENT = "system_event";
 
+    /** V10 §9.3 游戏事件(井字棋等), 携带 roomId/type/player/position */
+    public static final String GAME_EVENT = "game_event";
+
     private CompanionEventType() {
     }
 }
