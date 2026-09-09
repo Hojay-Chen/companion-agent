@@ -40,6 +40,6 @@ class TicTacToeGameServiceTest {
     void draw_detected() {
         var service = new TicTacToeGameService(null, null);
         String[] b = board("X","O","X", "O","X","X", "O","X","O");
-        assertEquals("", service.checkWinner(b)); // 无三连
+        assertEquals("DRAW", service.checkWinner(b)); // 平局返回 "DRAW"
     }
 }
