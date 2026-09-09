@@ -25,6 +25,12 @@ public class ConversationRequest {
     private final double temperature;
     private final int maxLength;
     private final String correctionHint;
+    // V10 §5 拟人化输入(可选, 带安全默认值; 无则跳过拟人化层)
+    private final String personaLanguage;
+    private final String currentEmotion;
+    private final double currentEmotionIntensity;
+    private final PhysioSnapshot physioState;
+    private final RelationshipSnapshot relationship;
 
     private ConversationRequest(Builder b) {
         this.companionId = b.companionId;
@@ -36,6 +42,11 @@ public class ConversationRequest {
         this.temperature = b.temperature;
         this.maxLength = b.maxLength;
         this.correctionHint = b.correctionHint;
+        this.personaLanguage = b.personaLanguage;
+        this.currentEmotion = b.currentEmotion;
+        this.currentEmotionIntensity = b.currentEmotionIntensity;
+        this.physioState = b.physioState;
+        this.relationship = b.relationship;
     }
 
     public static Builder builder(String companionId, String companionName, String userPrompt) {
@@ -51,6 +62,11 @@ public class ConversationRequest {
         b.temperature = temperature;
         b.maxLength = maxLength;
         b.correctionHint = issueDescription;
+        b.personaLanguage = personaLanguage;
+        b.currentEmotion = currentEmotion;
+        b.currentEmotionIntensity = currentEmotionIntensity;
+        b.physioState = physioState;
+        b.relationship = relationship;
         return b.build();
     }
 
@@ -65,6 +81,11 @@ public class ConversationRequest {
     public double temperature() { return temperature; }
     public int maxLength() { return maxLength; }
     public String correctionHint() { return correctionHint; }
+    public String getPersonaLanguage() { return personaLanguage; }
+    public String getCurrentEmotion() { return currentEmotion != null ? currentEmotion : "calm"; }
+    public double getCurrentEmotionIntensity() { return currentEmotionIntensity; }
+    public PhysioSnapshot getPhysioState() { return physioState; }
+    public RelationshipSnapshot getRelationship() { return relationship; }
 
     public static class Builder {
         private final String companionId;
@@ -76,6 +97,11 @@ public class ConversationRequest {
         private double temperature = 0.9;
         private int maxLength = 200;
         private String correctionHint;
+        private String personaLanguage = "zh";
+        private String currentEmotion;
+        private double currentEmotionIntensity = 0.5;
+        private PhysioSnapshot physioState;
+        private RelationshipSnapshot relationship;
 
         public Builder(String companionId, String companionName, String userPrompt) {
             this.companionId = companionId;
@@ -89,9 +115,21 @@ public class ConversationRequest {
         public Builder temperature(double t) { temperature = t; return this; }
         public Builder maxLength(int len) { maxLength = len; return this; }
         public Builder correctionHint(String hint) { correctionHint = hint; return this; }
+        public Builder personaLanguage(String lang) { personaLanguage = lang; return this; }
+        public Builder currentEmotion(String e) { currentEmotion = e; return this; }
+        public Builder currentEmotionIntensity(double i) { currentEmotionIntensity = i; return this; }
+        public Builder physio(PhysioSnapshot p) { physioState = p; return this; }
+        public Builder relationship(RelationshipSnapshot r) { relationship = r; return this; }
 
         public ConversationRequest build() {
             return new ConversationRequest(this);
         }
     }
+
+    /** 生理快照(V10 §5.6) */
+    public record PhysioSnapshot(double energy, double stress, double sleepPressure,
+                                 double illness, double moodShift) {}
+
+    /** 关系快照(V10 §5.4) */
+    public record RelationshipSnapshot(double intimacy, double familiarity) {}
 }
