@@ -47,14 +47,20 @@ public class V10HotpathGateway {
 
     /**
      * 在 V9 pipeline 之前评估 V10 决策, 记录 shadow log。
-     * @return V10 决策结果(供 shortCircuitDecision 使用)
+     * 防御式: shadow 评估绝不抛异常(任何异常吞掉, 不污染主事务)。
+     * @return V10 决策结果(null 表示评估失败, 调用方应忽略 Shadow)
      */
     public PerceptionDecisionOrchestrator.PerceptionDecisionOutcome shadowEvaluate(
             ExternalEvent event, String userId, String companionId,
             double importance, LocalDateTime now) {
-        var outcome = orchestrator.evaluate(event, userId, companionId, importance, now);
-        shadowRecorder.record(event, companionId, outcome, null);
-        return outcome;
+        try {
+            var outcome = orchestrator.evaluate(event, userId, companionId, importance, now);
+            shadowRecorder.record(event, companionId, outcome, null);
+            return outcome;
+        } catch (Exception e) {
+            log.warn("[V10Hotpath] shadow 评估失败(忽略): companion={}, error={}", companionId, e.getMessage());
+            return null;
+        }
     }
 
     /**

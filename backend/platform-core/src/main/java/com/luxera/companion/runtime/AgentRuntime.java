@@ -308,6 +308,35 @@ public class AgentRuntime {
             String decisionText = String.join("。", contents);
             Message last = userMessages.get(userMessages.size() - 1);
 
+            // ── V10 §4-§6 Strangler hotpath 门控(防御式: 任何异常不阻断 V9 主链路) ──
+            if (v10Hotpath != null && (v10Hotpath.isShadow() || v10Hotpath.isEnabled())) {
+                try {
+                    var event = ExternalEvent.withDeterministicId(companionId,
+                            ExternalEventType.CHAT_MESSAGE_DELIVERED,
+                            companionId + "-" + conversationId + "-" + last.getId() + "-process",
+                            Map.of("userId", userId, "companionId", companionId,
+                                    "conversationId", conversationId,
+                                    "messageIds", userMessages.stream().map(Message::getId).toList()));
+                    var outcome = v10Hotpath.shadowEvaluate(event, userId, companionId, 0.5, now);
+                    if (v10Hotpath.isEnabled() && outcome != null) {
+                        var sc = v10Hotpath.shortCircuitDecision(outcome);
+                        if (sc == com.luxera.companion.digitalhuman.hotpath.V10HotpathGateway.ShortCircuitDecision.SKIP_PROCESS) {
+                            // V10 感知未到(NOT_PERCEIVED) → 短路, 不进入 V9 pipeline
+                            log.info("[AgentRuntime] {} V10 hotpath: NOT_PERCEIVED 短路, 不处理(companion={})",
+                                    companionId, companionId);
+                            return;
+                        }
+                        if (sc == com.luxera.companion.digitalhuman.hotpath.V10HotpathGateway.ShortCircuitDecision.DEFER_AND_TRY_LATER) {
+                            // V10 决策 DELAY → 短路, 保留在 pending 复查队列(不立即回复)
+                            log.info("[AgentRuntime] {} V10 hotpath: DELAY 短路, 延迟回复", companionId);
+                            return;
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("[AgentRuntime] V10 hotpath 门控异常(忽略, 继续 V9): {}", e.getMessage());
+                }
+            }
+
             // 1. 消息已在请求线程落库(MessageCoreService)。这里只做感知后处理:
             //    会话归属 + 工作记忆 + 聊天风格 + 行为学习(不入库消息本身)
             for (Message m : userMessages) {
