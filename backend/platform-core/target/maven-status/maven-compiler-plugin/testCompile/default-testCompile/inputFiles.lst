@@ -2,11 +2,13 @@
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/runtime/skill/SkillRegistryTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/agent/NightWorkerScheduleTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/digitalhuman/actor/PersonActorTest.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/digitalhuman/expression/HumanLikenessEnginesTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/digitalhuman/life/PlanReminderDispatchTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/digitalhuman/event/EventProcessingChainTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/phone/PhoneNotificationTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/runtime/skill/SkillSelectorTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/runtime/pipeline/CommunicationFrictionTest.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/digitalhuman/application/builtin/tictactoe/TicTacToeGameServiceTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/conversation/ConversationThreadTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/simulator/SimulatorClientTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/intention/IntentionServiceTest.java
@@ -48,9 +50,12 @@
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/runtime/MessageControllerTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/life/LifeInterruptTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/thought/UnfinishedThoughtTest.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/simulator/server/SimulatorPairingServiceTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/runtime/ScheduledActionServiceTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/runtime/agent/brain/BrainWokenUpTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/conversation/MessageCoreServiceTest.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/simulator/server/SimulatorWebSocketE2eTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/digitalhuman/actor/PersonActorIdleRecycleTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/runtime/agent/brain/DecisionValidatorTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/runtime/agent/event/EventChainTest.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/digitalhuman/persona/PersonaFingerprintTest.java

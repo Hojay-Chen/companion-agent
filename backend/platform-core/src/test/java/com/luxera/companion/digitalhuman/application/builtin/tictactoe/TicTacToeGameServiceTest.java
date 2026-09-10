@@ -17,29 +17,25 @@ class TicTacToeGameServiceTest {
 
     @Test
     void winDetection_threeInARow() {
-        var service = new TicTacToeGameService(null, null);
         String[] b = board("X","X","X", "", "O","", "", "", "O");
-        assertEquals("X", service.checkWinner(b));
+        assertEquals("X", TicTacToeGameService.checkWinner(b));
     }
 
     @Test
     void winDetection_diagonal() {
-        var service = new TicTacToeGameService(null, null);
         String[] b = board("O","","", "", "O","", "", "", "O");
-        assertEquals("O", service.checkWinner(b));
+        assertEquals("O", TicTacToeGameService.checkWinner(b));
     }
 
     @Test
     void noWinYet_returnsEmpty() {
-        var service = new TicTacToeGameService(null, null);
         String[] b = board("X","O","X", "O","X","O", "O","X","");
-        assertEquals("", service.checkWinner(b));
+        assertEquals("", TicTacToeGameService.checkWinner(b));
     }
 
     @Test
     void draw_detected() {
-        var service = new TicTacToeGameService(null, null);
         String[] b = board("X","O","X", "O","X","X", "O","X","O");
-        assertEquals("DRAW", service.checkWinner(b)); // 平局返回 "DRAW"
+        assertEquals("DRAW", TicTacToeGameService.checkWinner(b)); // 平局返回 "DRAW"
     }
 }

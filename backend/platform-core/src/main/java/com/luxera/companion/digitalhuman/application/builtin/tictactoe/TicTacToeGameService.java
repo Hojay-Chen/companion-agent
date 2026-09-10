@@ -2,6 +2,9 @@ package com.luxera.companion.digitalhuman.application.builtin.tictactoe;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.luxera.companion.digitalhuman.event.EventProcessingChain;
+import com.luxera.companion.digitalhuman.event.ExternalEvent;
+import com.luxera.companion.digitalhuman.event.ExternalEventType;
 import com.luxera.companion.event.CompanionEventBus;
 import com.luxera.companion.event.CompanionEventType;
 import lombok.extern.slf4j.Slf4j;
@@ -9,14 +12,18 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
  * V10 §9.3 TicTacToe Game Service: Real User vs Agent 井字棋。
  *
- * 命令: start / move / finish。move 产生 GAME 事件(经事件总线 → Agent 可感知),
- * Agent 的落子由 Expression/Conversation 链路产出(真实互博)。
- * 本轮落子逻辑为规则兜底(Agent 占 O, 简单策略), 保证闭环可玩。
+ * 命令: start / move / finish。每次落子产生两路事件:
+ * 1. {@link CompanionEventBus} GAME_EVENT —— 前端 SSE 实时刷新局面;
+ * 2. {@link EventProcessingChain} APPLICATation_EVENT —— Agent 认知链,
+ *    数字人据此"看到"对手落子并决策自己的下一步(经 AgentRuntime.onApplicationEvent)。
+ *
+ * 落子由 Agent 的认知链路产出(LLM 基于局面评估), 无启发式兜底 —— 用户要求直接用 agent。
  */
 @Slf4j
 @Service
@@ -26,11 +33,14 @@ public class TicTacToeGameService {
 
     private final GameSessionRepository repository;
     private final CompanionEventBus eventBus;
+    private final EventProcessingChain eventProcessingChain;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public TicTacToeGameService(GameSessionRepository repository, CompanionEventBus eventBus) {
+    public TicTacToeGameService(GameSessionRepository repository, CompanionEventBus eventBus,
+                                EventProcessingChain eventProcessingChain) {
         this.repository = repository;
         this.eventBus = eventBus;
+        this.eventProcessingChain = eventProcessingChain;
     }
 
     /** 开局: user 先手 X, companion 后手 O */
@@ -70,7 +80,9 @@ public class TicTacToeGameService {
         }
         s.setStateJson(writeBoard(board, turn, winner == null ? "" : winner));
         repository.save(s);
-        publishGameEvent(s, "MOVE", Map.of("player", player, "position", position, "mark", mark));
+        publishGameEvent(s, "MOVE", Map.of(
+                "player", player, "position", position, "mark", mark,
+                "turn", turn, "winner", winner == null ? "" : winner));
         return s;
     }
 
@@ -82,7 +94,7 @@ public class TicTacToeGameService {
         s.setStatus(GameSession.STATUS_FINISHED);
         s.setFinishedAt(LocalDateTime.now());
         repository.save(s);
-        publishGameEvent(s, "FINISH", Map.of("result", result));
+        publishGameEvent(s, "FINISH", Map.of("result", result, "turn", "", "winner", result));
         return s;
     }
 
@@ -92,8 +104,31 @@ public class TicTacToeGameService {
         return repository.findByRoomId(roomId).orElse(null);
     }
 
+    /** 当前轮到谁(X=user, O=companion, 空=已结束) */
+    @Transactional(readOnly = true)
+    public String currentTurn(String roomId) {
+        GameSession s = get(roomId);
+        if (s == null || !GameSession.STATUS_ACTIVE.equals(s.getStatus())) return "";
+        return turnOf(s.getStateJson());
+    }
+
+    /** 读取 board(供 Agent 局面评估) */
+    public String[] boardOf(GameSession s) {
+        return parseBoard(s == null ? null : s.getStateJson());
+    }
+
+    private String turnOf(String stateJson) {
+        try {
+            JsonNode root = mapper.readTree(stateJson);
+            return root.path("turn").asText("");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     private String[] parseBoard(String stateJson) {
         try {
+            if (stateJson == null) return new String[9];
             JsonNode root = mapper.readTree(stateJson);
             JsonNode board = root.path("board");
             String[] b = new String[9];
@@ -118,7 +153,7 @@ public class TicTacToeGameService {
     }
 
     /** 胜负判定(包内可见, 纯函数可单测): X/O/DRAW/空串 */
-    String checkWinner(String[] b) {
+    static String checkWinner(String[] b) {
         int[][] lines = {
                 {0,1,2},{3,4,5},{6,7,8},{0,3,6},{1,4,7},{2,5,8},{0,4,8},{2,4,6}
         };
@@ -126,18 +161,47 @@ public class TicTacToeGameService {
             String a = b[line[0]], c = b[line[1]], d = b[line[2]];
             if (!a.isEmpty() && a.equals(c) && c.equals(d)) return a;
         }
-        // 平局
         for (String v : b) if (v == null || v.isEmpty()) return "";
         return "DRAW";
     }
 
+    /** 两路事件: 前端 SSE + Agent 认知链 */
     private void publishGameEvent(GameSession s, String type, Map<String, Object> extra) {
+        // 1. 前端 SSE(GAME_EVENT)
+        String[] board = parseBoard(s.getStateJson());
         try {
-            eventBus.publish(s.getCompanionId(), CompanionEventType.GAME_EVENT,
-                    Map.of("roomId", s.getRoomId(), "type", type,
-                            "userId", s.getUserId(), "companionId", s.getCompanionId()));
+            Map<String, Object> evt = new LinkedHashMap<>();
+            evt.put("roomId", s.getRoomId());
+            evt.put("type", type);
+            evt.put("userId", s.getUserId());
+            evt.put("companionId", s.getCompanionId());
+            evt.put("status", s.getStatus());
+            evt.put("board", board);
+            if (extra != null) evt.putAll(extra);
+            eventBus.publish(s.getCompanionId(), CompanionEventType.GAME_EVENT, evt);
         } catch (Exception e) {
-            log.warn("[TicTacToe] 发布游戏事件失败: {}", e.getMessage());
+            log.warn("[TicTacToe] 发布前端事件失败: {}", e.getMessage());
+        }
+
+        // 2. Agent 认知链(APPLICATION_EVENT)—— 数字人"看到"游戏里的变化
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("appCode", "tictactoe");
+            payload.put("roomId", s.getRoomId());
+            payload.put("type", type);
+            payload.put("userId", s.getUserId());
+            payload.put("companionId", s.getCompanionId());
+            payload.put("status", s.getStatus());
+            payload.put("board", board);
+            if (extra != null) payload.putAll(extra);
+            // 确定性 eventId: 同 room 同 type 同 position(若有)幂等去重
+            String dedupKey = s.getRoomId() + "-" + type
+                    + (extra != null && extra.containsKey("position") ? "-" + extra.get("position") : "");
+            ExternalEvent event = ExternalEvent.withDeterministicId(
+                    s.getCompanionId(), ExternalEventType.APPLICATION_EVENT, dedupKey, payload);
+            eventProcessingChain.process(event);
+        } catch (Exception e) {
+            log.warn("[TicTacToe] 投递 Agent 认知事件失败: {}", e.getMessage());
         }
     }
 }

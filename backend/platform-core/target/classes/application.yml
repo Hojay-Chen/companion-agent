@@ -123,3 +123,14 @@ app:
     dnd-end-hour: 8                    # 结束(08:00)
     min-interval-hours: 1              # 两次主动消息最小间隔(小时)
     max-notifications-per-day: 5
+
+  # V10 §63 Simulator(DHCP) 配置
+  simulator:
+    # 设备令牌签名密钥(与平台用户 JWT 分离; 生产必须改)
+    token-secret: ${SIMULATOR_TOKEN_SECRET:luxera-simulator-dhcp-v1-dev-secret-change-me}
+    # 短期访问令牌 TTL(秒); 到期前 DH 侧用 secret 刷新
+    token-ttl-seconds: 300
+    # 配对码有效期(分钟)
+    pairing-code-ttl-minutes: 10
+    # DH 侧连接的 chat 平台 WS 地址(单进程默认本机)
+    chat-ws-url: ${CHAT_WS_URL:ws://127.0.0.1:8081/ws/simulator}

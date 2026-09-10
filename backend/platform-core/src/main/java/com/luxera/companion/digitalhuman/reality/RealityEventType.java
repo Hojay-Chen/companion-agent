@@ -35,6 +35,9 @@ public enum RealityEventType {
     /** 关系变化 */
     RELATIONSHIP_CHANGED,
 
+    /** 应用内行动(如游戏落子) —— V10 §9.3 */
+    APPLICATION_ACTION_EXECUTED,
+
     /** 通用生活事件 */
     LIFE_EVENT
 }

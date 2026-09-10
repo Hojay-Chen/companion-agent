@@ -35,6 +35,8 @@ import com.luxera.companion.runtime.agent.expression.ExpressionResult;
 import com.luxera.companion.relationship.Relationship;
 import com.luxera.companion.relationship.RelationshipService;
 import com.luxera.companion.runtime.pipeline.MessagePipeline;
+import com.luxera.companion.digitalhuman.application.builtin.tictactoe.GameSession;
+import com.luxera.companion.digitalhuman.application.builtin.tictactoe.TicTacToeGameService;
 import com.luxera.companion.simulator.CapabilityResult;
 import com.luxera.companion.simulator.SimulatorClient;
 import com.luxera.companion.state.AgentStateService;
@@ -42,6 +44,12 @@ import com.luxera.companion.state.AvailabilityService;
 import com.luxera.companion.usermodel.UserChatStyleService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+
+import com.luxera.companion.llm.LlmRouter;
+import com.luxera.companion.llm.StructuredRequest;
+import com.luxera.companion.llm.StructuredResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import javax.annotation.PostConstruct;
 import java.time.LocalDateTime;
@@ -105,6 +113,11 @@ public class AgentRuntime {
     /** V10 §4: Strangler 入口 — V10 感知决策影子对比 + 短路 */
     private final com.luxera.companion.digitalhuman.hotpath.V10HotpathGateway v10Hotpath;
 
+    private final LlmRouter llmRouter;
+    private final ObjectMapper objectMapper;
+    /** V10 §9.3: 游戏服务(落子回调) */
+    private final TicTacToeGameService ticTacToeGameService;
+
     public AgentRuntime(ConversationService conversationService, PerceptionEngine perceptionEngine,
                           WorkingMemory workingMemory, SessionManager sessionManager,
                           UserChatStyleService userChatStyleService, BehaviorLearningService behaviorLearningService,
@@ -122,7 +135,9 @@ public class AgentRuntime {
                           SimulatorClient simulatorClient, RealityLedger realityLedger,
                           EventProcessingChain eventProcessingChain, EventRouter eventRouter,
                           ConversationOutputValidator outputValidator,
-                          com.luxera.companion.digitalhuman.hotpath.V10HotpathGateway v10Hotpath) {
+                          com.luxera.companion.digitalhuman.hotpath.V10HotpathGateway v10Hotpath,
+                          LlmRouter llmRouter, ObjectMapper objectMapper,
+                          TicTacToeGameService ticTacToeGameService) {
         this.conversationService = conversationService;
         this.perceptionEngine = perceptionEngine;
         this.workingMemory = workingMemory;
@@ -153,6 +168,9 @@ public class AgentRuntime {
         this.eventRouter = eventRouter;
         this.outputValidator = outputValidator;
         this.v10Hotpath = v10Hotpath;
+        this.llmRouter = llmRouter;
+        this.objectMapper = objectMapper;
+        this.ticTacToeGameService = ticTacToeGameService;
     }
 
     /**
@@ -162,6 +180,7 @@ public class AgentRuntime {
     @PostConstruct
     public void registerEventRoutes() {
         eventRouter.register(ExternalEventType.CHAT_MESSAGE_DELIVERED, this::onChatMessageDelivered);
+        eventRouter.register(ExternalEventType.APPLICATION_EVENT, this::onApplicationEvent);
     }
 
     /**
@@ -252,6 +271,81 @@ public class AgentRuntime {
         List<Message> messages = rebuildMessages(conversationId, messageIds, read);
         if (messages.isEmpty()) return;
         process(userId, companionId, conversationId, messages);
+    }
+
+    /**
+     * V10 §9.3 应用/游戏事件入口(APPLICATION_EVENT): 数字人"看到"应用/游戏里的变化 → 决策/行动。
+     * 当前聚焦 tic-tac-toe: 用户落子(MOVE)且轮到 Agent(O)时, 读局面 → LLM 评估 → 落子。
+     */
+    void onApplicationEvent(ExternalEvent event) {
+        if (event == null || !ExternalEventType.APPLICATION_EVENT.equals(event.type())) return;
+        String companionId = event.personId();
+        String roomId = event.str("roomId");
+        String type = event.str("type");
+        String turn = event.str("turn");
+        // 仅在"用户落子"且"轮到 Agent(O)"时触发
+        if (roomId == null || !"MOVE".equalsIgnoreCase(type)) return;
+        if (!"O".equalsIgnoreCase(turn)) return;
+
+        try {
+            GameSession session = ticTacToeGameService.get(roomId);
+            if (session == null || !GameSession.STATUS_ACTIVE.equals(session.getStatus())) return;
+            String[] board = ticTacToeGameService.boardOf(session);
+
+            int position = evaluateAndDecideMove(board, roomId, companionId);
+            if (position < 0 || position > 8) return;
+
+            GameSession moved = ticTacToeGameService.move(roomId, "companion", position);
+            log.info("[AgentRuntime] 数字人落子: room={}, pos={}, status={}",
+                    roomId, position, moved.getStatus());
+            appendReality(companionId, RealityEventType.APPLICATION_ACTION_EXECUTED,
+                    Map.of("appCode", "tictactoe", "roomId", roomId,
+                            "action", "game.move", "position", position), null, null);
+        } catch (Exception e) {
+            log.warn("[AgentRuntime] 处理游戏事件失败 room={}: {}", roomId, e.getMessage());
+        }
+    }
+
+    /** LLM 基于局面评估决定落子位置(-1 表示放弃或失败, 无启发式兜底) */
+    private int evaluateAndDecideMove(String[] board, String roomId, String companionId) {
+        if (!llmRouter.available() || llmRouter.isMockActive()) {
+            log.warn("[AgentRuntime] LLM 不可用, 数字人不落子: room={}", roomId);
+            return -1;
+        }
+        try {
+            StructuredResult result = llmRouter.structured(StructuredRequest.builder()
+                    .system("你是一个正在玩井字棋的数字人(执 O)。现在轮到你落子。\n"
+                            + "请基于当前棋盘局面评估并选择最佳落子位置。\n"
+                            + "棋盘编号: 0 1 2 / 3 4 5 / 6 7 8(三行三列)。\n"
+                            + "X=对手(先手), O=你。只允许落在空位。\n"
+                            + "优先级: 若能立刻三连则必胜位 > 阻断对手三连 > 占中心 > 占角 > 占边。\n"
+                            + "严格输出 JSON: {\"position\": <0-8 的整数>, \"reason\": \"<一句话理由>\"}")
+                    .user("当前棋盘(空位用 . 表示):\n" + boardToString(board))
+                    .task("tictactoe-move")
+                    .schemaHint("{\"position\":0,\"reason\":\"占据中心\"}")
+                    .temperature(0.3)
+                    .metadata(Map.of("companionId", companionId, "purpose", "game"))
+                    .build());
+            JsonNode json = result.getJson();
+            int pos = json == null ? -1 : json.path("position").asInt(-1);
+            if (pos < 0 || pos > 8) {
+                log.warn("[AgentRuntime] LLM 落子位置非法: {}, room={}", pos, roomId);
+                return -1;
+            }
+            return pos;
+        } catch (Exception e) {
+            log.warn("[AgentRuntime] 局面评估失败 room={}: {}", roomId, e.getMessage());
+            return -1;
+        }
+    }
+
+    private static String boardToString(String[] board) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 9; i++) {
+            sb.append(board[i] == null || board[i].isEmpty() ? "." : board[i]);
+            sb.append(i % 3 == 2 ? "\n" : " ");
+        }
+        return sb.toString().trim();
     }
 
     /** 从 Simulator 读取的消息视图重建轻量 Message(纯内存, 不落库) */
