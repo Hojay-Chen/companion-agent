@@ -13,7 +13,7 @@
 > 核心原则：Application ≠ Digital Human —— Agent 认知链不直接依赖任何具体应用类，
 > 而是通过 `ActionRuntime` 表达意图，由权限引擎决定能否执行，审计日志全程可追溯。
 
-### 核心成果（全量 288 测试全绿）
+### 核心成果（全量 294 测试全绿）
 
 1. **ActionRuntime 统一动作执行入口**（`application/runtime`）：
    `ActionRuntime`（接口）+ `DefaultActionsRuntime`（实现 + actionId→Handler 注册表）。
@@ -76,12 +76,43 @@
 > 现状升级为真正的三系统解耦：Chat Platform ↔ Simulator（DHCP v1 WebSocket 协议）↔ Digital Human，
 > 并落地完整拟人化表达层，让用户聊天时无法分辨对方是真人还是数字人。
 
-### 重构成果（9 轮，全量 275 测试全绿）
+### 物理结构 —— 五个 Maven 模块，边界由 classpath 强制
+
+```
+backend/
+├── pom.xml                   父 POM（packaging=pom，spring-boot-starter-parent 2.7.18）
+├── contracts/                纯协议模块：DTO / enum / SPI 端口，无 Spring、无 JPA
+├── platform-kernel/          共享内核：auth(JwtUtil) / config / common(转换器) / outbox 实体
+├── chat-platform/            聊天平台：conversation / event / simulator(WS 服务端)
+├── digital-human-platform/   数字人平台：32 个包（agent/life/memory/emotion/... ）+ WS 客户端
+└── bootstrap-app/            瘦启动器：唯一同时依赖两个平台的模块，repackage 出可执行 jar
+```
+
+> **仍然是同一仓库**（单仓多模块），但**已经是各自独立的工程**：任何人删掉 `chat-platform/` 目录，
+> `digital-human-platform/` 依然能 `mvn test` 独立跑（测试期用 `DigitalHumanTestApplication` +
+> `InMemoryChatWorld` 顶替聊天平台）。反过来也成立。这不再是"一个模块里两个包"式的假解耦。
+
+### 解耦到底解在哪：三个 SPI 端口（Ports & Adapters）
+
+跨平台调用**不再有任何 Java 直接依赖**，只剩 `contracts.spi` 里三个接口；两侧各写各的适配器：
+
+| 端口（`contracts.spi`） | 方向 | 谁实现 | 用途 |
+|---|---|---|---|
+| `ChatWorldPort` | DH → Chat | chat 的 `ChatWorldAdapter` | 数字人读会话/写消息（她的"外部世界"） |
+| `CompanionDirectoryPort` | Chat → DH | DH 的 `CompanionDirectoryAdapter` | 聊天平台查"这个 companion 是谁" |
+| `SimulatorAccessPort` | DH → Chat | chat 的 `SimulatorAccessAdapter` | 数字人换设备 token |
+
+数据面则经 **DHCP v1 WebSocket 协议**（`contracts.dhcp`）流动，聊天平台只看见一台"机器用户设备"，
+完全不知道 Companion 的存在。
+
+### 重构成果（9 轮，全量 294 测试全绿）
 
 **架构解耦（R1-R4）**：
-1. **Maven 多模块拆分**：`backend/` 拆为 `contracts`（纯 DTO 协议模块，无 Spring/JPA）+ `platform-core`
-   （过渡单体，后续轮次再拆 chat-platform / digital-human-platform 两进程）。
-   边界守卫 `scripts/check-v10.sh`（grep）+ `contracts` ArchUnit 测试双重校验依赖方向。
+1. **Maven 五模块拆分**：见上。`platform-core` 过渡单体已彻底删除（679 个文件），
+   `chat-platform` 与 `digital-human-platform` 之间**唯一的编译期联系是 `contracts`**。
+   边界守卫三重：`scripts/check-v10.sh`（包归属互斥 + 源码引用 + pom 依赖图）、
+   `contracts` 的 `ArchitectureTest`（自足性白名单）、`bootstrap-app` 的
+   `ModuleBoundaryArchitectureTest`（ArchUnit 对字节码断言两个平台互不依赖）。
 2. **DHCP v1 协议（contracts.dhcp）**：`DhcpFrame` + 11 种帧类型（CONNECT/AUTH/SUBSCRIBE/EVENT/
    EVENT_ACK/COMMAND/COMMAND_RESULT/PING/PONG/ERROR/DISCONNECT）+ 配对/令牌/命令 DTO。
 3. **Simulator WebSocket 服务端（R2）**：`/ws/simulator` JSR-356 端点 ——
@@ -124,7 +155,9 @@
 9. **Application Platform 骨架 + Game POC（V10 §32-§36）**：`dh_application` 表 + `ApplicationRegistry`
    （种子 hello-world/tictactoe）+ 井字棋 `GameSession`（局面 JSON、胜负/平局判定、GAME_EVENT 事件）+
    `/api/v10/applications` + `/api/v10/games/tictactoe/*` REST 端点。真人可与 Agent 对弈。
-10. **部署脚本修正**：`scripts/deploy.sh` 适配多模块（jar 路径 platform-core/target，打包+健康检查）。
+10. **部署脚本修正**：`scripts/deploy.sh` / `backend/run.sh` 适配多模块
+    （可执行 jar 由 `bootstrap-app` 组装：`bootstrap-app/target/companion-platform-bootstrap-1.0.0.jar`，
+    单进程部署；两平台分进程拓扑见 `docs/ARCHITECTURE.md`）。
 
 ### 新增数据表
 
@@ -137,11 +170,26 @@
 
 ### 重构验收
 
-- `mvn clean test`：**288 测试全绿（0 失败 0 错误）**，含 16 个 Simulator WS 测试
-  （真实 WebSocket 握手 + 4 种命令 + 落库校验）、8 个拟人化引擎单测、4 个井字棋判定测试、
-  5 个权限引擎单测、4 个动作描述符单测、4 个 ActionRuntime 集成测试
-- `scripts/check-v10.sh`：边界守卫（chat 禁引 digitalhuman / DH 禁引 chatplatform / contracts 无环）
+- `mvn clean test`：**294 测试全绿（0 失败 0 错误）** —— contracts 10 / platform-kernel 0 /
+  chat-platform 24 / digital-human-platform 228 / bootstrap-app 32。
+  含 16 个 Simulator WS 测试（真实 WebSocket 握手 + 4 种命令 + 落库校验）、8 个拟人化引擎单测、
+  4 个井字棋判定测试、5 个权限引擎单测、4 个动作描述符单测、4 个 ActionRuntime 集成测试
+- **打包产物冒烟**：`java -jar bootstrap-app/target/companion-platform-bootstrap-1.0.0.jar` 起服后
+  `BASE=http://127.0.0.1:8081 bash scripts/check.sh` → **✅ 全量验收全部通过**（11 组：
+  schema / 创建伴侣 E2E / persons 关系 / 消息同步落库 / clientMessageId 幂等 /
+  event_log + SSE Last-Event-ID 回放 / BehaviorEngine / 会话线程 / Anti-AI 真人感 100% /
+  认知会话与计划与 LLM 可观测 / prefix cache）
+- `scripts/check-v10.sh`：边界守卫（包归属互斥 / chat 禁引 digitalhuman / DH 禁引 chatplatform /
+  contracts 谁都不引 / pom 依赖图）—— 已注入违规探针验证其**非空转**（探针触发时 EXIT=1）
 - 全部轮次独立提交推送，每轮全量测试绿
+
+### 已知的历史遗留（诚实说明）
+
+- `chore: .gitignore` 只盖住了单体时代的 `backend/target/`，多模块后各子模块 `target/` 曾被误提交
+  151 个文件，已 `git rm --cached` 并补 `backend/**/target/` 规则。
+- 顶层包之间存在少量既成循环依赖（拆分前就有，与本次拆分无关），因此
+  `ModuleBoundaryArchitectureTest` **不做**顶层包循环断言 —— 与其写一条注定被放宽的规则，不如不写。
+  模块层面的依赖方向由 classpath + pom 检查 + 三条 ArchUnit 规则保证。
 
 ---
 

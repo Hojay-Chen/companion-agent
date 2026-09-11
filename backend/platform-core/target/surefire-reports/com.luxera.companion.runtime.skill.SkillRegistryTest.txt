@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.luxera.companion.runtime.skill.SkillRegistryTest
--------------------------------------------------------------------------------
-Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 5.596 s - in com.luxera.companion.runtime.skill.SkillRegistryTest

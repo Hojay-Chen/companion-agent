@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 部署 companion.luxera.top (需 root)
-# V10 多模块: 可执行 jar 在 platform-core/target(单进程过渡部署)
+# V10 多模块: 可执行 jar 由 bootstrap-app 组装(单进程部署; 两平台分进程见 docs/ARCHITECTURE.md)
 set -euo pipefail
 
-BACKEND_JAR=/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/target/companion-platform-core-1.0.0.jar
+BACKEND_JAR=/home/ubuntu/claude-workspace/companion-agent/backend/bootstrap-app/target/companion-platform-bootstrap-1.0.0.jar
 FRONTEND_DIST=/home/ubuntu/claude-workspace/companion-agent/frontend/dist
 NGINX_SRC=/home/ubuntu/claude-workspace/infrastructure/nginx/sites/companion.conf
 

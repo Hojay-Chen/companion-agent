@@ -26,12 +26,10 @@
 
     <modules>
         <module>contracts</module>
-        <module>platform-core</module>
-        <!-- V10 R1 后续轮次逐步启用:
+        <module>platform-kernel</module>
         <module>chat-platform</module>
         <module>digital-human-platform</module>
         <module>bootstrap-app</module>
-        -->
     </modules>
 
     <dependencyManagement>
@@ -43,7 +41,17 @@
             </dependency>
             <dependency>
                 <groupId>com.luxera</groupId>
-                <artifactId>companion-platform-core</artifactId>
+                <artifactId>companion-platform-kernel</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.luxera</groupId>
+                <artifactId>companion-platform-chat</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.luxera</groupId>
+                <artifactId>companion-platform-digital-human</artifactId>
                 <version>${project.version}</version>
             </dependency>
         </dependencies>

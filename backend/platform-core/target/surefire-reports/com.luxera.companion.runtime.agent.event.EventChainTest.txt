@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.luxera.companion.runtime.agent.event.EventChainTest
--------------------------------------------------------------------------------
-Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.392 s - in com.luxera.companion.runtime.agent.event.EventChainTest

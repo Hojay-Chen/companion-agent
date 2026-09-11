@@ -7,20 +7,20 @@ import com.tngtech.archunit.lang.ArchRule;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.library.GeneralCodingRules.NO_CLASSES_SHOULD_THROW_GENERIC_EXCEPTIONS;
-import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
 /**
- * V10 §59 / R1 ArchUnit cross-module boundary guard.
+ * contracts 模块自身的架构约束: 它是三个平台共用的"语言", 必须保持自足。
  *
- * <p>Today the codebase is one {@code platform-core} module; this test only enforces the
- * contracts module is self-contained and free of cycles. R1.5 / R1.6 will activate the
- * chat-platform ↔ digital-human-platform rules when those modules are split out.
+ * <p>这个模块是唯一没有平台代码在 classpath 上的模块 —— 所以这里能检查的"没有跨模块依赖"
+ * 是结构性的: 一旦有人往 contracts 的 pom 里加了 chat/DH/kernel 的依赖, 这些类就会出现在
+ * classpath 上, 下面的规则立刻失败。
  *
- * <p>The companion bash script {@code scripts/check-v10.sh} is the primary line of defense
- * (it greps for cross-module imports directly, which catches the same violations earlier
- * in the build, before tests even run). ArchUnit here provides a deeper structural check.
+ * <p>真正的跨模块方向约束(chat 不得引用 DH 的包, 反之亦然)需要同时看得见所有模块,
+ * 所以放在 bootstrap-app 的 {@code ModuleBoundaryArchitectureTest}。
+ * grep 版快速守卫在同级 {@code scripts/check-v10.sh}。
  */
 class ArchitectureTest {
 
@@ -34,23 +34,24 @@ class ArchitectureTest {
     }
 
     @Test
-    void contracts_have_no_module_dependencies_on_platform() {
-        // contracts is a pure DTO module — must not import any platform code.
-        ArchRule contracts = noClasses()
-                .that().resideInAPackage("..contracts..")
-                .should().dependOnClassesThat()
-                .resideInAnyPackage(
-                        "..chatplatform..",
-                        "..digitalhuman..",
-                        "..platform..",
-                        "..persistence.."
+    void contracts_only_depend_on_themselves_and_libraries() {
+        // "只能依赖自己 + 第三方库": 比"不得依赖某几个包"更强 —— 后者总会漏掉某个包,
+        // 而白名单一旦有人往 contracts 里塞平台代码(比如让 MessageView 认识 JPA Entity)就会失败。
+        ArchRule selfContained = classes()
+                .that().resideInAPackage("com.luxera.companion.contracts..")
+                .should().onlyDependOnClassesThat().resideInAnyPackage(
+                        "com.luxera.companion.contracts..",
+                        "java..",
+                        "javax..",
+                        "org.springframework..",
+                        "com.fasterxml.jackson..",
+                        "lombok.."
                 );
-        contracts.check(importedClasses);
+        selfContained.check(importedClasses);
     }
 
     @Test
     void contracts_have_no_cycles() {
-        // Slice-level cycle detection scoped to the contracts module itself.
         ArchRule noCycles = slices()
                 .matching("com.luxera.companion.contracts.(*)..")
                 .should().beFreeOfCycles();

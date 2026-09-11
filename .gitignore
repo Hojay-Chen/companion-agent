@@ -1,5 +1,7 @@
 # ── Java / Maven ──────────────────────
 backend/target/
+# 多模块后每个子模块都有自己的 target/(旧规则只盖住了单体时代的 backend/target)
+backend/**/target/
 *.class
 *.jar
 *.war
