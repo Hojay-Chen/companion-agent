@@ -7,6 +7,69 @@
 
 ---
 
+## LAP 应用运行时 · 数字人操作应用生态的安全底座（2026-09）
+
+> **本轮目标**：把「真人与 Agent 共玩应用」从**硬编码的 Game POC**升级为**可扩展的应用生态底座**。
+> 核心原则：Application ≠ Digital Human —— Agent 认知链不直接依赖任何具体应用类，
+> 而是通过 `ActionRuntime` 表达意图，由权限引擎决定能否执行，审计日志全程可追溯。
+
+### 核心成果（全量 288 测试全绿）
+
+1. **ActionRuntime 统一动作执行入口**（`application/runtime`）：
+   `ActionRuntime`（接口）+ `DefaultActionsRuntime`（实现 + actionId→Handler 注册表）。
+   Agent 只说"我要执行 `game.make_move`"（actionId + 参数 + 幂等键），不 import 具体游戏类。
+   **加第二个应用（如象棋）只需写一个 Adapter，AgentRuntime 零改动**。
+
+2. **TicTacToeApplicationAdapter**（`application/builtin/tictactoe`）：
+   把现有 `TicTacToeGameService` 包装成 4 个 LAP 动作，`@PostConstruct` 注册：
+   - `game.create`（开局，WRITE/LOW）
+   - `game.state`（读局面，READ/NONE）
+   - `game.make_move`（落子，WRITE/LOW）
+   - `game.surrender`（认输，WRITE/LOW）
+
+3. **PermissionEngine 权限引擎**（`application/permission`）：
+   **LLM 永远没有权限决定权** —— 认知链只提"行动意图"，能否执行由策略决定。
+   风险五级 → 决策映射：`NONE/LOW`→放行、`MEDIUM`→需确认、`HIGH/CRITICAL`→拒绝。
+   `RiskLevel`（NONE/LOW/MEDIUM/HIGH/CRITICAL）× `PermissionLevel`（READ/WRITE/EXECUTE）。
+
+4. **Action Log 审计**（`application/audit`）：`dh_application_action_log` 表记录每次动作——
+   谁（companion）/ 对什么应用 / 结果 / 权限决策 / 幂等键 / 因果链。
+   可追溯「为什么 Agent 给我下单了」这类问题。
+
+5. **ActionDescriptor 声明式描述**（`application/domain`）：
+   `actionId/appCode/description/permission/risk/attentionPolicy` 六元组。
+   LLM 读描述符而非读 Java Class；`AttentionPolicy` 复用四级感知（NONE/SUBCONSCIOUS/AWARE/FOCUSED），
+   防止高频噪音事件（如播放进度）淹没 Agent 认知链。
+
+6. **AgentRuntime 解耦**：`onApplicationEvent` 改走 `ActionRuntime.execute("game.state")` 读局面、
+   `ActionRuntime.execute("game.make_move")` 落子，删除对 `TicTacToeGameService` 的直接依赖。
+
+### 应用操作链路
+
+```
+用户落子 → GameSession → APPLICATION_EVENT
+    → EventProcessingChain → EventRouter
+    → AgentRuntime.onApplicationEvent
+        → ActionRuntime.execute("game.state")      ← 读局面（经权限+审计）
+        → LLM 局面评估（结构化输出 position + reason）
+        → ActionRuntime.execute("game.make_move")  ← 落子（经权限+审计）
+        → RealityLedger（APPLICATION_ACTION_EXECUTED）
+```
+
+### LAP 命名约定
+
+| 概念 | 名称 | 实现 |
+|------|------|------|
+| 应用运行 | Application Runtime | `ActionRuntime` / `DefaultActionsRuntime` |
+| 应用动作 | Action | `ActionDescriptor`（含 JSON 约束的 Java 常量描述） |
+| 应用权限 | Permission | `PermissionLevel`（READ/WRITE/EXECUTE）+ `RiskLevel` |
+| 应用审计 | Action Log | `dh_application_action_log` |
+| 第三方接入 | Application Adapter | `TicTacToeApplicationAdapter`（首批） |
+
+> **诚实说明**：完整声明式 `lap-manifest.json` 解析、MCP Adapter、多语言 SDK、App Store 属"有真实第三方接入需求后再做"的部分，本轮未做。当前 `ActionDescriptor` 用 Java 常量描述，`describe()/listActions()` 已返回描述符，届时只换数据来源、不改调用方。
+
+---
+
 ## V10 完整重构 · 三系统物理解耦 + 拟人化表达层（2026-09）
 
 > **本轮依据**：《Companion Agent V10 完全解耦实施方案》9 轮重构 —— 把"V10 词汇贴在 V9 骨头上"的
@@ -70,13 +133,15 @@
 | `simulator_devices` | Simulator 设备（配对码/secretHash/tokenVersion/状态机 PAIRING→ACTIVE→REVOKED） |
 | `dh_application` | Application Platform 应用注册（code/manifest/权限） |
 | `dh_game_session` | 井字棋对局（roomId/局面 JSON/胜负状态） |
+| `dh_application_action_log` | LAP 动作审计（谁/什么应用/结果/权限决策/幂等键/因果链） |
 
 ### 重构验收
 
-- `mvn clean test`：**275 测试全绿（0 失败 0 错误）**，含 16 个 Simulator WS 测试
-  （真实 WebSocket 握手 + 4 种命令 + 落库校验）、8 个拟人化引擎单测、4 个井字棋判定测试
+- `mvn clean test`：**288 测试全绿（0 失败 0 错误）**，含 16 个 Simulator WS 测试
+  （真实 WebSocket 握手 + 4 种命令 + 落库校验）、8 个拟人化引擎单测、4 个井字棋判定测试、
+  5 个权限引擎单测、4 个动作描述符单测、4 个 ActionRuntime 集成测试
 - `scripts/check-v10.sh`：边界守卫（chat 禁引 digitalhuman / DH 禁引 chatplatform / contracts 无环）
-- 全部 9 轮独立提交推送，每轮全量测试绿
+- 全部轮次独立提交推送，每轮全量测试绿
 
 ---
 
