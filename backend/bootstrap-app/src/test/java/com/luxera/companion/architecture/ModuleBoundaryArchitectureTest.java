@@ -57,6 +57,16 @@ class ModuleBoundaryArchitectureTest {
             "com.luxera.companion.usermodel..", "com.luxera.companion.world..",
     };
 
+    /**
+     * application-platform 拥有的顶层包。只有一个 —— 整个模块都在
+     * {@code com.luxera.companion.application} 之下, 这也是 check-v10.sh 能从目录结构自动推导
+     * 出归属的原因。写全限定前缀的理由同 {@link #DIGITAL_HUMAN_PACKAGES}:
+     * {@code ..application..} 会把 {@code contracts.application} 一起吞掉。
+     */
+    private static final String[] APPLICATION_PLATFORM_PACKAGES = {
+            "com.luxera.companion.application..",
+    };
+
     private static JavaClasses classes;
 
     @BeforeAll
@@ -82,14 +92,51 @@ class ModuleBoundaryArchitectureTest {
         rule.check(classes);
     }
 
+    /**
+     * 数字人只通过 {@code contracts} 里的 {@code ApplicationRuntimePort} 看见应用 ——
+     * 它不认识任何一个具体应用, 也不认识承载它们的那个模块。
+     */
     @Test
-    void contracts_depend_on_neither_platform() {
+    void digital_human_does_not_depend_on_application_platform() {
+        ArchRule rule = noClasses()
+                .that().resideInAnyPackage(DIGITAL_HUMAN_PACKAGES)
+                .should().dependOnClassesThat().resideInAnyPackage(APPLICATION_PLATFORM_PACKAGES);
+        rule.check(classes);
+    }
+
+    @Test
+    void chat_platform_does_not_depend_on_application_platform() {
+        ArchRule rule = noClasses()
+                .that().resideInAnyPackage(CHAT_PLATFORM_PACKAGES)
+                .should().dependOnClassesThat().resideInAnyPackage(APPLICATION_PLATFORM_PACKAGES);
+        rule.check(classes);
+    }
+
+    /**
+     * 应用平台是宿主, 不是客人: 它可以看见 contracts, 但不许反过来依赖两个平台中的任何一个。
+     * 应用事件进入数字人的唯一通道是 DH 侧实现 {@code ApplicationEventSink} —— 单向门。
+     */
+    @Test
+    void application_platform_depends_on_neither_platform() {
+        ArchRule rule = noClasses()
+                .that().resideInAnyPackage(APPLICATION_PLATFORM_PACKAGES)
+                .should().dependOnClassesThat()
+                .resideInAnyPackage(CHAT_PLATFORM_PACKAGES)
+                .orShould().dependOnClassesThat()
+                .resideInAnyPackage(DIGITAL_HUMAN_PACKAGES);
+        rule.check(classes);
+    }
+
+    @Test
+    void contracts_depend_on_no_platform() {
         ArchRule rule = noClasses()
                 .that().resideInAPackage("com.luxera.companion.contracts..")
                 .should().dependOnClassesThat()
                 .resideInAnyPackage(CHAT_PLATFORM_PACKAGES)
                 .orShould().dependOnClassesThat()
-                .resideInAnyPackage(DIGITAL_HUMAN_PACKAGES);
+                .resideInAnyPackage(DIGITAL_HUMAN_PACKAGES)
+                .orShould().dependOnClassesThat()
+                .resideInAnyPackage(APPLICATION_PLATFORM_PACKAGES);
         rule.check(classes);
     }
 }

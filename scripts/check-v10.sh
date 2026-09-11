@@ -8,10 +8,10 @@
 #   两者都必须通过。
 #
 # 它守的是什么:
-#   1. 四个模块各自"拥有"的包两两不相交(Java 不允许 split package, 跨模块同名包会静默合并);
-#   2. chat-platform 的源码不引用 digital-human 拥有的包, 反之亦然;
-#   3. Maven 依赖图与声明一致 —— chat 的 pom 里不能出现 digital-human, 反之亦然,
-#      contracts 谁都不能依赖。
+#   1. 各模块"拥有"的包两两不相交(Java 不允许 split package, 跨模块同名包会静默合并);
+#   2. 平台之间互不引用源码 —— chat / digital-human / application 三方两两不相见,
+#      contracts 谁都不能依赖;
+#   3. Maven 依赖图与声明一致 —— 同样的规则在 pom 上再查一遍。
 #
 # 包归属不写死, 全部从各模块源码树推导 —— 加了新包不需要改这个脚本, 也就不会过期。
 set -euo pipefail
@@ -32,7 +32,7 @@ owned_packages() {
   find "$dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort
 }
 
-MODULES=(platform-kernel chat-platform digital-human-platform contracts)
+MODULES=(platform-kernel chat-platform digital-human-platform application-platform contracts)
 
 echo "== 1) 包归属互斥(split package 检查) =="
 declare -A OWNER
@@ -46,7 +46,7 @@ for m in "${MODULES[@]}"; do
     fi
   done < <(owned_packages "$m")
 done
-[[ "$fail" -eq 0 ]] && ok "包归属互斥(${#OWNER[@]} 个顶层包分属 4 个模块)"
+[[ "$fail" -eq 0 ]] && ok "包归属互斥(${#OWNER[@]} 个顶层包分属 ${#MODULES[@]} 个模块)"
 
 # 每个模块拥有的包(供第 2 步用)
 pkgs_of() {
@@ -77,9 +77,15 @@ check_no_import() {
 }
 check_no_import chat-platform digital-human-platform
 check_no_import digital-human-platform chat-platform
+# 应用平台与两个平台互不相见: 数字人只通过 contracts 的 ApplicationRuntimePort 看见应用
+check_no_import chat-platform application-platform
+check_no_import digital-human-platform application-platform
+check_no_import application-platform chat-platform
+check_no_import application-platform digital-human-platform
 # contracts 是纯 DTO 模块: 谁都不能依赖
 check_no_import contracts chat-platform
 check_no_import contracts digital-human-platform
+check_no_import contracts application-platform
 check_no_import contracts platform-kernel
 
 echo "== 3) Maven 依赖图 =="
@@ -101,8 +107,13 @@ check_pom_absent() {
 }
 check_pom_absent chat-platform companion-platform-digital-human
 check_pom_absent digital-human-platform companion-platform-chat
+check_pom_absent chat-platform companion-platform-application
+check_pom_absent digital-human-platform companion-platform-application
+check_pom_absent application-platform companion-platform-chat
+check_pom_absent application-platform companion-platform-digital-human
 check_pom_absent contracts companion-platform-chat
 check_pom_absent contracts companion-platform-digital-human
+check_pom_absent contracts companion-platform-application
 check_pom_absent contracts companion-platform-kernel
 
 if [[ "$fail" -eq 0 ]]; then

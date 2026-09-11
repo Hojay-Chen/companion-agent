@@ -1,5 +1,7 @@
 package com.luxera.companion;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.luxera.companion.contracts.spi.ApplicationRuntimePort;
 import com.luxera.companion.contracts.spi.ChatWorldPort;
 import com.luxera.companion.contracts.spi.SimulatorAccessPort;
 import org.springframework.boot.SpringApplication;
@@ -44,5 +46,19 @@ public class DigitalHumanTestApplication {
     @Bean
     SimulatorAccessPort simulatorAccessPort() {
         return (deviceId, secret) -> Optional.empty();
+    }
+
+    /**
+     * The application platform is a separate module. When the digital human is launched here it
+     * has none, so its one application-shaped dependency is faked in-memory — and faked
+     * <em>as a working application</em> rather than an empty port: {@link InMemoryGameApplication}
+     * keeps real state, has a real opinion about whose turn it is, and can be played to the end.
+     *
+     * <p>An empty {@code Optional.empty()} port would let {@code AgentApplicationFlow} rot while
+     * every assertion stayed green — the exact failure this refactor exists to prevent.
+     */
+    @Bean
+    ApplicationRuntimePort applicationRuntimePort(ObjectMapper objectMapper) {
+        return new InMemoryGameApplication(objectMapper);
     }
 }

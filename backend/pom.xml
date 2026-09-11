@@ -16,7 +16,7 @@
     <version>1.0.0</version>
     <packaging>pom</packaging>
     <name>companion-platform-backend (parent)</name>
-    <description>V10 parent — chat-platform / digital-human-platform / contracts / bootstrap-app</description>
+    <description>LAP v1 parent — contracts / platform-kernel / chat-platform / digital-human-platform / application-platform / bootstrap-app</description>
 
     <properties>
         <java.version>17</java.version>
@@ -29,6 +29,7 @@
         <module>platform-kernel</module>
         <module>chat-platform</module>
         <module>digital-human-platform</module>
+        <module>application-platform</module>
         <module>bootstrap-app</module>
     </modules>
 
@@ -52,6 +53,11 @@
             <dependency>
                 <groupId>com.luxera</groupId>
                 <artifactId>companion-platform-digital-human</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.luxera</groupId>
+                <artifactId>companion-platform-application</artifactId>
                 <version>${project.version}</version>
             </dependency>
         </dependencies>

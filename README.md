@@ -7,13 +7,18 @@
 
 ---
 
-## LAP 应用运行时 · 数字人操作应用生态的安全底座（2026-09）
+## LAP 应用运行时 · 数字人操作应用生态的安全底座（2026-09，第一轮）
 
 > **本轮目标**：把「真人与 Agent 共玩应用」从**硬编码的 Game POC**升级为**可扩展的应用生态底座**。
 > 核心原则：Application ≠ Digital Human —— Agent 认知链不直接依赖任何具体应用类，
 > 而是通过 `ActionRuntime` 表达意图，由权限引擎决定能否执行，审计日志全程可追溯。
+>
+> **后续**：本节描述的 `application/runtime`、`application/permission`、`application/builtin/*`
+> 已在 LAP v1 的 R3 轮**整体搬进第 6 个 Maven 模块 `application-platform`**
+> （包名 `com.luxera.companion.application.*` 不变），数字人侧改为只依赖 `contracts` 的 SPI 端口。
+> 现状与后续路线见下方 **「LAP v1 · 应用平台」**。
 
-### 核心成果（全量 294 测试全绿）
+### 核心成果（本轮结束时全量 294 测试全绿）
 
 1. **ActionRuntime 统一动作执行入口**（`application/runtime`）：
    `ActionRuntime`（接口）+ `DefaultActionsRuntime`（实现 + actionId→Handler 注册表）。
@@ -76,7 +81,7 @@
 > 现状升级为真正的三系统解耦：Chat Platform ↔ Simulator（DHCP v1 WebSocket 协议）↔ Digital Human，
 > 并落地完整拟人化表达层，让用户聊天时无法分辨对方是真人还是数字人。
 
-### 物理结构 —— 五个 Maven 模块，边界由 classpath 强制
+### 物理结构 —— 六个 Maven 模块，边界由 classpath 强制
 
 ```
 backend/
@@ -85,34 +90,43 @@ backend/
 ├── platform-kernel/          共享内核：auth(JwtUtil) / config / common(转换器) / outbox 实体
 ├── chat-platform/            聊天平台：conversation / event / simulator(WS 服务端)
 ├── digital-human-platform/   数字人平台：32 个包（agent/life/memory/emotion/... ）+ WS 客户端
-└── bootstrap-app/            瘦启动器：唯一同时依赖两个平台的模块，repackage 出可执行 jar
+├── application-platform/     应用平台：manifest / 能力与动作发现 / Resource / Action 网关 / 权限 / 内置参考应用
+└── bootstrap-app/            瘦启动器：唯一同时看得见三方的模块，repackage 出可执行 jar
 ```
 
 > **仍然是同一仓库**（单仓多模块），但**已经是各自独立的工程**：任何人删掉 `chat-platform/` 目录，
 > `digital-human-platform/` 依然能 `mvn test` 独立跑（测试期用 `DigitalHumanTestApplication` +
-> `InMemoryChatWorld` 顶替聊天平台）。反过来也成立。这不再是"一个模块里两个包"式的假解耦。
+> `InMemoryChatWorld` 顶替聊天平台）。反过来也成立，应用平台同理 —— 这不再是"一个模块里两个包"
+> 式的假解耦。
 
-### 解耦到底解在哪：三个 SPI 端口（Ports & Adapters）
+### 解耦到底解在哪：五个 SPI 端口（Ports & Adapters）
 
-跨平台调用**不再有任何 Java 直接依赖**，只剩 `contracts.spi` 里三个接口；两侧各写各的适配器：
+跨平台调用**不再有任何 Java 直接依赖**，只剩 `contracts.spi` 里五个接口；两侧各写各的适配器：
 
 | 端口（`contracts.spi`） | 方向 | 谁实现 | 用途 |
 |---|---|---|---|
 | `ChatWorldPort` | DH → Chat | chat 的 `ChatWorldAdapter` | 数字人读会话/写消息（她的"外部世界"） |
 | `CompanionDirectoryPort` | Chat → DH | DH 的 `CompanionDirectoryAdapter` | 聊天平台查"这个 companion 是谁" |
 | `SimulatorAccessPort` | DH → Chat | chat 的 `SimulatorAccessAdapter` | 数字人换设备 token |
+| `ApplicationRuntimePort` | DH → Application | 应用平台的 `ApplicationRuntimeAdapter` | 读 Resource / 问能做什么 / 执行 action |
+| `ApplicationEventSink` | Application → DH | DH 的 `DhApplicationEventSink` | 应用通知数字人"有事发生"（**单向门**） |
+
+> **真人与 Agent 走同一条路**：没有"Agent 专用 API"。数字人操作应用时和真人一样经过
+> `ApplicationRuntimePort` → 同一个 Action 网关 → 同一个 Resource。数字人**不解析任何应用状态、
+> 不判断任何业务规则、不认识任何一个具体应用** —— 棋盘长什么样、轮到谁，都由应用回答。
 
 数据面则经 **DHCP v1 WebSocket 协议**（`contracts.dhcp`）流动，聊天平台只看见一台"机器用户设备"，
 完全不知道 Companion 的存在。
 
-### 重构成果（9 轮，全量 294 测试全绿）
+### 重构成果（9 轮，当时全量 294 测试全绿；应用平台拆出后为 329 —— 见下一节）
 
 **架构解耦（R1-R4）**：
-1. **Maven 五模块拆分**：见上。`platform-core` 过渡单体已彻底删除（679 个文件），
-   `chat-platform` 与 `digital-human-platform` 之间**唯一的编译期联系是 `contracts`**。
+1. **Maven 多模块拆分**：见上（V10 落地时为五模块，LAP v1 拆出 `application-platform` 后为六个）。
+   `platform-core` 过渡单体已彻底删除（679 个文件），
+   三个平台之间**唯一的编译期联系是 `contracts`**。
    边界守卫三重：`scripts/check-v10.sh`（包归属互斥 + 源码引用 + pom 依赖图）、
    `contracts` 的 `ArchitectureTest`（自足性白名单）、`bootstrap-app` 的
-   `ModuleBoundaryArchitectureTest`（ArchUnit 对字节码断言两个平台互不依赖）。
+   `ModuleBoundaryArchitectureTest`（ArchUnit 对字节码断言三方互不依赖）。
 2. **DHCP v1 协议（contracts.dhcp）**：`DhcpFrame` + 11 种帧类型（CONNECT/AUTH/SUBSCRIBE/EVENT/
    EVENT_ACK/COMMAND/COMMAND_RESULT/PING/PONG/ERROR/DISCONNECT）+ 配对/令牌/命令 DTO。
 3. **Simulator WebSocket 服务端（R2）**：`/ws/simulator` JSR-356 端点 ——
@@ -164,9 +178,9 @@ backend/
 | 表 | 用途 |
 |----|------|
 | `simulator_devices` | Simulator 设备（配对码/secretHash/tokenVersion/状态机 PAIRING→ACTIVE→REVOKED） |
-| `dh_application` | Application Platform 应用注册（code/manifest/权限） |
-| `dh_game_session` | 井字棋对局（roomId/局面 JSON/胜负状态） |
-| `dh_application_action_log` | LAP 动作审计（谁/什么应用/结果/权限决策/幂等键/因果链） |
+| `dh_application` | Application Platform 应用注册（code/manifest/权限）**（过渡期遗留，R8 删除）** |
+| `dh_game_session` | 井字棋对局（roomId/局面 JSON/胜负状态）**（过渡期遗留，R8 删除）** |
+| `dh_application_action_log` | LAP 动作审计（谁/什么应用/结果/权限决策/幂等键/因果链）**（过渡期遗留，R8 删除）** |
 
 ### 重构验收
 
@@ -189,7 +203,62 @@ backend/
   151 个文件，已 `git rm --cached` 并补 `backend/**/target/` 规则。
 - 顶层包之间存在少量既成循环依赖（拆分前就有，与本次拆分无关），因此
   `ModuleBoundaryArchitectureTest` **不做**顶层包循环断言 —— 与其写一条注定被放宽的规则，不如不写。
-  模块层面的依赖方向由 classpath + pom 检查 + 三条 ArchUnit 规则保证。
+  模块层面的依赖方向由 classpath + pom 检查 + ArchUnit 规则保证（V10 时三条，LAP v1 扩到六条）。
+
+---
+
+## LAP v1 · 应用平台（2026-09，进行中）
+
+> **本轮依据**：《LAP v1 — Application Platform Final Architecture》。四层协议
+> （Chat Platform Protocol / Application Protocol / Application Manifest / Adapter-Transport），
+> Manifest 是中枢，Capability→Action 分层，Resource 是统一读模型，
+> **真人与 Agent 共用同一个 `ApplicationGateway`（不存在独立的 Agent API）**，MCP 只是适配器之一。
+
+### 为什么要把应用平台拆出去
+
+拆分前应用平台长在 `digital-human-platform` 内部，有三个结构性问题：
+
+1. **Manifest 是装饰品** —— 写进表后从不解析，且挂在 Application 上而不是 ApplicationVersion 上，
+   于是"同一个应用的两个版本"在数据模型里根本表达不出来；
+2. **Agent 与应用硬耦合** —— `AgentRuntime` 直接 import `TicTacToeApplicationAdapter.ACTION_MAKE_MOVE`，
+   自己解析棋盘 JSON、自己拼去重 key、自己判断 `turn == "O"`。**加第二个游戏必须改 `AgentRuntime`**；
+3. **没有"操作"的抽象** —— `/api/v10/games/tictactoe/*` 从请求体里手取 `userId`/`companionId`，
+   忽略已认证身份；`Idempotency-Key` 收下就丢。
+
+### 已完成（R1–R3）
+
+| 轮 | 内容 | 证据 |
+|---|---|---|
+| **R1** | `contracts` 增 LAP 词汇（`ActionRequest` / `ActionResponse` / `ActionSpec` / `ResourceView` / `ApplicationEvent` / `PrincipalType` / `PermissionLevel` / `RiskLevel` / `AttentionPolicy` / `CapabilityView` / `InvocationContext` / …）+ 两个 SPI 端口 | `ActionResponseJsonTest`（全字段 round-trip） |
+| **R2** | DH 泛化第一步：`EventRouter` 加 `subscribe`（`register` 保持覆盖语义）；新增 `AgentApplicationFlow`（过滤 → 读 Resource → 问能做什么 → 执行 + 记现实账本）；`DhApplicationEventSink` 永久留在 DH；`AgentRuntime` 删掉 `onApplicationEvent` / `parseBoardState` / `evaluateAndDecideMove` / `boardToString` | `AgentApplicationFlowTest`（mock LLM ⇒ **零次 execute**）、`EventRouterFanOutTest` |
+| **R3** | 抽出第 6 个 Maven 模块 `application-platform`（`com.luxera.companion.application`）；DH 的 `digitalhuman/application/**` 21 个主文件 + 5 个测试全部删除；`/api/v10` 控制器原样搬走（前端不破）；边界守卫扩展到三方 | `check-v10.sh`（41 个顶层包分属 5 个所有权模块，10 对引用 + 10 对 pom 全过）、`LapEndToEndTest`、`DhReactsToApplicationEventTest` |
+
+**R2/R3 的关键设计**：`TicTacToeGameService` 在提交后不再直接投递事件，而是发一条
+`contracts.application.ApplicationEvent`（经注入的 `ApplicationEventSink`）—— 这是整个搬迁中
+唯一一处"越界编辑"。DH 的 `DhApplicationEventSink` 把它翻译回 `ExternalEvent`，
+事件 id 仍是确定性的（`game://session/{id}#MOVE-0`），所以 DH 侧的去重照样生效。
+
+**两级 `agentTrigger` 闸门**：manifest 里 `events[].triggersAgent`（类型级）**且**
+事件 `data.agentTrigger`（实例级）都为真才唤起 Agent。故意做成两级而不是让 sink 硬编码 `true` ——
+否则 `AgentApplicationFlow` 里的过滤就变成了恒真式，测试也守不住什么。
+
+### 参考应用口径（统一说法，避免后续误判工作量）
+
+**一个迁移应用（TicTacToe）+ 两个新增参考应用（Gomoku 15×15、Reminder 提醒/日程）。**
+三者的存在意义是**证明平台**而不是攒应用数量 —— R7 的终局验收就是"加 Gomoku 只涉及
+Gomoku 的 Manifest 与 Handler，`AgentRuntime` / `AgentApplicationFlow` / Perception / Cognition /
+Decision 零修改"。提醒的所有权是**单一数据源：应用拥有，DH 只读**。
+
+### 当前验收
+
+- `mvn clean test`：**329 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform 24 /
+  digital-human-platform 229 / application-platform 17 / bootstrap-app 36
+- `bash scripts/check-v10.sh` → `check-v10 OK`；`bash scripts/check.sh`（起 jar）→
+  **✅ 全量验收全部通过**，`/api/v10` 仍在服役（R4 才删）
+- 尚未完成：**R4** LAP 面 + 真人应用页（真幂等两段式事务 + `ActionInvocationReaperJob`、
+  `expectedResourceVersion` CAS、`ActionHandlerKey(applicationId, version, actionId)`）、
+  **R5** 五子棋 + 提醒、**R6** MCP 适配器、**R7** Agent 的 capability→action LLM 契约、
+  **R8** 生命周期状态机 + REMOTE + outbox + 清理遗留表
 
 ---
 

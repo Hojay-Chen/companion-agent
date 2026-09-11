@@ -24,8 +24,11 @@ import java.util.Map;
  *   <li><b>幂等由 {@code event.id()} 承担。</b> 平台已按 manifest 的 {@code idTemplate} 保证
  *       它确定性 —— 同一个 {@code ApplicationEvent} 重放会得到同一个 {@code eventId},
  *       于是被 DeduplicationHandler 短路, 数字人不会对同一步行动两次。</li>
- *   <li><b>{@code agentTrigger} 固定为 true。</b> 走到这里的事件, 平台已经按发射方版本的
- *       manifest 过滤过 {@code triggersAgent}; 数字人不必也不该再判断一次。</li>
+ *   <li><b>{@code agentTrigger} 取自 {@code data.agentTrigger}, 缺省 false。</b> 这是两级闸门里
+ *       的<em>第二级</em>: manifest 的 {@code events[].triggersAgent} 说"这类事件<em>可以</em>
+ *       唤起数字人", 应用在 {@code data} 里说的则是"<em>这一次</em>该唤起"。两者取与 ——
+ *       平台侧多一道过滤, 应用侧少一次误唤醒。缺了这个布尔就一律 false: 宁可数字人晚知道,
+ *       也不要它无缘无故读一次别人的资源。</li>
  * </ol>
  *
  * <p><b>本类永久留在 digital-human-platform</b>: 它是"应用平台"与"数字人平台"之间那道
@@ -56,7 +59,7 @@ public class DhApplicationEventSink implements ApplicationEventSink {
         payload.put("applicationId", event.source());
         payload.put("eventType", event.type());
         payload.put("resourceUri", event.target());
-        payload.put("agentTrigger", Boolean.TRUE);
+        payload.put("agentTrigger", agentTriggerOf(event));
         payload.put("source", "application-platform");
         payload.putAll(flatten(event.data()));
 
@@ -77,6 +80,13 @@ public class DhApplicationEventSink implements ApplicationEventSink {
         if (data == null) return null;
         JsonNode companionId = data.path("companionId");
         return companionId.isMissingNode() || companionId.isNull() ? null : companionId.asText(null);
+    }
+
+    /** {@code data.agentTrigger}, 缺省 false —— 见类注释里的两级闸门。 */
+    private static Boolean agentTriggerOf(ApplicationEvent event) {
+        JsonNode data = event.data();
+        if (data == null) return Boolean.FALSE;
+        return data.path("agentTrigger").asBoolean(false);
     }
 
     @SuppressWarnings("unchecked")

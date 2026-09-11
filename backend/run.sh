@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # 构建并启动 companion 后端 (Spring Boot 2.7 + JDK17, 端口 8081)
 #
-# V10: 四个 Maven 模块 —— contracts / platform-kernel / chat-platform /
-# digital-human-platform, 可执行 jar 由 bootstrap-app 组装(它是唯一同时依赖两个平台的模块)。
+# 六个 Maven 模块 —— contracts / platform-kernel / chat-platform /
+# digital-human-platform / application-platform / bootstrap-app, 可执行 jar 由
+# bootstrap-app 组装(它是唯一同时看得见三方的模块)。
 set -euo pipefail
 cd "$(dirname "$0")"
 
