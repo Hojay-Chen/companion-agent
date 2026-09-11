@@ -1,4 +1,4 @@
 -------------------------------------------------------------------------------
 Test set: com.luxera.companion.simulator.server.SimulatorWebSocketE2eTest
 -------------------------------------------------------------------------------
-Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 5.034 s - in com.luxera.companion.simulator.server.SimulatorWebSocketE2eTest
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 5.787 s - in com.luxera.companion.simulator.server.SimulatorWebSocketE2eTest

@@ -8,14 +8,18 @@
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/reality/RealityEventRecord.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/expression/TypoEngine.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/conversation/ConversationParticipantService.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/application/runtime/DefaultActionsRuntime.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/persona/PersonaVoiceProfile.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/selfmodel/SelfModel.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/plan/PlanRepository.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/agent/CompiledContext.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/application/audit/ActionLogRecorder.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/application/runtime/ActionRuntime.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/memory/PgVectorEmbeddingProvider.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/state/AgentState.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/runtime/agent/memory/MemoryRecallResult.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/memory/EmbeddingClient.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/application/builtin/tictactoe/TicTacToeApplicationAdapter.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/agent/ContextBuilder.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/usermodel/UserPreference.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/behavior/BehaviorConstraints.java
@@ -37,6 +41,7 @@
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/relationship/SharedExperienceRepository.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/runtime/agent/event/EventSimulationResult.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/memory/EmbeddingProvider.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/application/permission/DefaultPermissionEngine.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/proactive/AdminController.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/decision/PersonDecision.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/conversation/ChatController.java
@@ -44,6 +49,7 @@
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/simulator/ReadMessagesCommand.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/life/LifeSimulationService.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/decision/ReplyLaterPolicy.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/application/audit/ActionLogRepository.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/behavior/BehaviorEngine.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/persona/Place.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/usermodel/UserFactRepository.java
@@ -58,6 +64,7 @@
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/attention/AttentionService.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/decision/InspectDevicePolicy.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/interaction/InteractionPolicyEngine.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/application/domain/PermissionLevel.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/tool/ReminderPlanner.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/perception/PerceptionContext.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/decision/IgnorePolicy.java
@@ -209,6 +216,8 @@
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/runtime/WakeupCatchUpService.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/thought/ThoughtRepository.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/selfmodel/SelfModelService.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/application/domain/RiskLevel.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/application/permission/PermissionDecision.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/runtime/ScheduledActionRepository.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/intention/IntentionRepository.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/tool/Reminder.java
@@ -277,6 +286,7 @@
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/experience/ExperienceService.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/simulator/capabilities/SendMessageCapability.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/web/V10RelationshipController.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/application/audit/ActionLogRecord.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/common/convert/StringListConverter.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/interaction/InteractionDecision.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/behavior/BehaviorCandidate.java
@@ -366,6 +376,7 @@
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/runtime/agent/expression/TypingSimulationService.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/conversation/SessionSummaryService.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/auth/AuthService.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/application/permission/PermissionEngine.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/life/ActivitySpecProvider.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/emotion/EmotionalEpisodeRepository.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/persona/CompanionRepository.java
@@ -379,6 +390,7 @@
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/reflection/ReflectionService.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/behavior/BehaviorPattern.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/life/LifeEventScheduler.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/application/domain/ActionDescriptor.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/digitalhuman/decision/ChangeActivityPolicy.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/tool/BirthdayService.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/main/java/com/luxera/companion/phone/PhoneNotification.java

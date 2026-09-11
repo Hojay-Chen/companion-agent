@@ -1,4 +1,5 @@
 com/luxera/companion/memory/MemoryAssociationService.class
+com/luxera/companion/digitalhuman/application/permission/PermissionDecision$Decision.class
 com/luxera/companion/digitalhuman/simulator/ChatSimulatorConnector.class
 com/luxera/companion/runtime/EmotionReducer.class
 com/luxera/companion/usermodel/UserPattern.class
@@ -17,6 +18,7 @@ com/luxera/companion/persona/PersonaService.class
 com/luxera/companion/digitalhuman/actor/PersonActorRegistry.class
 com/luxera/companion/runtime/agent/emotion/EmotionAppraisalResult$MemoryTrigger.class
 com/luxera/companion/life/CompanionLife.class
+com/luxera/companion/digitalhuman/application/permission/PermissionDecision.class
 com/luxera/companion/life/CompanionLifeRepository.class
 com/luxera/companion/digitalhuman/perception/SnapshotFactory.class
 com/luxera/companion/proactive/NotificationRepository.class
@@ -25,6 +27,7 @@ com/luxera/companion/llm/LlmCallService.class
 com/luxera/companion/usermodel/UserModelService.class
 com/luxera/companion/common/convert/PlaceJsonConverter.class
 com/luxera/companion/digitalhuman/conversation/ConversationRequest$RelationshipSnapshot.class
+com/luxera/companion/digitalhuman/application/domain/ActionDescriptor$AttentionPolicy.class
 com/luxera/companion/runtime/agent/memory/MemoryRecallProbabilityService.class
 com/luxera/companion/digitalhuman/application/ApplicationRegistry.class
 com/luxera/companion/CompanionApplication.class
@@ -204,6 +207,7 @@ com/luxera/companion/agent/DefaultCompanionCognitiveRuntime.class
 com/luxera/companion/runtime/pipeline/PendingMessageState.class
 com/luxera/companion/relationship/RelationshipEngine.class
 com/luxera/companion/digitalhuman/life/LifeScheduleStore.class
+com/luxera/companion/digitalhuman/application/audit/ActionLogRecord.class
 com/luxera/companion/conversation/ThreadMaintenanceJob.class
 com/luxera/companion/plan/PlanRepository.class
 com/luxera/companion/digitalhuman/persona/PersonaVoiceProfile.class
@@ -228,6 +232,7 @@ com/luxera/companion/experience/ExperienceRepository.class
 com/luxera/companion/cognitive/CognitiveSessionService.class
 com/luxera/companion/agent/InternalStateController.class
 com/luxera/companion/relationship/RelationshipEvent.class
+com/luxera/companion/digitalhuman/application/audit/ActionLogRepository.class
 com/luxera/companion/runtime/V9MetricsController.class
 com/luxera/companion/conversation/ConversationParticipantService.class
 com/luxera/companion/common/convert/StringMapConverter$1.class
@@ -246,6 +251,7 @@ com/luxera/companion/state/AgentStateRepository.class
 com/luxera/companion/conversation/ConversationParticipant.class
 com/luxera/companion/event/EventStreamController.class
 com/luxera/companion/digitalhuman/expression/HesitationEngine$HesitationMarkers.class
+com/luxera/companion/digitalhuman/application/permission/DefaultPermissionEngine.class
 com/luxera/companion/digitalhuman/perception/TimeEventStrategy.class
 com/luxera/companion/experience/MemoryConsolidationJob.class
 com/luxera/companion/agent/CompanionSchedule$TimeBlock.class
@@ -266,6 +272,7 @@ com/luxera/companion/digitalhuman/event/ProcessedEventRepository.class
 com/luxera/companion/conversation/MessageRepository.class
 com/luxera/companion/interaction/ResponseCommitment.class
 com/luxera/companion/digitalhuman/expression/TypoEngine$TypoContext.class
+com/luxera/companion/digitalhuman/application/domain/ActionDescriptor.class
 com/luxera/companion/config/JwtUtil.class
 com/luxera/companion/agent/ContextCompiler.class
 com/luxera/companion/digitalhuman/hotpath/ShadowDecisionRecorder.class
@@ -293,6 +300,7 @@ com/luxera/companion/digitalhuman/expression/HumanLikenessProperties.class
 com/luxera/companion/simulator/server/SimulatorDevice.class
 com/luxera/companion/relationship/RelationshipNarrativeService.class
 com/luxera/companion/behavior/BehaviorPolicyEngine.class
+com/luxera/companion/digitalhuman/application/runtime/ActionRuntime$ActionContext.class
 com/luxera/companion/runtime/agent/event/EventChainService.class
 com/luxera/companion/conversation/Message.class
 com/luxera/companion/digitalhuman/event/ExternalEventType.class
@@ -349,6 +357,7 @@ com/luxera/companion/behavior/BehaviorPatternRepository.class
 com/luxera/companion/runtime/AgentTraceService.class
 com/luxera/companion/behavior/BehaviorOutcome.class
 com/luxera/companion/runtime/agent/memory/MemoryRecallResult$MemoryActivation.class
+com/luxera/companion/digitalhuman/application/runtime/ActionRuntime$ActionResult$Status.class
 com/luxera/companion/selfmodel/SelfModelRepository.class
 com/luxera/companion/reflection/ReflectionService.class
 com/luxera/companion/config/CurrentUser.class
@@ -357,6 +366,7 @@ com/luxera/companion/persona/LifeEventRepository.class
 com/luxera/companion/behavior/BehaviorPattern.class
 com/luxera/companion/llm/LlmCallRecord.class
 com/luxera/companion/runtime/WorldEventLog.class
+com/luxera/companion/digitalhuman/application/runtime/DefaultActionsRuntime.class
 com/luxera/companion/persona/CompanionDtos.class
 com/luxera/companion/behavior/BehaviorEngine.class
 com/luxera/companion/digitalhuman/perception/MessageNotificationStrategy.class
@@ -404,6 +414,7 @@ com/luxera/companion/digitalhuman/expression/PhysioExpressionFilter$PhysioContex
 com/luxera/companion/thought/UnfinishedThoughtActivationJob.class
 com/luxera/companion/conversation/SessionSummaryService.class
 com/luxera/companion/runtime/AgentRegistry.class
+com/luxera/companion/digitalhuman/application/runtime/ActionRuntime.class
 com/luxera/companion/digitalhuman/event/ExternalEvent.class
 com/luxera/companion/runtime/pipeline/MessagePipeline.class
 com/luxera/companion/config/AppProperties$Purpose.class
@@ -413,6 +424,7 @@ com/luxera/companion/runtime/agent/brain/BrainContext.class
 com/luxera/companion/usermodel/UserChatStyleService.class
 com/luxera/companion/life/LifeTickJob.class
 com/luxera/companion/relationship/RelationshipThread.class
+com/luxera/companion/digitalhuman/application/runtime/ActionRuntime$ActionResult.class
 com/luxera/companion/agent/PerceptionRefiner.class
 com/luxera/companion/runtime/agent/event/EventSimulationResult$EventCandidate.class
 com/luxera/companion/auth/AuthService$UserDto.class
@@ -426,6 +438,7 @@ com/luxera/companion/agent/CompanionSchedule.class
 com/luxera/companion/digitalhuman/life/LifeEventDispatcher$1.class
 com/luxera/companion/simulator/ListConversationsCommand.class
 com/luxera/companion/conversation/ConversationParticipantRepository.class
+com/luxera/companion/digitalhuman/application/domain/RiskLevel.class
 com/luxera/companion/digitalhuman/life/ScheduledLifeEvent.class
 com/luxera/companion/digitalhuman/web/V10ConversationController.class
 com/luxera/companion/usermodel/UserHypothesisRepository.class
@@ -481,6 +494,7 @@ com/luxera/companion/digitalhuman/conversation/NarrationRuleValidator.class
 com/luxera/companion/conversation/ConversationBoundary.class
 com/luxera/companion/relationship/RelationshipThreadRepository.class
 com/luxera/companion/intention/IntentionService.class
+com/luxera/companion/digitalhuman/application/permission/PermissionEngine.class
 com/luxera/companion/digitalhuman/decision/PersonDecision$ChangeActivityDecision.class
 com/luxera/companion/selfmodel/SelfModelService.class
 com/luxera/companion/persona/CompanionDtos$CompileResponse.class
@@ -499,20 +513,27 @@ com/luxera/companion/digitalhuman/decision/DecisionPolicy.class
 com/luxera/companion/simulator/capabilities/SendMessageCapability.class
 com/luxera/companion/digitalhuman/relationship/RelationshipProjector.class
 com/luxera/companion/conversation/MessageCoreService$SendResult.class
+com/luxera/companion/digitalhuman/application/audit/ActionLogRecorder.class
 com/luxera/companion/agent/CompanionSchedule$1.class
 com/luxera/companion/simulator/server/SimulatorConnection.class
 com/luxera/companion/interaction/InteractionDecision.class
 com/luxera/companion/reflection/WeeklyReflectionJob.class
 com/luxera/companion/memory/HttpEmbeddingClient.class
+com/luxera/companion/digitalhuman/application/domain/PermissionLevel.class
 com/luxera/companion/digitalhuman/outbox/OutboxEvent.class
 com/luxera/companion/digitalhuman/perception/PerceptionDecisionOrchestrator$PerceptionDecisionOutcome.class
 com/luxera/companion/runtime/ScheduledAction.class
+com/luxera/companion/digitalhuman/application/runtime/DefaultActionsRuntime$ActionHandler.class
+com/luxera/companion/digitalhuman/application/domain/ActionDescriptor$1.class
 com/luxera/companion/proactive/Notification.class
 com/luxera/companion/persona/CompanionService.class
 com/luxera/companion/digitalhuman/expression/TypingRhythmEngine$TypingPlan.class
 com/luxera/companion/auth/UserRepository.class
 com/luxera/companion/digitalhuman/conversation/ChatMessageDraft.class
+com/luxera/companion/digitalhuman/application/permission/PermissionEngine$PermissionRequest.class
+com/luxera/companion/digitalhuman/application/permission/DefaultPermissionEngine$1.class
 com/luxera/companion/digitalhuman/outbox/OutboxRelayJob.class
+com/luxera/companion/digitalhuman/application/builtin/tictactoe/TicTacToeApplicationAdapter.class
 com/luxera/companion/memory/MemoryEntity.class
 com/luxera/companion/event/CompanionEventBus.class
 com/luxera/companion/llm/AnthropicGateway.class

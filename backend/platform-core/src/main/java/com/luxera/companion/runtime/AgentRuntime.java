@@ -35,8 +35,8 @@ import com.luxera.companion.runtime.agent.expression.ExpressionResult;
 import com.luxera.companion.relationship.Relationship;
 import com.luxera.companion.relationship.RelationshipService;
 import com.luxera.companion.runtime.pipeline.MessagePipeline;
-import com.luxera.companion.digitalhuman.application.builtin.tictactoe.GameSession;
-import com.luxera.companion.digitalhuman.application.builtin.tictactoe.TicTacToeGameService;
+import com.luxera.companion.digitalhuman.application.builtin.tictactoe.TicTacToeApplicationAdapter;
+import com.luxera.companion.digitalhuman.application.runtime.ActionRuntime;
 import com.luxera.companion.simulator.CapabilityResult;
 import com.luxera.companion.simulator.SimulatorClient;
 import com.luxera.companion.state.AgentStateService;
@@ -115,8 +115,8 @@ public class AgentRuntime {
 
     private final LlmRouter llmRouter;
     private final ObjectMapper objectMapper;
-    /** V10 §9.3: 游戏服务(落子回调) */
-    private final TicTacToeGameService ticTacToeGameService;
+    /** V10 §14/LAP: 应用动作统一执行入口(Agent 不直接碰具体应用类) */
+    private final ActionRuntime actionRuntime;
 
     public AgentRuntime(ConversationService conversationService, PerceptionEngine perceptionEngine,
                           WorkingMemory workingMemory, SessionManager sessionManager,
@@ -137,7 +137,7 @@ public class AgentRuntime {
                           ConversationOutputValidator outputValidator,
                           com.luxera.companion.digitalhuman.hotpath.V10HotpathGateway v10Hotpath,
                           LlmRouter llmRouter, ObjectMapper objectMapper,
-                          TicTacToeGameService ticTacToeGameService) {
+                          ActionRuntime actionRuntime) {
         this.conversationService = conversationService;
         this.perceptionEngine = perceptionEngine;
         this.workingMemory = workingMemory;
@@ -170,7 +170,7 @@ public class AgentRuntime {
         this.v10Hotpath = v10Hotpath;
         this.llmRouter = llmRouter;
         this.objectMapper = objectMapper;
-        this.ticTacToeGameService = ticTacToeGameService;
+        this.actionRuntime = actionRuntime;
     }
 
     /**
@@ -274,8 +274,11 @@ public class AgentRuntime {
     }
 
     /**
-     * V10 §9.3 应用/游戏事件入口(APPLICATION_EVENT): 数字人"看到"应用/游戏里的变化 → 决策/行动。
-     * 当前聚焦 tic-tac-toe: 用户落子(MOVE)且轮到 Agent(O)时, 读局面 → LLM 评估 → 落子。
+     * V10 §9.3/§14/LAP 应用/游戏事件入口(APPLICATION_EVENT):
+     * 数字人"看到"应用/游戏里的变化 → 决策 → 经 ActionRuntime 执行动作。
+     *
+     * 边界: Agent 认知链不直接依赖具体应用类, 只通过 {@link ActionRuntime} 表达意图:
+     * 读局面 = game.state, 落子 = game.make_move。未来换应用/换实现, 此处无感知。
      */
     void onApplicationEvent(ExternalEvent event) {
         if (event == null || !ExternalEventType.APPLICATION_EVENT.equals(event.type())) return;
@@ -288,21 +291,52 @@ public class AgentRuntime {
         if (!"O".equalsIgnoreCase(turn)) return;
 
         try {
-            GameSession session = ticTacToeGameService.get(roomId);
-            if (session == null || !GameSession.STATUS_ACTIVE.equals(session.getStatus())) return;
-            String[] board = ticTacToeGameService.boardOf(session);
+            // 经 ActionRuntime 读局面(game.state)
+            ActionRuntime.ActionContext ctx = ActionRuntime.ActionContext.of(
+                    TicTacToeApplicationAdapter.APP_CODE, companionId, event.str("userId"),
+                    roomId, event.eventId());
+            ActionRuntime.ActionResult stateResult = actionRuntime.execute(
+                    TicTacToeApplicationAdapter.ACTION_STATE,
+                    Map.of("roomId", roomId), "state-" + roomId, ctx);
+            if (!stateResult.succeeded()) return;
+            String stateJson = (String) stateResult.result().get("state");
+            if (stateJson == null) return;
+            String[] board = parseBoardState(stateJson);
 
             int position = evaluateAndDecideMove(board, roomId, companionId);
             if (position < 0 || position > 8) return;
 
-            GameSession moved = ticTacToeGameService.move(roomId, "companion", position);
+            // 经 ActionRuntime 落子(game.make_move)
+            ActionRuntime.ActionResult moveResult = actionRuntime.execute(
+                    TicTacToeApplicationAdapter.ACTION_MAKE_MOVE,
+                    Map.of("roomId", roomId, "player", "companion", "position", position),
+                    "move-" + roomId + "-" + position, ctx);
+            if (!moveResult.succeeded()) {
+                log.warn("[AgentRuntime] 落子被拒: room={}, pos={}, err={}",
+                        roomId, position, moveResult.errorMessage());
+                return;
+            }
             log.info("[AgentRuntime] 数字人落子: room={}, pos={}, status={}",
-                    roomId, position, moved.getStatus());
+                    roomId, position, moveResult.result().get("status"));
             appendReality(companionId, RealityEventType.APPLICATION_ACTION_EXECUTED,
-                    Map.of("appCode", "tictactoe", "roomId", roomId,
-                            "action", "game.move", "position", position), null, null);
+                    Map.of("appCode", TicTacToeApplicationAdapter.APP_CODE,
+                            "roomId", roomId, "action", "game.make_move",
+                            "position", position), null, null);
         } catch (Exception e) {
             log.warn("[AgentRuntime] 处理游戏事件失败 room={}: {}", roomId, e.getMessage());
+        }
+    }
+
+    /** 从 game.state 的 stateJson 解析 9 格棋盘(空位 -> "") */
+    private String[] parseBoardState(String stateJson) {
+        try {
+            JsonNode root = objectMapper.readTree(stateJson);
+            JsonNode board = root.path("board");
+            String[] b = new String[9];
+            for (int i = 0; i < 9; i++) b[i] = board.path(i).asText("");
+            return b;
+        } catch (Exception e) {
+            return new String[9];
         }
     }
 

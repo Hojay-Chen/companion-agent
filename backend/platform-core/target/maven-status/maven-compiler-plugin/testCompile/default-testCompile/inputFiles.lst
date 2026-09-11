@@ -24,6 +24,7 @@
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/runtime/LongConversationConsistencyTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/conversation/ConversationParticipantTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/runtime/EmotionReducerTest.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/digitalhuman/application/ActionRuntimeIntegrationTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/eval/BehavioralEntropyEvaluatorTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/relationship/RelationshipGraphTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/agent/ContextLayerTest.java
@@ -38,6 +39,7 @@
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/runtime/agent/expression/TypingSimulationTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/digitalhuman/reality/RealityLedgerTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/cognition/CognitiveWakeupServiceTest.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/digitalhuman/application/PermissionEngineTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/conversation/SessionSummaryServiceTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/runtime/pipeline/MessagePipelineTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/digitalhuman/state/StateVersionGateTest.java
@@ -46,6 +48,7 @@
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/digitalhuman/life/LifeScheduleJobTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/eval/AntiAIPatternEvaluatorTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/sleep/SleepModelTest.java
+/home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/digitalhuman/application/ActionDescriptorTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/runtime/agent/memory/MemoryRecallProbabilityTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/runtime/MessageControllerTest.java
 /home/ubuntu/claude-workspace/companion-agent/backend/platform-core/src/test/java/com/luxera/companion/life/LifeInterruptTest.java

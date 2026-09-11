@@ -11,7 +11,9 @@ com/luxera/companion/digitalhuman/state/StateVersionGateTest.class
 com/luxera/companion/digitalhuman/conversation/NarrationRuleValidatorTest.class
 com/luxera/companion/digitalhuman/event/EventProcessingChainTest.class
 com/luxera/companion/digitalhuman/perception/PerceptionDecisionOrchestratorTest.class
+com/luxera/companion/digitalhuman/application/ActionRuntimeIntegrationTest.class
 com/luxera/companion/simulator/server/SimulatorWebSocketE2eTest$DhcpClient.class
+com/luxera/companion/digitalhuman/application/PermissionEngineTest.class
 com/luxera/companion/life/LifeInterruptTest.class
 com/luxera/companion/cognitive/CognitiveSessionTest.class
 com/luxera/companion/runtime/WakeupCatchUpTest.class
@@ -31,6 +33,7 @@ com/luxera/companion/agent/NightWorkerScheduleTest.class
 com/luxera/companion/runtime/pipeline/PendingMessageReevaluationJobTest.class
 com/luxera/companion/digitalhuman/life/PlanReminderDispatchTest.class
 com/luxera/companion/runtime/agent/expression/TypingSimulationTest.class
+com/luxera/companion/digitalhuman/application/ActionDescriptorTest.class
 com/luxera/companion/sleep/SleepModelTest.class
 com/luxera/companion/conversation/ConversationThreadTest.class
 com/luxera/companion/runtime/MessageControllerTest.class
