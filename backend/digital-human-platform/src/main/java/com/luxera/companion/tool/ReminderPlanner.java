@@ -15,6 +15,11 @@ import java.time.format.DateTimeFormatter;
 /**
  * 聊天内建提醒(设计文档 56-58 节): 用户说"帮我记得…"时,
  * 用 LLM 解析提醒内容与时间并创建 Reminder,返回一句给 Prompt 的确认上下文。
+ *
+ * <p>LAP v1: 它创建提醒的方式与真人在前端点"添加"走的是<b>同一条路</b>({@link ReminderService}
+ * → {@code reminder.create})。这不是为了好看 —— 它是"数字人的认知也只是一个调用方"这件事的
+ * 可执行版本: 应用不需要知道这次调用来自对话还是来自一个按钮, 权限、幂等、归属校验因此只有
+ * 一套。
  */
 @Slf4j
 @Component
@@ -67,7 +72,7 @@ public class ReminderPlanner {
             if (remindAt == null) remindAt = LocalDateTime.now().plusHours(1);
 
             Reminder r = reminderService.create(userId, companionId, "user_set", title,
-                    root.path("content").asText(null), remindAt, null);
+                    root.path("content").asText(null), remindAt);
             return "你刚为用户创建了提醒:「" + r.getTitle() + "」,时间 " + FMT.format(r.getRemindAt())
                     + "。请在回复里自然地确认你已经记住了这件事。";
         } catch (Exception e) {

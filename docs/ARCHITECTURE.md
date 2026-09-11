@@ -40,7 +40,7 @@ V10 的世界观是三个系统：
 | `application-platform` | library jar | `application` | 应用的宿主：manifest、能力/应用/动作发现、Resource 统一读模型、Action 网关、权限、安装/会话、内置参考应用、MCP 适配器 |
 | `bootstrap-app` | **可执行 jar** | 无（只有启动类与测试） | 唯一同时看得见三方的模块；`spring-boot-maven-plugin:repackage` 只在这里开 |
 
-五组包两两不相交 —— 这既是为了边界清晰，也是 Java 的硬性要求（split package 会让两个模块的同名包在
+六组包两两不相交 —— 这既是为了边界清晰，也是 Java 的硬性要求（split package 会让两个模块的同名包在
 classpath 上静默合并）。`scripts/check-v10.sh` 第 1 步就是自动化检查这件事。
 
 > **`contracts` 与 `application-platform` 的分界规则**：*contracts 放「平台的调用方」需要的东西，
@@ -48,6 +48,21 @@ classpath 上静默合并）。`scripts/check-v10.sh` 第 1 步就是自动化�
 > `PrincipalType` 这些要用来拼 LLM prompt 的类型在 contracts；`ApplicationManifest` /
 > `ManifestParser` / `ManifestValidator` 这些解析与校验在 application-platform —— 数字人没有理由
 > 去校验别人的 JSON Schema。
+
+### 三个参考应用（一个迁移 + 两个新增）
+
+`application-platform` 里内置了三个应用，它们**不是**"平台自带的功能"，而是三份用来证明平台成立的
+样本。每个都只由三样东西组成：一份 `application-manifest.json`、一个 `LapApplicationModule` 实现
+（注册 action handler）、以及它自己的存储（或干脆不存）。
+
+| 应用 | 能力 | 性质 | 它证明什么 |
+|---|---|---|---|
+| `com.luxera.tictactoe` | `game.play` | 从 DH 迁过来的 | 一个应用可以不认识数字人；棋盘**就是**一条 Resource，不建表 |
+| `com.luxera.gomoku` | `game.play` | 新增 | 第二个同域应用。它的 action id 与井字棋**一模一样**（`game.make_move` 等），只有 URI scheme 不同 —— 所以 handler 注册表的键必须是 `(applicationId, version, actionId)`，用 `Map<String, …>` 会让后注册的覆盖先注册的 |
+| `com.luxera.reminder` | `reminder.manage` | 新增 | 跨能力域；一个把状态放在**自己表里**的应用（`backing: APP_OWNED` + `ResourceProjector`），证明平台允许"会话型资源"与"主体型资源"两种锚点 |
+
+「加一个新应用 = 一份 manifest + 一个 handler 注册，DH 一行不改」这句话的验收方式，就是这三个应用：
+五子棋落地时 `digital-human-platform` 的改动为零。
 
 ### 为什么 bootstrap-app 不直接叫 chat-platform
 
@@ -108,8 +123,14 @@ chat 与 DH 各自都有叫 `conversation` / `event` / `state` / `memory` 的包
 | `ChatWorldPort` | DH → Chat | 聊天平台 | `chat-platform` : `com.luxera.companion.conversation.ChatWorldAdapter` |
 | `CompanionDirectoryPort` | Chat → DH | 数字人平台 | `digital-human-platform` : `com.luxera.companion.runtime.CompanionDirectoryAdapter` |
 | `SimulatorAccessPort` | DH → Chat | 聊天平台 | `chat-platform` : `com.luxera.companion.simulator.server.SimulatorAccessAdapter` |
-| `ApplicationRuntimePort` | DH → Application | 应用平台 | `application-platform` : `com.luxera.companion.application.runtime.ApplicationRuntimeAdapter` |
+| `ApplicationRuntimePort` | DH → Application | 应用平台 | `application-platform` : `com.luxera.companion.application.action.ActionGateway` |
 | `ApplicationEventSink` | Application → DH | 数字人平台（**单向门**） | `digital-human-platform` : `com.luxera.companion.digitalhuman.event.DhApplicationEventSink` |
+
+> 前三个端口各家都写了一个 `*Adapter`；**`ApplicationRuntimePort` 没有** —— 它的实现类就是
+> `ActionGateway` 本身。这不是漏了个名字，而是这个端口与其余三个不同：它不是"把本地 Bean 包一层
+> 好让对面看不见"，而是平台*唯一*的动作入口（真人 REST、MCP 适配器、DH 进程内调用都从这里过）。
+> 再包一个 `ApplicationRuntimeAdapter` 只会多一层什么都不做的委派。
+> （曾有一份设计文档写成 `...runtime.ApplicationRuntimeAdapter`，那个类从来没有存在过。）
 
 后两个端口是 LAP v1 的全部接触面。它们合起来只允许两件事：
 
@@ -120,9 +141,17 @@ chat 与 DH 各自都有叫 `conversation` / `event` / `state` / `memory` 的包
   确定性铸造（如 `game://session/{id}#MOVE-0`），DH 侧的去重才有意义；否则重试会让 Agent
   对同一步行动两次。
 
-DH 侧只有一个消费者：`digitalhuman.event.EventRouter` 的 `APPLICATION_EVENT` 路由 →
-`runtime.AgentApplicationFlow`，四步 = 过滤 → 读 Resource → 问能做什么 → 执行并记入现实账本，
-全程跑在 `PersonActorRegistry.tell(personId, …)` 的 per-person 串行邮箱里。
+DH 侧挂在 `digitalhuman.event.EventRouter` 的 `APPLICATION_EVENT` 上有**两个**消费者，看的是同一条
+事件的两个侧面（`EventRouter.subscribe` 是追加语义，所以两者互不遮蔽）：
+
+| 消费者 | 它问的问题 |
+|---|---|
+| `runtime.AgentApplicationFlow` | 「我该做点什么」—— 过滤 → 读 Resource → 问能做什么 → 执行并记入现实账本，全程跑在 `PersonActorRegistry.tell(personId, …)` 的 per-person 串行邮箱里 |
+| `digitalhuman.event.ApplicationNotificationBridge` | 「该不该说给他听」—— 事件载荷里带 `notify` 块就落一条 `companion_notifications`，`type` 原样透传 |
+
+第二条路是 R5 加的，它让「提醒到点」不再需要一个 DH 侧的扫描器：`ReminderDispatchJob` 在应用侧
+到点发事件，是否变成用户看得见的通知由 DH 决定。这个类里没有一个字提到提醒 —— 它认识的只是
+`notify` 这个**形状**。
 
 > **LLM 优先、绝不降级到启发式**：LLM 不可用（或处于 mock）时 `AgentApplicationFlow` 直接返回，
 > 不落子、不随机、不"取第一个空格"。`AgentApplicationFlowTest` 断言此时 `execute()` 调用次数为 0 ——
@@ -164,7 +193,7 @@ POST /api/v1/actions:execute                     唯一的动作入口（Canonic
 
 ## 4. 测试怎么在"没有另一个平台"的情况下跑
 
-这是解耦是否彻底的**试金石**：`digital-human-platform` 的 229 个测试在 classpath 上
+这是解耦是否彻底的**试金石**：`digital-human-platform` 的 253 个测试在 classpath 上
 **既没有 chat-platform、也没有 application-platform** 的情况下全部跑通。
 
 - `digital-human-platform/src/test/java/com/luxera/companion/DigitalHumanTestApplication.java`
@@ -267,7 +296,9 @@ java -jar backend/bootstrap-app/target/companion-platform-bootstrap-1.0.0.jar
 | `subscription` | 会话之内的事件订阅（`SINK` 模式；`INBOX` 要等 R8 的 outbox） |
 | `action_invocation` | 幂等账本，`UQ(principal_type, principal_id, idempotency_key)` + `request_hash` + `started_at` |
 | `application_action_log` | 审计（权限判定 + 执行结果分开记 —— 旧表把两者塞进同一个字段，是废字段） |
-| `dh_application` / `dh_game_session` / `dh_application_action_log` / `reminders` | **遗留**：R4 起已无写入方（`/api/v10` 应用面已删、实测 404）；R8 由 `lap-drop-legacy.sh` 统一 DROP |
+| `reminder_item` | **应用自有**（`backing: APP_OWNED`）：提醒的真相在这里，读的时候由 `ReminderResourceProjector` 投影成 `reminder://owner/{ownerId}` 的 `ResourceView`。字段名与旧表不同（`note` / `dueAt`），但 DH 的 REST 面把它们翻译回 `content` / `remindAt` |
+| `dh_application` / `dh_game_session` / `dh_application_action_log` | **遗留**：`/api/v10` 应用面自 R4 起已删（实测 404），这三张表从此没有写入方；R8 由 `lap-drop-legacy.sh` 统一 DROP |
+| `reminders` | **遗留**：数字人的提醒表。R5 起**也没有写入方**了 —— 提醒（含生日提醒）的创建/完成/取消全部经 `reminder.create` / `reminder.complete` / `reminder.cancel` 落到 `reminder_item`；DH 侧只剩 `ReminderService` 通过 `ApplicationRuntimePort` 的读与调用。R8 一并 DROP |
 
 > **棋局状态最终不建表**：棋盘**就是**一条 Resource（`game://session/{id}` 的 `state_json`），
 > 在 action 的同事务内经 `ResourceStore` 写入。这是「Resource 是统一读模型」最直接的证明。

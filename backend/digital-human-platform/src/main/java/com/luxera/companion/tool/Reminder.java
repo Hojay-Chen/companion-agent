@@ -1,66 +1,44 @@
 package com.luxera.companion.tool;
 
-import com.luxera.companion.common.convert.StringMapConverter;
 import lombok.Getter;
 import lombok.Setter;
-import org.hibernate.annotations.CreationTimestamp;
 
-import javax.persistence.Column;
-import javax.persistence.Convert;
-import javax.persistence.Entity;
-import javax.persistence.Id;
-import javax.persistence.PrePersist;
-import javax.persistence.Table;
 import java.time.LocalDateTime;
-import java.util.Map;
-import java.util.UUID;
 
-/** 提醒(伴侣生日/用户生日/用户自定义) */
-@Entity
-@Table(name = "reminders")
+/**
+ * 提醒的对外形状 —— <b>DTO, 不再是实体</b>(LAP v1 R5)。
+ *
+ * <p>它曾经是一张 {@code reminders} 表的映射, 数字人因此成了提醒的<em>所有者</em>: 谁写谁读都在
+ * 这边, 于是"提醒"这件事有两份真相 —— 数字人这张表, 和用户装的那个提醒应用。现在只剩一份:
+ * 提醒住在 {@code com.luxera.reminder} 的 {@code reminder_item} 表里, 这个类只是把应用给出的
+ * {@code ResourceView.state()} 翻译成前端与聊天流程一直在用的那几个字段。
+ *
+ * <p>字段名一个没改(<b>含 {@code content} 对应应用的 {@code note}、{@code remindAt} 对应
+ * {@code dueAt}</b>)—— 翻译只发生在 {@link ReminderService} 里, 前端 {@code Reminder} 类型与
+ * {@code /api/companions/{id}/reminders} 的 JSON 形状因此完全不变。
+ *
+ * <p>{@code status} 用的是数字人这边的词汇({@code pending / done / cancelled}), 不是应用的
+ * {@code PENDING / DISPATCHED / DONE / CANCELLED}。两套词汇的换算同样只在
+ * {@link ReminderService} 一处发生 —— 前端里那一行 {@code r.status === 'done'} 不该因为
+ * 应用改用大写而失效。
+ */
 @Getter
 @Setter
 public class Reminder {
 
-    @Id
-    @Column(name = "id", length = 36)
+    public static final String STATUS_PENDING = "pending";
+    public static final String STATUS_DONE = "done";
+    public static final String STATUS_CANCELLED = "cancelled";
+
     private String id;
-
-    @Column(name = "user_id", nullable = false, length = 36)
     private String userId;
-
-    @Column(name = "companion_id", nullable = false, length = 36)
     private String companionId;
-
-    /** birthday | user_birthday | user_set | check_in */
-    @Column(nullable = false, length = 32)
     private String type;
-
-    @Column(nullable = false, length = 128)
     private String title;
-
-    @Column(length = 500)
+    /** 应用里叫 {@code note} —— 名字不同的同一个东西。 */
     private String content;
-
-    @Column(name = "remind_at", nullable = false)
+    /** 应用里叫 {@code dueAt}。 */
     private LocalDateTime remindAt;
-
-    /** pending | done | cancelled */
-    @Column(length = 32)
-    private String status = "pending";
-
-    @Convert(converter = StringMapConverter.class)
-    @Column(columnDefinition = "text")
-    private Map<String, Object> payload;
-
-    @CreationTimestamp
-    @Column(name = "created_at", nullable = false, updatable = false)
+    private String status = STATUS_PENDING;
     private LocalDateTime createdAt;
-
-    @PrePersist
-    void assignId() {
-        if (id == null) {
-            id = UUID.randomUUID().toString();
-        }
-    }
 }

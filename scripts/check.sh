@@ -2,6 +2,7 @@
 # Luxera Companion — 全量验收测试(唯一入口)
 # 覆盖: 表结构 / 端到端(登录→创建伴侣→指定关系类型) / 消息同步落库 / clientMessageId 幂等
 #       / Person+多维关系 / 会话参与者 / SSE 游标重放 / 行为引擎 / 会话线程 / 反 AI 评估
+#       / 提醒 REST 契约(LAP v1 R5: 数据归应用, 接口未变)
 # 用法: BASE=http://127.0.0.1:8081 bash scripts/check.sh
 set -euo pipefail
 BASE="${BASE:-http://127.0.0.1:8081}"
@@ -164,7 +165,56 @@ M2=$(curl -s "$BASE/api/companions/$CID/v9/metrics" -H "Authorization: Bearer $T
 RATE=$(echo "$M2" | $PY -c "import sys,json;print(json.load(sys.stdin).get('cacheHitRate',0))" 2>/dev/null || echo 0)
 echo "    (metrics cacheHitRate = $RATE%)"
 
-# ── 测试 12: 清理验收产物(保持环境始终只有两个测试 agent) ──
-note "测试10: 清理验收伴侣"
+# ── 测试 12: 提醒契约(LAP v1 R5 —— 数据换了主人, 接口一字未改) ──
+# 提醒的真相从数字人的 reminders 表搬到了 com.luxera.reminder 应用的 reminder_item 表。
+# 这一节钉住两件事: ① 前端依赖的四个端点与 JSON 形状原样不变; ② 没有人偷偷往旧表里回写。
+note "测试12: 提醒 REST 契约(数据归应用, 接口未变)"
+RAPI="$BASE/api/companions/$CID/reminders"
+RJSON=/tmp/check-reminders.json
+rg() { $PY -c "import sys,json;d=json.load(open('$RJSON'));print($1)" 2>/dev/null || echo ""; }
+
+# 旧表基线 —— 后面每一步都要确认它一动不动(R8 会把这行连同表一起删掉)
+LEGACY0=$(PGPASSWORD=shared-secret $PSQL "select count(*) from reminders" 2>/dev/null | tr -d ' ')
+
+CODE=$(curl -s -o "$RJSON" -w '%{http_code}' "$RAPI" -H "Authorization: Bearer $TOKEN")
+[ "$CODE" = "200" ] && ok "GET 列表 200" || fail "GET 列表状态码 $CODE"
+[ "$(rg 'len(d)')" = "0" ] && ok "新伴侣名下没有提醒" || fail "初始列表不为空"
+
+RAT=$(date -d '+1 day' '+%Y-%m-%dT%H:%M:00')
+CODE=$(curl -s -o "$RJSON" -w '%{http_code}' -X POST "$RAPI" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"type\":\"user_set\",\"title\":\"验收提醒\",\"content\":\"契约没变\",\"remindAt\":\"$RAT\"}")
+[ "$CODE" = "201" ] && ok "POST 创建 201" || fail "创建状态码 $CODE"
+RID=$(rg "d['id']")
+[ -n "$RID" ] && ok "返回了 id=$RID" || fail "创建响应里没有 id"
+[ "$(rg "d['title']")" = "验收提醒" ] && ok "title 原样返回" || fail "title 不符: $(rg "d['title']")"
+[ "$(rg "d['content']")" = "契约没变" ] && ok "content 原样返回" || fail "content 不符"
+[ "$(rg "d['remindAt']")" = "$RAT" ] && ok "remindAt 原样返回($RAT)" || fail "remindAt 不符: $(rg "d['remindAt']")"
+[ "$(rg "d['status']")" = "pending" ] && ok "status=pending" || fail "status=$(rg "d['status']")"
+
+# 单一数据源: 这一条提醒在应用的表里, 不在数字人的旧表里
+APPN=$(PGPASSWORD=shared-secret $PSQL "select count(*) from reminder_item where id='$RID'" 2>/dev/null | tr -d ' ')
+[ "$APPN" = "1" ] && ok "落在应用的 reminder_item 表里" || fail "reminder_item 里没有 $RID"
+LEGACY1=$(PGPASSWORD=shared-secret $PSQL "select count(*) from reminders" 2>/dev/null | tr -d ' ')
+[ "$LEGACY1" = "$LEGACY0" ] && ok "旧 reminders 表没有被回写(仍是 $LEGACY0 行)" \
+  || fail "旧表多了 $((LEGACY1 - LEGACY0)) 行 —— 两个 Source of Truth 并存了"
+
+CODE=$(curl -s -o "$RJSON" -w '%{http_code}' "$RAPI" -H "Authorization: Bearer $TOKEN")
+[ "$(rg 'len(d)')" = "1" ] && ok "列表读得到刚建的那条" || fail "列表数量不符"
+
+CODE=$(curl -s -o "$RJSON" -w '%{http_code}' -X PUT "$RAPI/$RID/done" -H "Authorization: Bearer $TOKEN")
+[ "$CODE" = "200" ] && ok "PUT done 200" || fail "完成状态码 $CODE"
+[ "$(rg "d['status']")" = "done" ] && ok "status=done(前端划掉那一行的判据)" || fail "status=$(rg "d['status']")"
+
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$RAPI/$RID" -H "Authorization: Bearer $TOKEN")
+[ "$CODE" = "204" ] && ok "DELETE 204" || fail "删除状态码 $CODE"
+# 旧实现里 delete 就是"标成 cancelled", list 也不过 status —— 契约照旧: 条目还在, 状态变了。
+# (这条断言是在改代码之前先照着旧实现核过一遍的: 新写的那版"删完就没了"才是错的。)
+CODE=$(curl -s -o "$RJSON" -w '%{http_code}' "$RAPI" -H "Authorization: Bearer $TOKEN")
+[ "$(rg 'len(d)')" = "1" ] && ok "取消后条目仍在(软删, 与旧实现一致)" || fail "列表数量不符"
+[ "$(rg "d[0]['status']")" = "cancelled" ] && ok "status=cancelled" || fail "status=$(rg "d[0]['status']")"
+
+# ── 测试 13: 清理验收产物(保持环境始终只有两个测试 agent) ──
+note "测试13: 清理验收伴侣"
 curl -s -X DELETE "$BASE/api/companions/$CID" -H "Authorization: Bearer $TOKEN" -o /dev/null 2>/dev/null \
   && ok "验收伴侣已清理" || ok "验收伴侣清理跳过"

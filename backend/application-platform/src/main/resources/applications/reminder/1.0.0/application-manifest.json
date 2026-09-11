@@ -1,0 +1,164 @@
+{
+  "identity": {
+    "id": "com.luxera.reminder",
+    "name": "提醒",
+    "version": "1.0.0",
+    "description": "记住你交代的事, 到点了说一声。提醒属于你, 不属于某一次会话。",
+    "category": "productivity"
+  },
+
+  "capabilities": [
+    {
+      "id": "reminder.manage",
+      "title": "提醒",
+      "description": "创建、修改、完成与查看提醒/日程",
+      "category": "productivity"
+    }
+  ],
+
+  "actions": [
+    {
+      "id": "reminder.create",
+      "capability": "reminder.manage",
+      "title": "记一条提醒",
+      "description": "在某个人的收件箱里新增一条提醒, 到时间后通知他",
+      "permission": "WRITE",
+      "risk": "LOW",
+      "attention": "AWARE",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "提醒事项, 一句话" },
+          "note": { "type": "string", "description": "补充说明, 可留空" },
+          "dueAt": {
+            "type": "string",
+            "description": "什么时候提醒, 本地时间, 形如 2026-09-12T15:00"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["user_set", "birthday", "check_in"],
+            "description": "提醒的来路; 用户自己说的是 user_set, 生日是 birthday"
+          },
+          "companionId": {
+            "type": "string",
+            "description": "这条提醒与哪位数字人有关; 生日提醒必须给, 用于「每年最多一条」的去重"
+          }
+        },
+        "required": ["title", "dueAt"]
+      },
+      "agentHint": "用户说了时间就必须原样带上 dueAt, 不要自己改成别的时刻, 也不要替他决定提前多久提醒。用户没给时间就先问一句, 别猜。"
+    },
+    {
+      "id": "reminder.update",
+      "capability": "reminder.manage",
+      "title": "改一条提醒",
+      "description": "修改标题、说明或提醒时间",
+      "permission": "WRITE",
+      "risk": "LOW",
+      "attention": "AWARE",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "reminderId": { "type": "string" },
+          "title": { "type": "string" },
+          "note": { "type": "string" },
+          "dueAt": { "type": "string", "description": "新的提醒时间, 形如 2026-09-12T15:00" }
+        },
+        "required": ["reminderId"]
+      },
+      "agentHint": "改时间会让这条提醒重新计时 —— 改到未来的提醒还会再响一次, 改到过去的不会。"
+    },
+    {
+      "id": "reminder.complete",
+      "capability": "reminder.manage",
+      "title": "这件事办了",
+      "description": "把提醒标记为已完成",
+      "permission": "EXECUTE",
+      "risk": "LOW",
+      "attention": "AWARE",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "reminderId": { "type": "string" }
+        },
+        "required": ["reminderId"]
+      },
+      "agentHint": "用户说「已经办好了」「不用提醒了」时用它。重复调用是安全的。"
+    },
+    {
+      "id": "reminder.cancel",
+      "capability": "reminder.manage",
+      "title": "取消",
+      "description": "取消一条提醒, 不再触发",
+      "permission": "EXECUTE",
+      "risk": "LOW",
+      "attention": "AWARE",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "reminderId": { "type": "string" }
+        },
+        "required": ["reminderId"]
+      },
+      "agentHint": "用户说「算了」「不用了」时用它。它和「已完成」的区别只是来路, 之后都不再触发。"
+    },
+    {
+      "id": "reminder.list",
+      "capability": "reminder.manage",
+      "title": "看看有哪些提醒",
+      "description": "读出某个人收件箱里的全部提醒",
+      "permission": "READ",
+      "risk": "NONE",
+      "attention": "NONE",
+      "agentHint": "只读。想知道「他都交代过什么」时用它, 不要为了看一眼而新建或改动任何东西。"
+    }
+  ],
+
+  "resources": [
+    {
+      "type": "reminder.inbox",
+      "uriTemplate": "reminder://owner/{ownerId}",
+      "backing": "APP_OWNED",
+      "agentHint": "state.items 是这个人的全部提醒, 每条含 id / type / title / note / dueAt / status(ISO 本地时间, 形如 2026-09-12T15:00); state.pending 是还没办完的条数, state.nextDueAt 是最近一条待办的时间。URI 里的 ownerId 必须是这个人自己 —— 看别人的收件箱会被拒。"
+    }
+  ],
+
+  "events": [
+    {
+      "type": "reminder.created",
+      "title": "记下了一条提醒",
+      "triggersAgent": false,
+      "idTemplate": "{uri}#CREATE-{reminderId}"
+    },
+    {
+      "type": "reminder.due",
+      "title": "到点了",
+      "triggersAgent": true,
+      "idTemplate": "{uri}#DUE-{reminderId}-{dueKey}"
+    },
+    {
+      "type": "reminder.completed",
+      "title": "提醒办完了",
+      "triggersAgent": false,
+      "idTemplate": "{uri}#DONE-{reminderId}"
+    },
+    {
+      "type": "reminder.cancelled",
+      "title": "提醒取消了",
+      "triggersAgent": false,
+      "idTemplate": "{uri}#CANCEL-{reminderId}"
+    }
+  ],
+
+  "permissions": [
+    {
+      "capability": "reminder.manage",
+      "level": "EXECUTE",
+      "riskCeiling": "LOW"
+    }
+  ],
+
+  "runtime": {
+    "type": "NATIVE"
+  }
+}

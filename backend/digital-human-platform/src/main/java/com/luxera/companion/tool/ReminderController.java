@@ -17,6 +17,14 @@ import org.springframework.web.bind.annotation.RestController;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * 提醒的 REST 面 —— <b>契约一字未改</b>(LAP v1 R5)。
+ *
+ * <p>四个端点、请求体、响应 JSON 与前端 {@code types/index.ts} 里的 {@code Reminder} 类型
+ * 都还是原来的样子。改的只有实现: 数据不再来自数字人自己的 {@code reminders} 表, 而是来自
+ * {@code com.luxera.reminder} 应用。前端因此不需要知道提醒换了主人 —— 这正是"改造"与
+ * "重写"的区别: 所有权变了, 接口没变。
+ */
 @RestController
 @RequestMapping("/api/companions/{companionId}/reminders")
 public class ReminderController {
@@ -45,7 +53,7 @@ public class ReminderController {
         String userId = currentUser.requireUserId();
         companionService.requireOwned(userId, companionId);
         return reminderService.create(userId, companionId,
-                req.getType(), req.getTitle(), req.getContent(), req.getRemindAt(), null);
+                req.getType(), req.getTitle(), req.getContent(), req.getRemindAt());
     }
 
     @PutMapping("/{reminderId}/done")

@@ -108,7 +108,7 @@ backend/
 | `ChatWorldPort` | DH → Chat | chat 的 `ChatWorldAdapter` | 数字人读会话/写消息（她的"外部世界"） |
 | `CompanionDirectoryPort` | Chat → DH | DH 的 `CompanionDirectoryAdapter` | 聊天平台查"这个 companion 是谁" |
 | `SimulatorAccessPort` | DH → Chat | chat 的 `SimulatorAccessAdapter` | 数字人换设备 token |
-| `ApplicationRuntimePort` | DH → Application | 应用平台的 `ApplicationRuntimeAdapter` | 读 Resource / 问能做什么 / 执行 action |
+| `ApplicationRuntimePort` | DH → Application | 应用平台的 `ActionGateway`（没有 `*Adapter` 类） | 读 Resource / 问能做什么 / 执行 action |
 | `ApplicationEventSink` | Application → DH | DH 的 `DhApplicationEventSink` | 应用通知数字人"有事发生"（**单向门**） |
 
 > **真人与 Agent 走同一条路**：没有"Agent 专用 API"。数字人操作应用时和真人一样经过
@@ -118,7 +118,7 @@ backend/
 数据面则经 **DHCP v1 WebSocket 协议**（`contracts.dhcp`）流动，聊天平台只看见一台"机器用户设备"，
 完全不知道 Companion 的存在。
 
-### 重构成果（9 轮，当时全量 294 测试全绿；应用平台拆出后为 329，LAP v1 的 R4 落地后为 465 —— 见下一节）
+### 重构成果（9 轮，当时全量 294 测试全绿；应用平台拆出后为 329，LAP v1 的 R5 落地后为 558 —— 见下一节）
 
 **架构解耦（R1-R4）**：
 1. **Maven 多模块拆分**：见上（V10 落地时为五模块，LAP v1 拆出 `application-platform` 后为六个）。
@@ -225,7 +225,7 @@ backend/
 3. **没有"操作"的抽象** —— `/api/v10/games/tictactoe/*` 从请求体里手取 `userId`/`companionId`，
    忽略已认证身份；`Idempotency-Key` 收下就丢。
 
-### 已完成（R1–R4）
+### 已完成（R1–R5）
 
 | 轮 | 内容 | 证据 |
 |---|---|---|
@@ -233,6 +233,30 @@ backend/
 | **R2** | DH 泛化第一步：`EventRouter` 加 `subscribe`（`register` 保持覆盖语义）；新增 `AgentApplicationFlow`（过滤 → 读 Resource → 问能做什么 → 执行 + 记现实账本）；`DhApplicationEventSink` 永久留在 DH；`AgentRuntime` 删掉 `onApplicationEvent` / `parseBoardState` / `evaluateAndDecideMove` / `boardToString` | `AgentApplicationFlowTest`（mock LLM ⇒ **零次 execute**）、`EventRouterFanOutTest` |
 | **R3** | 抽出第 6 个 Maven 模块 `application-platform`（`com.luxera.companion.application`）；DH 的 `digitalhuman/application/**` 21 个主文件 + 5 个测试全部删除；`/api/v10` 控制器原样搬走（前端不破）；边界守卫扩展到三方 | `check-v10.sh`（41 个顶层包分属 5 个所有权模块，10 对引用 + 10 对 pom 全过）、`LapEndToEndTest`、`DhReactsToApplicationEventTest` |
 | **R4** | **LAP 面 + 真人应用页，删 `/api/v10`**：manifest 类型/解析/校验/注册（`ManifestValidator` / `ManifestRegistrar`，发布时校验每个 action 都能解析到该版本的 handler）；`ActionGateway` + `POST /api/v1/actions:execute`（真幂等 + 两段式事务 + `ActionInvocationReaperJob` 崩溃恢复 + `expectedResourceVersion` CAS）；`/api/v1/{capabilities,applications,resources,sessions,subscriptions}`；安装/会话/订阅与四条归属不变量；`application-platform` 的**全部 12 张表**；前端「应用」页打**同一个** execute 端点 | `check-lap.sh`（断言 1–9、13 全过，11/12/14/15 待轮次）、application-platform **17 → 153 测试**、`npm run build`、`curl /api/v10/applications` → 404 |
+| **R5** | **参考应用：五子棋 + 提醒/日程**（含 DH 提醒只读改造）：`com.luxera.gomoku`（`game.play` 第二候选，action id 与井字棋相同、URI scheme 不同）；`com.luxera.reminder`（`reminder.manage`，`backing: APP_OWNED` + `ReminderResourceProjector` + `ReminderDispatchJob`）；DH 侧 `ReminderService` 改为读 Resource / 写 action，`ReminderRepository` 与 `@Entity Reminder` 删除，`Reminder` 降级为 DTO；新增 `ApplicationNotificationBridge`（`notify` 块 → `companion_notifications`）；`ProactiveEngine` 的提醒循环删除 | `check-lap.sh` 断言 2/3/9b/10 由 skip 转正（全绿，5 项待轮次）；`check.sh` 新增 16 条提醒契约断言全绿（含"旧 `reminders` 表一行没多"）；DH **229 → 253 测试**、application-platform **153 → 222**；三条禁止项逐条 grep 通过 |
+
+**R5 的关键决定**（两个新增参考应用 + DH 提醒只读改造）：
+
+1. **提醒的真相搬进了应用，DH 的 REST 面一个字没改。** `reminder_item` 表归
+   `com.luxera.reminder`；DH 的 `ReminderService` 只剩两件事 —— 读 `reminder://owner/{userId}`
+   （经 `ResourceProjector` 投影，不是读自己的表）、写 `reminder.create` / `reminder.complete` /
+   `reminder.cancel`。`ReminderRepository` 连同它的 JPA 一起删了，`Reminder` 从实体降级成 DTO。
+   `scripts/check.sh` 新增一节（16 条断言）钉住"契约未变"，其中一条专门断言旧的 `reminders` 表
+   **在整条链路跑完之后一行都没多** —— 两个 Source of Truth 并存是全轮最大的回退风险。
+2. **DH 调提醒应用时身份显式写成 `HUMAN(userId)`，不是 `AGENT(companionId)`。** 提醒是"主体型资源"，
+   URI 里的 `ownerId` 就是这个人，应用会核对 `principalId == ownerId`。写成数字人自己会被
+   `NOT_RESOURCE_OWNER` 拒掉 —— 一个从报错里很难看出来的错。
+3. **每次调用带一个全新的 `correlationId`。** 进程内调用的幂等键从 `correlationId + target` 派生，
+   而提醒的 target 永远是同一个收件箱；共用一个 id 会让"提醒我喝水"说两遍只得到一条。
+   "每年最多一条生日提醒"这种真正的去重规则，由**应用**按数据判定，不由调用方自己记着。
+4. **`ApplicationNotificationBridge`：DH 侧第二个 `APPLICATION_EVENT` 消费者。** 它和
+   `AgentApplicationFlow` 看同一条事件的两个侧面（"该不该说给他听" / "我该做点什么"）。
+   应用在自己的事件载荷里放一个 `notify` 块，桥就落一条通知；`type` 是不透明字符串，原样透传。
+   这个类里没有一个字提到提醒 —— 生日提醒因此不再需要 DH 侧的扫描器。
+5. **五子棋证明的是"同域第二个应用不需要改 DH"。** 它与井字棋的 action id **完全一样**
+   （`game.create` / `game.state` / `game.make_move` / `game.surrender`），只有 URI scheme
+   （`gomoku://match/{id}` vs `game://session/{id}`）不同 —— 发现链的第 2 级（一个能力多个候选）
+   这才算真的被走过。
 
 **R2/R3 的关键设计**：`TicTacToeGameService` 在提交后不再直接投递事件，而是发一条
 `contracts.application.ApplicationEvent`（经注入的 `ApplicationEventSink`）—— 这是整个搬迁中
@@ -275,17 +299,20 @@ Decision 零修改"。提醒的所有权是**单一数据源：应用拥有，DH
 
 ### 当前验收
 
-- `mvn test`：**465 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform 24 /
-  digital-human-platform 229 / application-platform **153** / bootstrap-app 36
+- `mvn test`：**558 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform 24 /
+  digital-human-platform **253** / application-platform **222** / bootstrap-app 36
 - `bash scripts/check-v10.sh` → `check-v10 OK`（41 个顶层包分属 5 个所有权模块，10 对引用 + 10 对 pom）
-- `bash scripts/check.sh`（起 jar）→ **✅ 全量验收全部通过**（聊天/数字人链路无回归）
-- `bash scripts/check-lap.sh` → **✅ 验收通过（9 项未到轮次，已跳过）**；
-  断言 13 确认 `GET /api/v10/applications` → **404**，旧应用面已下线
+- `bash scripts/check.sh`（起 jar）→ **✅ 全量验收全部通过**（聊天/数字人链路无回归；
+  含 R5 新增的 16 条提醒契约断言）
+- `bash scripts/check-lap.sh` → **✅ 验收通过（5 项未到轮次，已跳过）**；断言 2 / 3 / 9b / 10 已转正
+  （`reminder.manage` 入目录、`game.play` 两个候选、未安装 → `NOT_INSTALLED`、
+  装上提醒应用后经同一个 execute 端点建提醒并读回收件箱）；断言 13 确认
+  `GET /api/v10/applications` → **404**，旧应用面已下线
 - `cd frontend && npm run build` → 通过
 - **CI 顺序**（每一轮都照这个跑）：`check-v10.sh` → `mvn test` → 起 jar → `check.sh` →
   `check-lap.sh` → `npm run build`
-- 尚未完成：**R5** 五子棋 + 提醒/日程（含 DH 提醒只读改造）、**R6** MCP 适配器、
-  **R7** Agent 的 capability→action LLM 契约、**R8** 生命周期状态机 + REMOTE + outbox + 清理遗留表
+- 尚未完成：**R6** MCP 适配器、**R7** Agent 的 capability→action LLM 契约、
+  **R8** 生命周期状态机 + REMOTE + outbox + `lap-drop-legacy.sh` 清理遗留表
 
 ---
 
@@ -494,7 +521,7 @@ Decision 零修改"。提醒的所有权是**单一数据源：应用拥有，DH
 | 认知 | `thoughts`、`intentions`、`open_loops`、`emotional_episodes` |
 | 世界 | `world_events`、`digital_world_events`、`event_log`、`scheduled_actions`、`pending_message_states`、`interaction_sessions` |
 | 行为 | `behavior_patterns` |
-| 工具 | `reminders`、`companion_notifications`、`reflection_records` |
+| 工具 | `reminders`（遗留，R8 删除）、`companion_notifications`、`reflection_records` |
 
 ### 验收
 
@@ -595,7 +622,7 @@ users 1─* companions 1─* conversations 1─* messages
                      ├─* memories 1─* memory_links（自关联图谱）
                      ├─* user_facts / user_preferences / user_patterns / user_hypotheses
                      ├─1 agent_states
-                     ├─* reminders
+                     ├─* reminders（遗留，R8 删除）
                      └─* companion_notifications
 ```
 
@@ -653,7 +680,7 @@ users 1─* companions 1─* conversations 1─* messages
 | `shared_experiences` | id, relationship_id, type, title, description, importance, occurred_at |
 | `agent_states` | id, companion_id, mood, energy, stress, social_energy, curiosity, emotional_closeness, updated_at |
 | `reflection_records` | id, user_id, companion_id, type(daily/weekly), period, summary, insights(JSON), memory_candidates(JSON), user_model_candidates(JSON), relationship_candidates(JSON) |
-| `reminders` | id, user_id, companion_id, type(birthday/user_set/check_in), title, content, remind_at, status, payload(JSON) |
+| `reminders` | id, user_id, companion_id, type(birthday/user_set/check_in), title, content, remind_at, status, payload(JSON) —— **过渡期遗留**：LAP v1 R5 起无写入方，提醒已归 `com.luxera.reminder` 的 `reminder_item` 表（见「LAP v1 · 应用平台」一节），R8 由 `lap-drop-legacy.sh` DROP |
 | `companion_notifications` | id, user_id, companion_id, type, title, content, is_read, created_at |
 
 ### 9.6 JSON 存储实现
@@ -1012,8 +1039,8 @@ public interface LlmGateway {
 | GET | `/api/companions/{cid}/relationship` | 关系+事件+共同经历+状态 |
 | GET | `/api/companions/{cid}/relationship/{events,shared-experiences}` | 明细 |
 | GET | `/api/companions/{cid}/state` | Agent 状态 |
-| GET/POST | `/api/companions/{cid}/reminders` | 提醒列表/创建 |
-| PUT/DELETE | `/api/companions/{cid}/reminders/{id}/done` 等 | 完成/删除 |
+| GET/POST | `/api/companions/{cid}/reminders` | 提醒列表/创建（**契约自 LAP v1 R5 起未变**；数据已归 `com.luxera.reminder` 应用，DH 只是转发） |
+| PUT/DELETE | `/api/companions/{cid}/reminders/{id}/done` 等 | 完成/删除（`DELETE` 是软删：状态转 `cancelled`，条目仍在列表里 —— 与改造前一致） |
 | GET | `/api/companions/{cid}/notifications` | 通知列表 |
 | PUT | `/api/companions/{cid}/notifications/{id}/read` · `/read-all` | 已读 |
 | GET | `/api/companions/{cid}/notifications/unread-count` | 未读数 |

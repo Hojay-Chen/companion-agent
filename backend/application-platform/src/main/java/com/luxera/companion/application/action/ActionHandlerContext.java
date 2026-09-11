@@ -165,25 +165,14 @@ public final class ActionHandlerContext {
 
     /**
      * 按 manifest 的 {@code events[].idTemplate} 铸造确定性事件 id。
-     * 模板里可用的占位符: {@code {uri}} 与 {@code {<data 字段名>}}。
-     * 没声明模板时退回 {@code uri#type} —— 仍然确定性, 绝不退回随机 UUID。
+     *
+     * <p>实现委托给 {@link com.luxera.companion.application.manifest.EventIdMinter} ——
+     * 应用还有第二条发事件的路径(平台维护任务的定时扫描), 两条路径必须铸出同一种 id,
+     * 否则同一个原因会生出两个事件 id, 去重失效、提醒被送达两次。
      */
     private String mintEventId(String type, JsonNode data) {
-        String template = manifest.events().stream()
-                .filter(e -> e.type().equals(type))
-                .map(ApplicationManifest.EventDecl::idTemplate)
-                .filter(t -> t != null && !t.isBlank())
-                .findFirst()
-                .orElse(null);
-        if (template == null) return target() + "#" + type;
-        String out = template.replace("{uri}", target());
-        if (data != null && data.isObject()) {
-            for (var it = data.fields(); it.hasNext(); ) {
-                var field = it.next();
-                out = out.replace("{" + field.getKey() + "}", field.getValue().asText(""));
-            }
-        }
-        return out;
+        return com.luxera.companion.application.manifest.EventIdMinter
+                .mint(manifest, type, target(), data);
     }
 
     /** manifest 的 {@code uriTemplate} 匹配 —— 见 {@link UriTemplate} 的类注释。 */

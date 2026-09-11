@@ -17,6 +17,7 @@ import com.luxera.companion.application.repository.InstallationRepository;
 import com.luxera.companion.application.resource.ResourceStore;
 import com.luxera.companion.application.resource.StateConflictException;
 import com.luxera.companion.application.session.ApplicationSessionService;
+import com.luxera.companion.application.session.InstallationService;
 import com.luxera.companion.application.session.SessionException;
 import com.luxera.companion.contracts.application.ActionError;
 import com.luxera.companion.contracts.application.ActionRequest;
@@ -76,6 +77,7 @@ public class ActionGateway implements ApplicationRuntimePort {
     private final PermissionEvaluator permissions;
     private final IdempotencyService idempotency;
     private final ApplicationSessionService sessions;
+    private final InstallationService installationService;
     private final InstallationRepository installations;
     private final LapEventPublisher events;
     private final ActionAuditRecorder audit;
@@ -91,6 +93,7 @@ public class ActionGateway implements ApplicationRuntimePort {
                          PermissionEvaluator permissions,
                          IdempotencyService idempotency,
                          ApplicationSessionService sessions,
+                         InstallationService installationService,
                          InstallationRepository installations,
                          LapEventPublisher events,
                          ActionAuditRecorder audit,
@@ -105,6 +108,7 @@ public class ActionGateway implements ApplicationRuntimePort {
         this.permissions = permissions;
         this.idempotency = idempotency;
         this.sessions = sessions;
+        this.installationService = installationService;
         this.installations = installations;
         this.events = events;
         this.audit = audit;
@@ -188,6 +192,18 @@ public class ActionGateway implements ApplicationRuntimePort {
     }
 
     // ═══════════════════════════ 执行 ═══════════════════════════
+
+    /**
+     * 进程内的"保证装过" —— 幂等, 走的是和 HTTP 安装<em>同一段</em>代码。
+     *
+     * <p>刻意不做成"没装就静默跳过": 装不上(应用没发布版本 / 身份不合法)应当让调用方知道,
+     * 它才好决定是降级还是报错。静默跳过会让"提醒功能不工作"变成一个需要翻日志才能定位的现象。
+     */
+    @Override
+    public void ensureInstalled(String applicationId, InvocationContext ctx) {
+        ResolvedPrincipal principal = principals.resolveInternal(ctx);
+        installationService.install(applicationId, principal, null);
+    }
 
     /** {@link ApplicationRuntimePort} 的进程内形态: 身份来自 {@link InvocationContext}。 */
     @Override
@@ -441,12 +457,28 @@ public class ActionGateway implements ApplicationRuntimePort {
                 .withCorrelation(principal.correlationId());
     }
 
-    /** 进程内调用的确定性幂等键: 同一次因果事件重放 → 同一个键 → 被幂等层短路。 */
+    /**
+     * 进程内调用的确定性幂等键: 同一次因果事件重放 → 同一个键 → 被幂等层短路。
+     *
+     * <p><b>{@code target} 必须参与其中, 不能只在没有 correlationId 时才用它。</b>一个
+     * correlationId 描述的是"这一次因果", 而一次因果完全可能落在两个不同的资源上 —— 数字人
+     * 收到一条 {@code reminder.due} 后既可能改这条提醒、也可能同时看它的收件箱。若键里只有
+     * correlationId + actionId, 第二次调用会被当成第一次的重放, <em>安静地返回另一个资源的结果</em>。
+     * 那种错误不会报错, 只会让调用方拿到一份不属于它的状态。
+     *
+     * <p>截断时补一个哈希尾巴: 直接 {@code substring} 会把 {@code target}(它恰好在末尾)整个切掉,
+     * 于是键又退化成"只有 correlationId + actionId"。
+     */
     static String deriveIdempotencyKey(ActionRequest request, ResolvedPrincipal principal) {
-        String seed = principal.correlationId() != null ? principal.correlationId() : request.target();
+        String correlation = principal.correlationId();
+        String seed = StringUtils.hasText(correlation)
+                ? correlation + "@" + request.target()
+                : request.target();
         String key = "inproc:" + principal.typeName() + ":" + principal.principalId()
                 + ":" + request.action() + ":" + seed;
-        return key.length() <= 200 ? key : key.substring(0, 200);
+        return key.length() <= 200
+                ? key
+                : key.substring(0, 160) + ":" + Integer.toHexString(key.hashCode());
     }
 
     private ResourceView withHint(ResourceView view, String uri) {

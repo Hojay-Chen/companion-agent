@@ -16,8 +16,6 @@ import com.luxera.companion.relationship.Relationship;
 import com.luxera.companion.relationship.RelationshipRepository;
 import com.luxera.companion.thought.Thought;
 import com.luxera.companion.thought.ThoughtService;
-import com.luxera.companion.tool.Reminder;
-import com.luxera.companion.tool.ReminderRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -46,8 +44,6 @@ public class ProactiveEngine {
     private final PersonaService personaService;
     private final RelationshipRepository relationshipRepo;
     private final ChatWorldPort chatWorld;
-    private final NotificationService notificationService;
-    private final ReminderRepository reminderRepo;
 
     private final CompanionSchedule schedule;
     private final OpenLoopService openLoopService;
@@ -58,8 +54,7 @@ public class ProactiveEngine {
 
     public ProactiveEngine(AppProperties props, CompanionRepository companionRepo, PersonaService personaService,
                            RelationshipRepository relationshipRepo, ChatWorldPort chatWorld,
-                           NotificationService notificationService,
-                           ReminderRepository reminderRepo, CompanionSchedule schedule,
+                           CompanionSchedule schedule,
                            OpenLoopService openLoopService, ThoughtService thoughtService,
                            com.luxera.companion.state.AgentStateService agentStateService,
                            com.luxera.companion.digitalhuman.conversation.ConversationRuntime conversationRuntime) {
@@ -68,8 +63,6 @@ public class ProactiveEngine {
         this.personaService = personaService;
         this.relationshipRepo = relationshipRepo;
         this.chatWorld = chatWorld;
-        this.notificationService = notificationService;
-        this.reminderRepo = reminderRepo;
 
         this.schedule = schedule;
         this.openLoopService = openLoopService;
@@ -91,13 +84,12 @@ public class ProactiveEngine {
         List<String> actions = new ArrayList<>();
         LocalDateTime now = LocalDateTime.now();
 
-        // 1. 到期的提醒 → 转通知
-        for (Reminder r : reminderRepo.findByStatusAndRemindAtBefore("pending", now)) {
-            notificationService.notify(r.getUserId(), r.getCompanionId(), r.getType(), r.getTitle(), r.getContent());
-            r.setStatus("done");
-            reminderRepo.save(r);
-            actions.add("提醒已送达: " + r.getTitle());
-        }
+        // "到点的提醒 → 通知" 这一段已经不在这里了(LAP v1 R5)。
+        //
+        // 它曾经属于这里, 是因为提醒是数字人的一张表, 而"到点了"只有数字人自己在扫的时候才发现。
+        // 现在提醒触发是一个应用事件: com.luxera.reminder 的 ReminderDispatchJob 扫它自己的表,
+        // 发一条 reminder.due, 由数字人的 ApplicationNotificationBridge 变成通知。两处扫同一张表
+        // 的那种"谁先谁后"的问题, 随之消失 —— 提醒应用是唯一的扫描者。
 
         int dndStart = props.getProactive().getDndStartHour();
         int dndEnd = props.getProactive().getDndEndHour();

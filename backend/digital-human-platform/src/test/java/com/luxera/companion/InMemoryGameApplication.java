@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * 数字人模块测试自己用的小应用 —— <b>刻意做成真的能下完一局</b>, 不做返回
@@ -48,6 +49,7 @@ public class InMemoryGameApplication implements ApplicationRuntimePort {
 
     private final ObjectMapper mapper;
     private final Map<String, ObjectNode> sessions = new ConcurrentHashMap<>();
+    private final List<String> installed = new CopyOnWriteArrayList<>();
 
     public InMemoryGameApplication(ObjectMapper mapper) {
         this.mapper = mapper;
@@ -70,6 +72,20 @@ public class InMemoryGameApplication implements ApplicationRuntimePort {
     @Override
     public List<ActionSpec> actionsOf(String applicationId) {
         return APP_ID.equals(applicationId) ? actions() : List.of();
+    }
+
+    /**
+     * 内存参考应用没有安装表可写 —— 它对"装过没有"这件事没有意见, 所以只记一笔调用痕迹。
+     * {@code AgentApplicationFlowTest} 之外的用例不会碰到它。
+     */
+    @Override
+    public void ensureInstalled(String applicationId, InvocationContext ctx) {
+        installed.add(applicationId + ":" + (ctx == null ? "?" : ctx.principalId()));
+    }
+
+    /** 测试可读: 谁在什么时候要求过安装。 */
+    public List<String> installed() {
+        return List.copyOf(installed);
     }
 
     @Override

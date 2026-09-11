@@ -81,11 +81,7 @@ CODE=$(http GET /api/v1/capabilities)
 [ "$CODE" = "200" ] && ok "200" || fail "状态码 $CODE"
 CAPS=$(body)
 echo "$CAPS" | grep -q '"game.play"' && ok "⊇ game.play" || fail "缺 game.play"
-if echo "$CAPS" | grep -q '"reminder.manage"'; then
-  ok "⊇ reminder.manage"
-else
-  skip "⊇ reminder.manage — 提醒应用在 R5 落地"
-fi
+echo "$CAPS" | grep -q '"reminder.manage"' && ok "⊇ reminder.manage" || fail "缺 reminder.manage"
 
 # ── 断言 3: 能力下的候选应用 ──
 note "断言 3: GET /api/v1/capabilities/game.play/applications"
@@ -95,9 +91,12 @@ COUNT=$(jq_ "len(d)")
 if [ "$COUNT" -ge 2 ]; then
   ok "候选应用 $COUNT 个 (≥2)"
 else
-  skip "候选应用 $COUNT 个 — 计划要求 ≥2(井字棋 + 五子棋), 五子棋在 R5 落地"
+  fail "候选应用 $COUNT 个 — 少于 2(井字棋 + 五子棋)"
 fi
 body | grep -q "$APP_ID" && ok "含 $APP_ID" || fail "缺 $APP_ID"
+# 同 capability 的两个应用靠各自的 URI scheme 消歧 —— 它们的 action id 是<em>完全一样</em>的,
+# 所以"发现到了两个"这件事必须真的落在数据上, 不能只看数量。
+body | grep -q 'com.luxera.gomoku' && ok "含 com.luxera.gomoku" || fail "缺 com.luxera.gomoku"
 
 # ── 断言 4: 动作发现与 manifest 一致 ──
 note "断言 4: GET /api/v1/applications/$APP_ID/actions"
@@ -111,13 +110,14 @@ body | grep -q '"agentHint"' && ok "agentHint 随发现一并返回" || fail "�
 # ── 安装 + 开会话 ──
 # 安装是对同一个 principal 幂等的, 每次都会顺带开一个新会话 —— 后面所有动作的 target 里的
 # 那一段 id 都来自这里, 所以每次重装都要重新取一次。
-INSTALL_ID=""; SESSION_ID=""; URI=""
+INSTALL_ID=""; SESSION_ID=""; URI=""; PRINCIPAL_ID=""
 install() {
   local payload="$1" code
   code=$(http POST "/api/v1/applications/$APP_ID/install" "$payload")
   if [ "$code" != "200" ]; then fail "安装状态码 $code"; return; fi
   INSTALL_ID=$(jq_ "d['installationId']")
   SESSION_ID=$(jq_ "d['sessionId']")
+  PRINCIPAL_ID=$(jq_ "d['principalId']")
   URI="game://session/$SESSION_ID"
   ok "已安装 ($payload) → session=$SESSION_ID"
 }
@@ -196,10 +196,23 @@ GOT=$(jq_ "d['error']['code']")
 [ "$GOT" = "NOT_AUTHORIZED" ] && ok "code=NOT_AUTHORIZED" || fail "code=$GOT"
 install '{}'   # 重装即补齐授权, 顺便换一个干净的会话
 
-# 9b 未安装: 需要一个"装了应用 A 却没装应用 B"的 principal 才有自然的 target ——
-#    只有一个账号时构造不出来(会话归属校验会先把冒充者拦在 SESSION_PRINCIPAL_MISMATCH)。
-#    单测里这条已被 ApplicationGatewayTest.aPrincipalWithoutAnInstallationIsDenied 覆盖。
-skip "未安装 → DENIED/NOT_INSTALLED — 需要一个未安装的 principal, 第二个应用(R5)落地后此断言自然可达"
+# 9b 未安装: 这个 principal 装了游戏、没装提醒 —— 从 R5 起它有一个自然的 target
+#    (提醒是"主体型资源", URI 里没有 {sessionId}, 所以不需要先开会话就能构造)。
+#    判据是 NOT_INSTALLED 而不是 NOT_AUTHORIZED: 这两行对应的是权限模型的第一维, 缺了就得先去装。
+#
+#    但"没装过"这个状态在 HTTP 面上够不到: 装过一次就永远留着一条 UNINSTALLED 的安装行, 那走的是
+#    9c 的 INSTALLATION_INACTIVE。更要紧的是 check.sh 会经数字人的提醒链路把提醒应用装给同一个人,
+#    所以这里先把痕迹清掉 —— 与 9a 摘授权同一个套路: 没有入口的中间状态, 只能从数据造。
+#    (断言 10 会重新装上, 世界随后复原。)
+exec_sql "delete from application_session where application_id='com.luxera.reminder'"
+exec_sql "delete from installation where application_id='com.luxera.reminder'"
+RURI="reminder://owner/$PRINCIPAL_ID"
+CODE=$(http POST /api/v1/actions:execute \
+  "{\"action\":\"reminder.create\",\"target\":\"$RURI\",\"input\":{\"title\":\"不该建出来\",\"dueAt\":\"2026-09-12T15:00\"}}" \
+  "check-lap-ni-$(stamp)")
+[ "$CODE" = "403" ] && ok "未安装提醒应用 → 403" || fail "未安装状态码 $CODE"
+GOT=$(jq_ "d['error']['code']")
+[ "$GOT" = "NOT_INSTALLED" ] && ok "code=NOT_INSTALLED" || fail "code=$GOT"
 
 # 9c 安装失效: 卸掉再调动作。注意码是 INSTALLATION_INACTIVE 而不是 NOT_INSTALLED ——
 #    安装行还在, 只是不再 ACTIVE; 这两个状态对调用方的含义不同(一个该去重装, 一个该去装)。
@@ -213,8 +226,32 @@ GOT=$(jq_ "d['error']['code']")
 [ "$GOT" = "INSTALLATION_INACTIVE" ] && ok "code=INSTALLATION_INACTIVE" || fail "code=$GOT"
 install '{}'   # 复原, 让后面的断言有干净的起点
 
-# ── 断言 10: 跨能力域隔离 ──
-skip "只有游戏安装时调 reminder.create → DENIED — 提醒应用在 R5 落地"
+# ── 断言 10: 跨能力域 —— 装与不装之间那一步 ──
+# 计划里 9b 与 10 描述的是<em>同一次拒绝</em>(只装了游戏时调 reminder.create)。上面 9b 已经把
+# 那次拒绝钉住了, 这里改成它的正面对照: 补上安装之后, 同一个 principal 走<em>同一个</em>
+# execute 端点把提醒建出来, 并且从同一个资源读路径读回来。
+# 少了这一条, 9b 的 403 也可能只是因为整条提醒链路根本是死的。
+note "断言 10: 装上提醒应用后, 同一个 execute 端点把提醒建出来并读回收件箱"
+CODE=$(http POST "/api/v1/applications/com.luxera.reminder/install" '{}')
+[ "$CODE" = "200" ] && ok "安装提醒应用 200" || fail "安装状态码 $CODE"
+
+CODE=$(http POST /api/v1/actions:execute \
+  "{\"action\":\"reminder.create\",\"target\":\"$RURI\",\"input\":{\"type\":\"user_set\",\"title\":\"验收提醒\",\"dueAt\":\"2026-09-12T15:00\"}}" \
+  "check-lap-rc-$(stamp)")
+[ "$CODE" = "200" ] && ok "reminder.create 200" || fail "创建状态码 $CODE"
+RID=$(jq_ "d['result']['id']")
+[ -n "$RID" ] && ok "拿到提醒 id=$RID" || fail "响应里没有 result.id"
+
+CODE=$(http GET "/api/v1/resources?uri=$(encoded "$RURI")")
+[ "$CODE" = "200" ] && ok "读回收件箱 200" || fail "读收件箱状态码 $CODE"
+# 读路径走的是 ResourceProjector(提醒状态在 reminder_item 表里, 不在 resource 表里) ——
+# resource 表里没有这一行, 所以这一次 200 就是 "APP_OWNED backing 真的能用" 的端到端证明。
+FOUND=$(jq_ "sum(1 for i in d[0]['state']['items'] if i['id']=='$RID')")
+[ "$FOUND" = "1" ] && ok "刚建的提醒出现在同一个 URI 读出来的 items 里" \
+  || fail "收件箱里找不到 $RID"
+
+# 收尾: 把提醒应用卸掉, 让后面(以及重跑)的世界回到"只装了游戏"的干净状态。
+http DELETE "/api/v1/applications/com.luxera.reminder/install" >/dev/null
 
 # ── 断言 11 / 12: 数字人链路 ──
 skip "真人走一步 → 数字人应手 + llm_calls — R7"
