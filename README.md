@@ -123,7 +123,7 @@ backend/
 数据面则经 **DHCP v1 WebSocket 协议**（`contracts.dhcp`）流动，聊天平台只看见一台"机器用户设备"，
 完全不知道 Companion 的存在。
 
-### 重构成果（9 轮，当时全量 294 测试全绿；应用平台拆出后为 329，LAP v1 的 R6 落地后为 579 —— 见下一节）
+### 重构成果（9 轮，当时全量 294 测试全绿；应用平台拆出后为 329，LAP v1 的 R7 落地后为 601 —— 见下一节）
 
 **架构解耦（R1-R4）**：
 1. **Maven 多模块拆分**：见上（V10 落地时为五模块，LAP v1 拆出 `application-platform` 后为六个）。
@@ -230,7 +230,7 @@ backend/
 3. **没有"操作"的抽象** —— `/api/v10/games/tictactoe/*` 从请求体里手取 `userId`/`companionId`，
    忽略已认证身份；`Idempotency-Key` 收下就丢。
 
-### 已完成（R1–R6）
+### 已完成（R1–R7）
 
 | 轮 | 内容 | 证据 |
 |---|---|---|
@@ -240,6 +240,7 @@ backend/
 | **R4** | **LAP 面 + 真人应用页，删 `/api/v10`**：manifest 类型/解析/校验/注册（`ManifestValidator` / `ManifestRegistrar`，发布时校验每个 action 都能解析到该版本的 handler）；`ActionGateway` + `POST /api/v1/actions:execute`（真幂等 + 两段式事务 + `ActionInvocationReaperJob` 崩溃恢复 + `expectedResourceVersion` CAS）；`/api/v1/{capabilities,applications,resources,sessions,subscriptions}`；安装/会话/订阅与四条归属不变量；`application-platform` 的**全部 12 张表**；前端「应用」页打**同一个** execute 端点 | `check-lap.sh`（断言 1–9、13 全过，11/12/14/15 待轮次）、application-platform **17 → 153 测试**、`npm run build`、`curl /api/v10/applications` → 404 |
 | **R5** | **参考应用：五子棋 + 提醒/日程**（含 DH 提醒只读改造）：`com.luxera.gomoku`（`game.play` 第二候选，action id 与井字棋相同、URI scheme 不同）；`com.luxera.reminder`（`reminder.manage`，`backing: APP_OWNED` + `ReminderResourceProjector` + `ReminderDispatchJob`）；DH 侧 `ReminderService` 改为读 Resource / 写 action，`ReminderRepository` 与 `@Entity Reminder` 删除，`Reminder` 降级为 DTO；新增 `ApplicationNotificationBridge`（`notify` 块 → `companion_notifications`）；`ProactiveEngine` 的提醒循环删除 | `check-lap.sh` 断言 2/3/9b/10 由 skip 转正（全绿，5 项待轮次）；`check.sh` 新增 16 条提醒契约断言全绿（含"旧 `reminders` 表一行没多"）；DH **229 → 253 测试**、application-platform **153 → 222**；三条禁止项逐条 grep 通过 |
 | **R6** | **MCP 适配器**：`POST /mcp`（JSON-RPC 2.0，协议 `2025-06-18`）实现 `initialize` / `notifications/*` / `ping` / `tools/list` / `tools/call`，`DELETE /mcp` 关会话；`McpToolCatalog` 把动作投影成工具（描述 = `agentHint` + 资源模板，schema = 动作 schema + 平台保留的 `target`）；工具名撞车时整个目录退化到全名；`McpPrincipalResolver`（`X-Mcp-Principal` + 服务密钥，**密钥留空即 MCP 关闭**）；`SecurityConfig` 放行 `/mcp`（MCP 客户端没有 JWT，身份由适配器自己验） | `McpProtocolTest` **19 条**（含"整条 MCP 往返不创建 `ApplicationSession`"）；`check-lap.sh` **断言 14 由 skip 转正** —— 真人经 REST 落子后，MCP 客户端在**同一行** resource 上应手；`McpEndpointSecurityTest`（过滤器链可达性）|
+| **R7** | **Agent 的 capability→action LLM 契约**：`AgentApplicationFlow` 长出**能力选择**与**应用选择**（`route()` = 意图 → 能力 → 应用，逐级收窄；门槛 `app.lap.capability-threshold`，默认 0.6）；动作选择改为**点名**（`pickAction`：在候选里挑一个；只有唯一候选时才允许不点名；编造的动作 id 一律不行动）；`LlmRouter` 三处修正（未知 task 原样通过 / 调用方给的 model 优先 / metadata 透传）；`application.yml` 加 `app.lap.capability-threshold` 与 `app.llm.purpose.application`；`ReminderPlanner` 成为 `route()` 的生产调用方 —— "这句话该不该动用应用"从此由平台回答，不由适配器自己猜 | `AgentApplicationFlowTest` **9 → 21 条**、新增 `LlmRouterPurposeTest` **7 条**、新增 `DhApplicationKnowledgeArchitectureTest` **3 条**（DH 源码里不许再出现任何具体应用的知识）、`check-lap.sh` 断言 11 从"跳过"改为**双模式断言**（见下）|
 
 **R5 的关键决定**（两个新增参考应用 + DH 提醒只读改造）：
 
@@ -291,6 +292,33 @@ backend/
    声明）。所以断言 14 里的 AGENT 安装行是 SQL 造的，`McpProtocolTest` 直接调 `InstallationService` ——
    这是**已知的产品缺口**，不是测试的将就。
 
+**R7 的关键决定**（Agent 的 LLM 契约：能力 → 应用 → 动作）：
+
+1. **能力选择只在主动路径上，反应路径不做。** 事件里已经点名了 resource（"某个应用里轮到你做一件事"），
+   再问一遍"这该用哪个应用"是多余的 —— 每次多花一次 LLM 调用，答案还永远是"就是它"。
+   能力选择是**用户说了一句话**时的前门，所以 `react()` 里没有它。
+2. **`pickAction` 的三分法**：LLM 点了候选里的名 → 用它；没点名而候选只有一个 → 用它（此时"选哪个"
+   本就没有信息量，LLM 的活儿是填 `input`）；点了不在候选里的名、或候选不止一个却没说选哪个 →
+   **不行动**。第三条最要紧：替它补一个就是启发式，而"绝不降级到启发式"是用户明确要求的性质。
+   井字棋轮到数字人时给的是**两个**候选（落子 / 认输），所以契约要求模型真的说清楚要哪个 ——
+   `LapEndToEndTest` 的 stub 也照契约回了 `actionId`（**这条契约变化就是它抓出来的**）。
+3. **只有一个候选时不问第二次 LLM。** 一个候选的"选择"只是在花钱听模型复述一遍输入。
+4. **能力目录的指纹进 metadata**（按 id 排序后 SHA-256，`stableHash`）。事后翻 `llm_calls` 能知道模型
+   当时看的是哪一版目录；"目录没变而指纹变了"会让这个字段失去全部意义，所以先排序再拼。
+5. **守门的是平台，不是模型。** 四个幻觉出口全部被拒：能力不在目录里、应用不在候选里、动作不在候选里、
+   含糊不点名。每一级都是"模型的回答是输入，校验说了算"。
+6. **`DhApplicationKnowledgeArchitectureTest` 刻意不用 ArchUnit。** 要禁的是字符串与变量名
+   （`game.make_move`、`board`、`井字棋`），ArchUnit 看的是依赖与类名，两者都看不见 ——
+   那样写出来的是一条**通过但什么都没检查**的规则，比不写更糟。所以它是源码文本扫描；
+   提醒应用的身份与词汇只允许出现在 `tool/ReminderService.java`（DH 侧通往应用的那**唯一一道门**），
+   并额外断言白名单**不是空壳**（若提醒被整个删掉，规则会因为"没人再提它"而假绿）。
+7. **断言 11 从"跳过"改成双模式，是这一轮最诚实的一次让步。** 本环境跑的是 mock LLM，
+   而 mock 下"数字人不行动"是设计行为 —— 于是"棋盘上出现 O"在这台机器上永远不可能通过。
+   与其 skip 掉，不如断言**保险丝已就位**：事件确实走完了 应用 → 平台 → 数字人，流程读到了资源、
+   看到了待办动作、然后**按设计拒绝**（判据是服务日志里的那两行）
+   ；"真的走了这一步"要显式 `LAP_EXPECT_AGENT_MOVE=1` 才要求，日志文件缺失则**判失败**而不是跳过 ——
+   和断言 14 缺 `LAP_MCP_SERVICE_KEY` 同一个政策。
+
 **R2/R3 的关键设计**：`TicTacToeGameService` 在提交后不再直接投递事件，而是发一条
 `contracts.application.ApplicationEvent`（经注入的 `ApplicationEventSink`）—— 这是整个搬迁中
 唯一一处"越界编辑"。DH 的 `DhApplicationEventSink` 把它翻译回 `ExternalEvent`，
@@ -328,25 +356,33 @@ REST / MCP / `ApplicationRuntimePort` 共用。
 **一个迁移应用（TicTacToe）+ 两个新增参考应用（Gomoku 15×15、Reminder 提醒/日程）。**
 三者的存在意义是**证明平台**而不是攒应用数量 —— R7 的终局验收就是"加 Gomoku 只涉及
 Gomoku 的 Manifest 与 Handler，`AgentRuntime` / `AgentApplicationFlow` / Perception / Cognition /
-Decision 零修改"。提醒的所有权是**单一数据源：应用拥有，DH 只读**。
+Decision 零修改"。**这条已经成立**：五子棋落地时 `digital-human-platform` 的改动为零（那一轮
+DH 的改动全是提醒只读改造带来的），R7 之后它又多了一道机器守卫 ——
+`DhApplicationKnowledgeArchitectureTest` 断言 DH 的源码里根本不出现 `gomoku` / `tictactoe` /
+`game.make_move` / `board` 这些词，所以"加第二个游戏要改 DH"从"我们没改"变成了"改了会红"。
+提醒的所有权是**单一数据源：应用拥有，DH 只读**。
 
 ### 当前验收
 
-- `mvn test`：**579 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform 24 /
-  digital-human-platform **253** / application-platform **241** / bootstrap-app **38**
+- `mvn test`：**601 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform 24 /
+  digital-human-platform **275** / application-platform **241** / bootstrap-app **38**
 - `bash scripts/check-v10.sh` → `check-v10 OK`（41 个顶层包分属 5 个所有权模块，10 对引用 + 10 对 pom）
 - `bash scripts/check.sh`（起 jar）→ **✅ 全量验收全部通过**（聊天/数字人链路无回归；
   含 R5 新增的 16 条提醒契约断言）
-- `bash scripts/check-lap.sh` → **✅ 验收通过（4 项未到轮次，已跳过）**；断言 2 / 3 / 9b / 10 / 14 已转正
+- `bash scripts/check-lap.sh` → **✅ 验收通过（3 项未到轮次，已跳过）**；断言 2 / 3 / 9b / 10 / 11 / 14 已转正
   （`reminder.manage` 入目录、`game.play` 两个候选、未安装 → `NOT_INSTALLED`、
   装上提醒应用后经同一个 execute 端点建提醒并读回收件箱；**断言 14**：MCP 客户端与真人在
   **同一行** resource 上对弈 —— `board[0]=X`(真人 REST) / `board[4]=O`(Agent MCP)，且
-  `application_session` 一行没多）；断言 13 确认 `GET /api/v10/applications` → **404**
+  `application_session` 一行没多；**断言 11** 见 R7 的决定 7）；断言 13 确认 `GET /api/v10/applications` → **404**
+- 仍未到轮次的 3 项：断言 1 的"旧表不存在"半边（等 **R8** 的 `lap-drop-legacy.sh`）、
+  断言 12（reality ledger 条目）与断言 15（共享世界）—— 后两项是**同一个前提**：数字人真的动手了，
+  而在本机的 mock LLM 下"不行动"是有意为之，所以它们只在 `LAP_EXPECT_AGENT_MOVE=1` 且服务接了真实
+  LLM 时才会执行（断言 12 的判据是 `timeline_event` 里那一条 `APPLICATION_ACTION_EXECUTED`）
 - `cd frontend && npm run build` → 通过
 - **CI 顺序**（每一轮都照这个跑）：`check-v10.sh` → `mvn test` → 起 jar（断言 14 要求带
   `LAP_MCP_SERVICE_KEY`）→ `check.sh` → `check-lap.sh` → `npm run build`
-- 尚未完成：**R7** Agent 的 capability→action LLM 契约、
-  **R8** 生命周期状态机 + REMOTE + outbox + `lap-drop-legacy.sh` 清理遗留表
+- 尚未完成：**R8** 生命周期状态机 + REMOTE + outbox + `SessionReaperJob` +
+  `lap-drop-legacy.sh` 清理遗留表（R7 已完成）
 
 ---
 

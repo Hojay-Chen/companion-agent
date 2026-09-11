@@ -105,10 +105,28 @@ public class LlmRouter implements LlmGateway {
         return r;
     }
 
-    /** 按任务类型应用用途路由(感知/抽取用轻模型, 反思/演化用强模型等) */
+    /**
+     * 按任务类型应用用途路由(感知/抽取用轻模型, 反思/演化用强模型等)。
+     *
+     * <p>三条"不覆盖"的规矩, 每一条都对应一个曾经踩过的坑:
+     * <ol>
+     *   <li><b>用途 key 或配置块缺失 → 请求原样通过。</b>在此之前, 不认识的 task 会被默默
+     *       当成 {@code extraction}: 配置里没有这个块时倒也无害, 但一旦有人给
+     *       {@code extraction} 配了模型或温度, 所有没登记的 task 都会悄悄用上它 ——
+     *       改一个用途的配置去影响另一个用途的调用, 是最难查的一类。现在不认识的 task
+     *       会留下一条 WARN。</li>
+     *   <li><b>{@code request.setModel(...)} 优先于用途配置。</b>调用方明说了要用哪个模型,
+     *       就不该被"这个任务通常用哪个模型"覆盖掉。</li>
+     *   <li><b>metadata 必须带上。</b>用途路由会新建一个请求, 漏掉 metadata 会让
+     *       {@code LlmCallService.record} 认不出 companionId 而静默跳过记库 ——
+     *       "这次调用发生了什么"就查不到了。</li>
+     * </ol>
+     */
     private StructuredRequest applyPurpose(StructuredRequest request) {
         String purposeKey = purposeFor(request.getTask());
-        AppProperties.Purpose purpose = props.getLlm().getPurpose().get(purposeKey);
+        if (purposeKey == null) return request;
+        AppProperties.Purpose purpose = props.getLlm().getPurpose() == null
+                ? null : props.getLlm().getPurpose().get(purposeKey);
         if (purpose == null) return request;
         return StructuredRequest.builder()
                 .system(request.getSystem())
@@ -116,13 +134,14 @@ public class LlmRouter implements LlmGateway {
                 .task(request.getTask())
                 .schemaHint(request.getSchemaHint())
                 .temperature(request.getTemperature() != null ? request.getTemperature() : purpose.getTemperature())
-                .model(purpose.getModel())
+                .model(request.getModel() != null ? request.getModel() : purpose.getModel())
+                .metadata(request.getMetadata())
                 .build();
     }
 
-    /** 任务 → 用途 key */
+    /** 任务 → 用途 key; 不认识的 task 返回 null(原样通过), 而不是猜一个。 */
     private static String purposeFor(String task) {
-        if (task == null) return "extraction";
+        if (task == null) return null;
         return switch (task) {
             case "perception" -> "perception";
             case "daily-reflection", "weekly-reflection" -> "reflection";
@@ -131,7 +150,13 @@ public class LlmRouter implements LlmGateway {
             case "memory-extraction", "user-model-extraction", "self-model-extraction",
                  "relationship-narrative", "reminder-extraction" -> "extraction";
             case "session-summary" -> "summary";
-            default -> "extraction";
+            // LAP v1: 应用链路的两个任务共用一个用途块(application), 由 app.llm.purpose.application 配
+            case "application-capability-selection", "application-selection",
+                 "application-action-selection" -> "application";
+            default -> {
+                log.warn("[LLM] 未知 task={}, 不应用用途路由(用调用方给的模型/温度)", task);
+                yield null;
+            }
         };
     }
 }

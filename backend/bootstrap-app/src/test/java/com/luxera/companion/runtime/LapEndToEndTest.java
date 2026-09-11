@@ -55,8 +55,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 的。所以测试里真人那一段走 MockMvc 全栈(过滤器、控制器、网关一个不少), 数字人那一段用
  * 进程内的 {@link InstallationService} —— 正是它真实的样子。
  *
- * <p>把 LLM 换成固定回一个空位的 stub(而不是 mock provider), 是为了让链路真的跑到底 ——
- * mock provider 下流程会按设计不行动, 那样这条测试就什么也证明不了。
+ * <p>把 LLM 换成固定回"落子到 4 号位"的 stub(而不是 mock provider), 是为了让链路真的跑到底 ——
+ * mock provider 下流程会按设计不行动, 那样这条测试就什么也证明不了。R7 之后动作选择的契约里
+ * 多了 {@code actionId}(应用同时给"落子"和"认输"两个候选), 所以 stub 也要照契约回。
  */
 @ActiveProfiles("test")
 @SpringBootTest
@@ -95,8 +96,10 @@ class LapEndToEndTest {
     void theDigitalHumanAnswersTheHumansMoveWithoutKnowingTheGame() throws Exception {
         when(llmRouter.available()).thenReturn(true);
         when(llmRouter.isMockActive()).thenReturn(false);
+        // R7 起, 轮到数字人时应用给的是<b>两个</b>候选(落子 / 认输), 所以模型的答复必须点名它要哪个 ——
+        // 只回一个 input 而不说动作, 按设计就是不行动(补一个就是启发式)。这里照契约回:
         when(llmRouter.structured(any(StructuredRequest.class))).thenReturn(new StructuredResult("""
-                {"input":{"position":4},"reason":"占据中心"}
+                {"actionId":"game.make_move","input":{"position":4},"reason":"占据中心"}
                 """, objectMapper));
 
         // user_id / companion_id 是 varchar(36), 别把前缀拼进去

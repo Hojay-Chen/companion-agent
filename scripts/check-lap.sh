@@ -258,9 +258,116 @@ FOUND=$(jq_ "sum(1 for i in d[0]['state']['items'] if i['id']=='$RID')")
 # 收尾: 把提醒应用卸掉, 让后面(以及重跑)的世界回到"只装了游戏"的干净状态。
 http DELETE "/api/v1/applications/com.luxera.reminder/install" >/dev/null
 
-# ── 断言 11 / 12: 数字人链路 ──
-skip "真人走一步 → 数字人应手 + llm_calls — R7"
-skip "reality ledger 新增 APPLICATION_ACTION_EXECUTED — R8"
+# ── 断言 11: 数字人链路 ──
+# 这条断言的判据随服务的 LLM 而不同, 但**两种模式下都断言**:
+#   默认(服务跑 mock LLM, 见 application.yml 的 mock-fallback): 断言"保险丝通着电"——
+#     事件确实走完了 应用 → 平台 → 数字人 整条链, 数字人确实读了资源、确实看见有动作可做,
+#     然后**故意**不动手, 并在日志里留下那句话。只断言"棋盘上没有多出 O"是不够的 ——
+#     事件从没送到也能满足它。日志是唯一能区分"故意不动手"与"链路没通"的东西。
+#   真实 LLM(LAP_EXPECT_AGENT_MOVE=1): 断言完整往返 —— 应手落在同一行 resource 上, 且
+#     llm_calls 留下这次动作选择的记录。
+# 两种模式都需要日志文件: 服务是 nohup java -jar ... > <log> 起的, 默认取 /tmp/companion-run.log。
+DH_AGENT="check-lap-dh-$(stamp)"
+DH_CREATE_KEY="check-lap-dh-create-$(stamp)"
+DH_MOVE_KEY="check-lap-dh-move-$(stamp)"
+DH_MODE=""
+
+dh_cleanup() {
+  exec_sql "delete from permission_grant where installation_id in
+            (select id from installation where principal_type='AGENT' and principal_id='$DH_AGENT')" || true
+  exec_sql "delete from action_invocation where principal_type='AGENT' and principal_id='$DH_AGENT'" || true
+  exec_sql "delete from application_session where principal_type='AGENT' and principal_id='$DH_AGENT'" || true
+  exec_sql "delete from installation where principal_type='AGENT' and principal_id='$DH_AGENT'" || true
+}
+trap 'dh_cleanup; rm -rf "$TMP"' EXIT
+
+note "断言 11: 真人走一步 → 数字人的应手 (R7)"
+LAP_LOG="${LAP_LOG:-/tmp/companion-run.log}"
+if [ ! -f "$LAP_LOG" ]; then
+  fail "找不到服务日志 $LAP_LOG —— 没有它就无法区分'数字人故意不动手'与'事件根本没送到'。
+        用 LAP_LOG=<服务 stdout 重定向到的文件> 再跑。"
+else
+  # 数字人得先"装了"这个应用, 平台才认得出它是数字人: AgentRouteResolver 查的就是 installation
+  # 表。与断言 14 同一个理由 —— AGENT 在 HTTP 面上装不了应用, 只能从数据造。
+  exec_sql "insert into installation (id, application_id, application_version_id, principal_type,
+                                     principal_id, status, created_at)
+            select gen_random_uuid()::text, application_id, application_version_id, 'AGENT',
+                   '$DH_AGENT', 'ACTIVE', now()
+            from installation
+            where application_id='$APP_ID' and principal_type='HUMAN' and principal_id='$PRINCIPAL_ID'
+            limit 1"
+
+  # 新开一局: 对手座位上坐着这位数字人 —— 应用因此会把"轮到你了"写进事件的 notifyPrincipalIds。
+  # 这一步同时验证了那个分工: 应用只说"还有谁", 谁是数字人由平台查安装表决定。
+  PREV_URI="$URI"
+  install '{}'
+  DH_URI="$URI"
+  if [ "$DH_URI" = "$PREV_URI" ]; then
+    fail "重新安装没有开出新会话 ($DH_URI) —— 这一局会带着前面几手棋, 断言 11 不成立"
+  fi
+  CODE=$(http POST /api/v1/actions:execute \
+    "{\"action\":\"game.create\",\"target\":\"$DH_URI\",\"input\":{\"opponentPrincipalId\":\"$DH_AGENT\"}}" \
+    "$DH_CREATE_KEY")
+  [ "$CODE" = "200" ] && ok "开局 200, 对手座位 = $DH_AGENT" || fail "开局状态码 $CODE"
+
+  LINES_BEFORE=$(wc -l < "$LAP_LOG")
+  CODE=$(http POST /api/v1/actions:execute \
+    "{\"action\":\"game.make_move\",\"target\":\"$DH_URI\",\"input\":{\"position\":0}}" "$DH_MOVE_KEY")
+  [ "$CODE" = "200" ] && ok "真人落子 board[0] (X)" || fail "真人落子状态码 $CODE"
+
+  # 数字人那条链跑在 mailbox 线程上, 给它最多 15 秒
+  for _ in $(seq 1 30); do
+    NEW=$(tail -n +"$((LINES_BEFORE + 1))" "$LAP_LOG")
+    if echo "$NEW" | grep -qF "数字人不行动: resource=$DH_URI"; then DH_MODE="declined"; break; fi
+    if echo "$NEW" | grep -qF "数字人执行动作: action=game.make_move, resource=$DH_URI"; then DH_MODE="moved"; break; fi
+    sleep 0.5
+  done
+
+  case "$DH_MODE" in
+    declined)
+      ok "事件走完了整条链: 应用 → 平台 → 数字人; 数字人读了资源、看见有动作可做, 然后拒绝" ;;
+    moved)
+      ok "事件走完了整条链, 数字人执行了动作" ;;
+    *)
+      fail "15 秒内没有看到 AgentApplicationFlow 处理这条事件 —— 事件链路断了? 日志: $LAP_LOG" ;;
+  esac
+
+  if [ -n "${LAP_EXPECT_AGENT_MOVE:-}" ] && [ "$DH_MODE" != "moved" ]; then
+    fail "LAP_EXPECT_AGENT_MOVE=1 但数字人没有行动 —— 服务跑的多半还是 mock LLM"
+  fi
+
+  CODE=$(http GET "/api/v1/resources?uri=$(encoded "$DH_URI")")
+  [ "$CODE" = "200" ] && ok "真人读得到这一局" || fail "读资源状态码 $CODE"
+  DH_BOARD=$(jq_ "' '.join(x or '.' for x in d[0]['state']['board'])")
+  DH_O=$(jq_ "sum(1 for x in d[0]['state']['board'] if x=='O')")
+
+  if [ "$DH_MODE" = "moved" ]; then
+    [ "$DH_O" = "1" ] && ok "数字人的应手在同一行 resource 上: $DH_BOARD" \
+      || fail "数字人执行了动作, 棋盘上却有 $DH_O 个 O: $DH_BOARD"
+    # 落库的这一刻就是"契约接通了"的凭据: LlmCallService 在 companionId 为空时静默跳过,
+    # 所以这一行存在 = AgentApplicationFlow 设了 metadata, 且用途路由没有把它弄丢。
+    LLM_ROWS=$(sql "select count(*) from llm_calls where companion_id='$DH_AGENT' and task='application-action-selection'")
+    [ "${LLM_ROWS:-0}" -ge 1 ] && ok "llm_calls 里有 $LLM_ROWS 行 application-action-selection" \
+      || fail "llm_calls 里没有这次动作选择的记录 —— 契约没接通或调用没落库"
+  else
+    [ "$DH_O" = "0" ] && ok "数字人没有动手 (LLM 不可用 ⇒ 绝不降级到启发式): $DH_BOARD" \
+      || fail "数字人在 mock LLM 下仍然落了子 —— 有人加了一条启发式兜底: $DH_BOARD"
+  fi
+
+  # 复原: 断言 11 把 $URI 换成了数字人那一局, 而后面(附加/14)假设 $URI 是一盘没下过的棋。
+  # 再装一次拿一个新会话还给它们 —— 这一局留给断言 15 用。
+  install '{}'
+fi
+
+# ── 断言 12: 现实账本 ──
+# 账本条目是"数字人真的动了手"的产物, 所以它和断言 15 是同一个前提, 不是同一轮次的事。
+if [ "$DH_MODE" = "moved" ] && [ -n "$DH_AGENT" ]; then
+  ROWS=$(sql "select count(*) from timeline_event where person_id='$DH_AGENT' and event_type='APPLICATION_ACTION_EXECUTED'")
+  [ "${ROWS:-0}" -ge 1 ] && ok "现实账本(timeline_event)里有一条 APPLICATION_ACTION_EXECUTED" \
+    || fail "数字人落了子, 账本里却没有这条经历 (rows=$ROWS)"
+else
+  skip "reality ledger 新增 APPLICATION_ACTION_EXECUTED — 需要真实 LLM (当前 $DH_MODE)"
+fi
 
 # ── 断言 13: /api/v10 已下线 ──
 note "断言 13: GET /api/v10/applications → 404"
@@ -378,8 +485,24 @@ else
   mcp_cleanup
 fi
 
-# ── 断言 15 ──
-skip "共享世界: 真人落子后数字人的应手落在同一行 resource — R7"
+# ── 断言 15: 共享世界 —— 一行 resource, 两个 principal ──
+# 这是整个 LAP 最想证明的一句话: 真人和数字人不是各玩各的, 他们操作的是同一个东西。
+# 判据不是"两边都返回 200", 而是数据行本身: 一行 resource、一条会话、两个不同的 principal
+# 各自在这条会话上留下过 action_invocation。
+# 数字人那一半需要真实 LLM(数字人拒绝在 mock 下动手 —— 见断言 11), 所以这一段在 mock 环境下
+# 跳过; 真人 + MCP Agent 的那一半由断言 14 在同一个 URI 上证明, 两条合起来覆盖完整的"共享世界"。
+note "断言 15: 共享世界 —— 一行 resource, 两个 principal"
+if [ "$DH_MODE" = "moved" ] && [ -n "$DH_URI" ]; then
+  ROWS=$(sql "select count(*) from resource where uri='$DH_URI'")
+  [ "$ROWS" = "1" ] && ok "resource 表里这一局只有一行" || fail "resource 有 $ROWS 行 ($DH_URI)"
+
+  SID=$(sql "select session_id from resource where uri='$DH_URI'")
+  ACTORS=$(sql "select count(distinct principal_id) from action_invocation where session_id='$SID'")
+  [ "${ACTORS:-0}" -ge 2 ] && ok "同一条会话上有 $ACTORS 个不同的 principal 动过手" \
+    || fail "同一条会话上只有 ${ACTORS:-0} 个 principal —— 数字人那一手不在这一局里"
+else
+  skip "共享世界: 数字人的应手落在同一行 resource — 需要真实 LLM (当前 $DH_MODE)"
+fi
 
 echo ""
 if [ "$FAIL" = "0" ]; then

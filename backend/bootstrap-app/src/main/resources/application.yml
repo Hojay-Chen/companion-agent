@@ -61,6 +61,12 @@ app:
       summary:
         model: ${LLM_CHAT_MODEL:deepseek-chat}
         temperature: 0.2
+      # LAP v1 R7: 应用链路(能力选择 / 应用选择 / 动作选择)共用一个用途块。
+      # 这三个任务要的是"稳定地做选择"而不是"有创意地做选择" —— 温度必须低;
+      # 而它们各自还会再传自己的 temperature, 那个值优先(见 LlmRouter.applyPurpose)。
+      application:
+        model: ${LLM_CHAT_MODEL:deepseek-chat}
+        temperature: 0.3
     timeout-seconds: ${LLM_TIMEOUT_SECONDS:120}
     mock-fallback: ${LLM_MOCK_FALLBACK:true}
 
@@ -127,6 +133,10 @@ app:
     # 回收器判定"这行永远不会有人回填"的门槛, 必须远大于上面那个 ——
     # 两个值合并成一个, 回收器就会在客户端重试之前先把键烧掉。
     invocation-reap-after-ms: ${LAP_INVOCATION_REAP_AFTER_MS:900000}
+    # 能力选择的置信度门槛(R7)。低于它 = "这句话不需要动用任何应用" ——
+    # 设计文档那句「大多数日常聊天不需要任何应用」的可测试版本。
+    # 调低会让闲聊被当成应用请求, 调高会让明确的请求被漏掉。
+    capability-threshold: ${LAP_CAPABILITY_THRESHOLD:0.6}
     # MCP 适配器的服务密钥(R6); 留空 = MCP 完全关闭, 不是"无鉴权"
     mcp:
       service-key: ${LAP_MCP_SERVICE_KEY:}

@@ -146,7 +146,7 @@ DH 侧挂在 `digitalhuman.event.EventRouter` 的 `APPLICATION_EVENT` 上有**�
 
 | 消费者 | 它问的问题 |
 |---|---|
-| `runtime.AgentApplicationFlow` | 「我该做点什么」—— 过滤 → 读 Resource → 问能做什么 → 执行并记入现实账本，全程跑在 `PersonActorRegistry.tell(personId, …)` 的 per-person 串行邮箱里 |
+| `runtime.AgentApplicationFlow` | 「我该做点什么」—— 过滤 → 读 Resource → 问能做什么 → 执行并记入现实账本，全程跑在 `PersonActorRegistry.tell(personId, …)` 的 per-person 串行邮箱里；它同时也是**主动方向**的入口（`route()`，见「Agent 的 LLM 契约」）|
 | `digitalhuman.event.ApplicationNotificationBridge` | 「该不该说给他听」—— 事件载荷里带 `notify` 块就落一条 `companion_notifications`，`type` 原样透传 |
 
 第二条路是 R5 加的，它让「提醒到点」不再需要一个 DH 侧的扫描器：`ReminderDispatchJob` 在应用侧
@@ -179,6 +179,33 @@ POST /api/v1/actions:execute                     唯一的动作入口（Canonic
 > **发现链就是"不要把 50000 个 action 塞给 LLM"的全部实现。** 每一级都比上一级窄一个数量级：
 > 能力有几十个、某能力下的应用有个位数、某应用的动作有个位数。Agent 永远只看到当前这一步该看的那一层，
 > 而"怎么做"（策略文本）是应用作者写在 `actions[].agentHint` 里的 —— 不在 DH 里。
+
+### Agent 的 LLM 契约：能力 → 应用 → 动作（R7 起）
+
+`AgentApplicationFlow` 有两个方向，契约不同：
+
+| 方向 | 触发 | LLM 任务 | 它能看到的东西 |
+|---|---|---|---|
+| 反应 | 应用发来一条 `APPLICATION_EVENT` 且 `agentTrigger=true` | `application-action-selection` | 该资源**此刻**的 pending 动作（每条带 `agentHint` + `inputSchema`）与资源自身的 `agentHint` |
+| 主动 | 用户说了一句话 → `route()` | `application-capability-selection` →（候选多于一个时）`application-selection` | 平台的**能力目录**（几十行）；选完能力才收窄到候选应用 |
+
+**反应方向刻意不做能力选择** —— 事件已经点名了 resource，再问一遍"这该用哪个应用"是多余的，
+每次都多花一次 LLM 调用，答案还永远是"就是它"。能力选择是**用户说了一句话**时的前门。
+
+**模型可以答错，但不能答不存在的东西。** 四个幻觉出口一律拦下：能力不在目录里、应用不在候选里、
+动作不在候选里、含糊不点名（候选不止一个却没说选哪个）。最后一条最要紧 ——
+替模型补一个就是启发式，而"绝不降级到启发式"是明确要求的性质。反过来，候选**只有一个**时不问
+第二次 LLM：一个候选的"选择"只是在花钱让模型复述输入。
+
+**门槛**：`capability != null && confidence >= app.lap.capability-threshold`（默认 0.6）。
+这个阈值就是设计稿那句「大多数日常聊天不需要任何应用」的可测试版本 —— 做成配置项，因为调低会让
+闲聊变成应用调用，调高会让明确的请求被漏掉。能力目录的指纹（按 id 排序后 SHA-256）进 metadata，
+事后翻 `llm_calls` 能知道模型当时看的是哪一版目录。
+
+**「具体打法」归应用，通用行为准则归数字人。** 「会赢就赢、不要解释算法」在 `AgentApplicationFlow`
+的提示词里（对任何应用都成立）；「能三连就三连、否则阻断对手」在 `tictactoe` 的
+`actions[game.make_move].agentHint` 里。这条分界由 `DhApplicationKnowledgeArchitectureTest` 钉住：
+DH 的源码里不许出现任何一个具体应用的名字、动作 id 或状态字段。
 
 `scripts/check-lap.sh` 是这一面唯一的端到端守卫：`check.sh` 覆盖的是聊天/数字人链路，
 对应用平台**零覆盖** —— 这就是为什么"测试全绿"在这里什么也保护不了。
@@ -233,7 +260,7 @@ MCP 是**适配器，不是第二个平台**。它只做两件翻译，两件都
 
 ## 4. 测试怎么在"没有另一个平台"的情况下跑
 
-这是解耦是否彻底的**试金石**：`digital-human-platform` 的 253 个测试在 classpath 上
+这是解耦是否彻底的**试金石**：`digital-human-platform` 的 275 个测试在 classpath 上
 **既没有 chat-platform、也没有 application-platform** 的情况下全部跑通。
 
 - `digital-human-platform/src/test/java/com/luxera/companion/DigitalHumanTestApplication.java`
@@ -245,6 +272,11 @@ MCP 是**适配器，不是第二个平台**。它只做两件翻译，两件都
   `game.state` / `game.make_move`），实现 `ApplicationRuntimePort` 且只用 contracts 的类型。
   刻意**不做**成返回 `Optional.empty()` 的 mock：空 mock 会让 `AgentApplicationFlow` 悄悄腐烂
   而测试全绿 —— 参考应用在 DH 侧必须真的可下，这条测试才有意义。
+- `.../architecture/DhApplicationKnowledgeArchitectureTest.java` —— 反过来钉住"DH 里**不许**有
+  具体应用的知识"（R7 加）。它刻意**不是** ArchUnit：要禁的是字符串与变量名（`game.make_move`、
+  `board`、`井字棋`），而 ArchUnit 看的是依赖与类名，两者都看不见 —— 那样写会得到一条
+  **通过但什么都没检查**的规则。提醒应用的身份与词汇只允许出现在 `tool/ReminderService.java`
+  （DH 侧通往应用的那唯一一道门），并额外断言白名单**不是空壳**。
 
 跨平台的端到端行为在 `bootstrap-app` 的测试里验证 —— 那里三方都在：`LapEndToEndTest`
 走的是「真人落子 → 应用发事件 → DH 翻译并路由 → Agent 决策 → 经端口落子」这条完整链路，
@@ -258,7 +290,7 @@ MCP 是**适配器，不是第二个平台**。它只做两件翻译，两件都
 
 ```bash
 cd backend
-mvn clean test                       # 全模块 579 测试
+mvn clean test                       # 全模块 601 测试
 mvn -DskipTests package              # 产出可执行 jar
 ```
 
