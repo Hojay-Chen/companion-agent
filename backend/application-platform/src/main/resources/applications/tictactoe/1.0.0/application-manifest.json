@@ -1,0 +1,122 @@
+{
+  "identity": {
+    "id": "com.luxera.tictactoe",
+    "name": "井字棋",
+    "version": "1.0.0",
+    "description": "经典三连棋。真人与数字人共下一局, 双方各自落子, 谁先连成一条线谁赢。",
+    "category": "game"
+  },
+
+  "capabilities": [
+    {
+      "id": "game.play",
+      "title": "对弈",
+      "description": "与另一个席位进行回合制棋类对弈",
+      "category": "game"
+    }
+  ],
+
+  "actions": [
+    {
+      "id": "game.create",
+      "capability": "game.play",
+      "title": "开局",
+      "description": "在一个空的棋局资源上开一盘新棋。发起方占先手席位(执 X)。",
+      "permission": "WRITE",
+      "risk": "LOW",
+      "attention": "AWARE",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "game.state",
+      "capability": "game.play",
+      "title": "看棋局",
+      "description": "读取当前棋盘、轮到谁、是否已分出胜负。不改变任何状态。",
+      "permission": "READ",
+      "risk": "NONE",
+      "attention": "SUBCONSCIOUS"
+    },
+    {
+      "id": "game.make_move",
+      "capability": "game.play",
+      "title": "落子",
+      "description": "在当前轮到自己时, 把棋子放到一个空格上。",
+      "permission": "WRITE",
+      "risk": "LOW",
+      "attention": "FOCUSED",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "position": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8,
+            "description": "0-8 的空位编号, 按 0 1 2 / 3 4 5 / 6 7 8 排布"
+          }
+        },
+        "required": ["position"],
+        "additionalProperties": false
+      },
+      "agentHint": "棋盘编号: 0 1 2 / 3 4 5 / 6 7 8(三行三列)。只能落在空位上。\n选择位置的优先级: ① 能让自己立刻连成三子的位置 → ② 能阻断对手连成三子的位置 → ③ 正中央(4) → ④ 四个角(0/2/6/8) → ⑤ 四条边(1/3/5/7)。\n只在轮到你的时候落子; 已经分出胜负或棋局未开始时不要落子。"
+    },
+    {
+      "id": "game.surrender",
+      "capability": "game.play",
+      "title": "认输",
+      "description": "结束当前棋局并判对方获胜。",
+      "permission": "WRITE",
+      "risk": "LOW",
+      "attention": "AWARE",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    }
+  ],
+
+  "resources": [
+    {
+      "type": "game.session",
+      "uriTemplate": "game://session/{sessionId}",
+      "backing": "RESOURCE_STORE",
+      "agentHint": "state 形如 {\"board\":[9 个格子, \"X\"/\"O\"/空串], \"seats\":[先手席位, 后手席位], \"turn\":\"X\"|\"O\"|\"\", \"winner\":\"X\"|\"O\"|\"DRAW\"|\"\"}。seats 里存的是发起方与应战方的 principal id; winner 为空串表示未分胜负, turn 为空串表示棋局已结束。"
+    }
+  ],
+
+  "events": [
+    {
+      "type": "game.start",
+      "title": "开局",
+      "triggersAgent": false
+    },
+    {
+      "type": "game.move",
+      "title": "有人落子",
+      "triggersAgent": true,
+      "idTemplate": "{uri}#MOVE-{position}"
+    },
+    {
+      "type": "game.finish",
+      "title": "棋局结束",
+      "triggersAgent": false,
+      "idTemplate": "{uri}#FINISH"
+    }
+  ],
+
+  "permissions": [
+    {
+      "capability": "game.play",
+      "level": "WRITE",
+      "riskCeiling": "LOW"
+    }
+  ],
+
+  "runtime": {
+    "type": "NATIVE"
+  }
+}
