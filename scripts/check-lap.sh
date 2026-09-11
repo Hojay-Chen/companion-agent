@@ -8,7 +8,12 @@
 #
 # 断言编号沿用实施计划, 未到轮次的先跳过并打印原因(R5 起陆续打开, R8 全部打开)。
 #
-# 用法: BASE=http://127.0.0.1:8081 bash scripts/check-lap.sh
+# 用法: BASE=http://127.0.0.1:8081 LAP_MCP_SERVICE_KEY=<服务启动时用的那个> bash scripts/check-lap.sh
+#
+# LAP_MCP_SERVICE_KEY 是断言 14(MCP 适配器)需要的, 不是可选的礼貌参数:
+# 服务端那把密钥留空 = MCP 完全关闭(每个请求 403), 而一个关闭的 MCP 与一个工作的 MCP 在
+# 「没有断言」这件事上长得一模一样。所以脚本拿不到密钥时**报错**而不是跳过 —— 跳过会让
+# 这一整轮验收在适配器根本没上线的情况下显示为通过。
 set -euo pipefail
 
 BASE="${BASE:-http://127.0.0.1:8081}"
@@ -270,8 +275,110 @@ CODE=$(http POST /api/v1/actions/execute \
 GOT=$(jq_ "d['error']['code']")
 [ "$GOT" = "ACTION_NOT_FOUND" ] && ok "code=ACTION_NOT_FOUND" || fail "code=$GOT"
 
-# ── 断言 14 / 15 ──
-skip "POST /mcp tools/list — R6"
+# ── 断言 14: MCP 适配器 ──
+# MCP 只是一个适配器: tools/list 走动作发现, tools/call 走 ActionGateway.execute —— 与真人
+# **同一条**路。所以这一段的判据不是"MCP 返回了 200", 而是"真人从 REST 读同一个 URI 时,
+# 看见 MCP 客户端刚下的那一手"。前者在适配器自己伪造响应时也会绿。
+#
+# 两条前提, 缺一条这一段就什么也测不到:
+#   1. **服务必须带 LAP_MCP_SERVICE_KEY 启动**(见 McpPrincipalResolver: 密钥留空 = MCP 完全关闭,
+#      不是"无鉴权")。脚本自己没有这个密钥就没法鉴权, 那是配置缺失, 报错而不是跳过。
+#   2. AGENT 装不了 REST 那一面(那个面只认 JWT, MCP 客户端没有 JWT), 所以安装行只能从数据造 ——
+#      与断言 9a/9b 同一套路: HTTP 面上够不到的状态, 只能从数据造。
+MCP_KEY="${LAP_MCP_SERVICE_KEY:-}"
+MCP_AGENT="check-lap-agent-$(stamp)"
+MCP_SQL_AGENT_INSTALL="application_id='$APP_ID' and principal_type='AGENT' and principal_id='$MCP_AGENT'"
+
+# MCP 请求助手: 与 http() 同形, 但带头(而且不是 Authorization —— MCP 没有 JWT)。
+mcp() {
+  local payload="$1" key="${2:-}"
+  local args=(-s -m 20 -o "$TMP/body" -D "$TMP/hdr" -w '%{http_code}' -X POST "$BASE/mcp"
+    -H 'Content-Type: application/json'
+    -H "X-Mcp-Principal: AGENT:$MCP_AGENT"
+    -H "X-Mcp-Service-Key: $MCP_KEY"
+    -d "$payload")
+  if [ -n "$key" ]; then args+=(-H "Idempotency-Key: $key"); fi
+  curl "${args[@]}" || echo "000"
+}
+mcp_cleanup() {
+  exec_sql "delete from permission_grant where installation_id in (select id from installation where $MCP_SQL_AGENT_INSTALL)"
+  exec_sql "delete from application_session where $MCP_SQL_AGENT_INSTALL"
+  exec_sql "delete from installation where $MCP_SQL_AGENT_INSTALL"
+}
+
+note "断言 14: POST /mcp —— tools/list 给目录, tools/call 改的是真人读的同一个 resource"
+if [ -z "$MCP_KEY" ]; then
+  fail "LAP_MCP_SERVICE_KEY 未提供 —— 脚本无法以 AGENT 身份调用 MCP, 断言 14 无法进行"
+else
+  # 先清后建, 让脚本可以重复跑
+  mcp_cleanup
+  exec_sql "insert into installation (id, application_id, application_version_id, principal_type, principal_id, status, created_at) \
+            select gen_random_uuid()::text, application_id, application_version_id, 'AGENT', '$MCP_AGENT', 'ACTIVE', now() \
+            from installation where application_id='$APP_ID' and principal_type='HUMAN' and principal_id='$PRINCIPAL_ID' limit 1"
+  exec_sql "insert into permission_grant (id, installation_id, capability_id, action_id, permission_level, risk_ceiling, created_at) \
+            select gen_random_uuid()::text, t.id, g.capability_id, g.action_id, g.permission_level, g.risk_ceiling, now() \
+            from installation t, permission_grant g \
+            where $MCP_SQL_AGENT_INSTALL \
+              and g.installation_id=(select id from installation where application_id='$APP_ID' and principal_type='HUMAN' and principal_id='$PRINCIPAL_ID' limit 1)"
+  GRANTS=$(sql "select count(*) from installation t join permission_grant g on g.installation_id=t.id where t.principal_id='$MCP_AGENT'")
+  [ "${GRANTS:-0}" -ge 1 ] && ok "AGENT 安装 + $GRANTS 条授权 (SQL 造)" || fail "AGENT 授权没造出来"
+
+  CODE=$(mcp '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}')
+  [ "$CODE" = "200" ] && ok "initialize 200" || fail "initialize 状态码 $CODE"
+  grep -qi '^Mcp-Session-Id:' "$TMP/hdr" && ok "回了 Mcp-Session-Id (协议会话, 不落库)" \
+    || fail "缺 Mcp-Session-Id 响应头"
+  PROTO=$(jq_ "d['result']['protocolVersion']")
+  [ "$PROTO" = "2025-06-18" ] && ok "协商到的协议版本 $PROTO" || fail "协议版本 '$PROTO'"
+
+  CODE=$(mcp '{"jsonrpc":"2.0","id":2,"method":"tools/list"}')
+  [ "$CODE" = "200" ] && ok "tools/list 200" || fail "tools/list 状态码 $CODE"
+  body | grep -q 'tictactoe.game_make_move' && ok "工具名含 tictactoe.game_make_move" \
+    || fail "目录里没有 tictactoe.game_make_move"
+  body | grep -q 'gomoku.game_make_move' && ok "工具名含 gomoku.game_make_move (同名动作不撞车)" \
+    || fail "目录里没有 gomoku.game_make_move"
+  body | grep -q 'game://session/{sessionId}' && ok "工具描述里写明了 target 的形态" \
+    || fail "工具描述里没有 target 形态 —— 客户端无从知道该填什么"
+  ok "共 $(jq_ "len(d['result']['tools'])") 个工具"
+
+  # 真人开一局、落一子(X)
+  CODE=$(http POST /api/v1/actions:execute \
+    "{\"action\":\"game.create\",\"target\":\"$URI\",\"input\":{}}" "check-lap-mcp-c-$(stamp)")
+  [ "$CODE" = "200" ] && ok "真人 game.create 200" || fail "真人 create 状态码 $CODE"
+  CODE=$(http POST /api/v1/actions:execute \
+    "{\"action\":\"game.make_move\",\"target\":\"$URI\",\"input\":{\"position\":0}}" "check-lap-mcp-h-$(stamp)")
+  [ "$CODE" = "200" ] && ok "真人落子 0 200" || fail "真人落子状态码 $CODE"
+
+  SESSIONS_BEFORE=$(sql "select count(*) from application_session")
+
+  # MCP 客户端应手: 同一个 resource URI, 另一个 principal, 另一条传输
+  CODE=$(mcp "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"tictactoe.game_make_move\",\"arguments\":{\"target\":\"$URI\",\"position\":4}}}" \
+    "check-lap-mcp-a-$(stamp)")
+  [ "$CODE" = "200" ] && ok "MCP tools/call 200" || fail "tools/call 状态码 $CODE"
+  ISERR=$(jq_ "d['result']['isError']")
+  [ "$ISERR" = "False" ] && ok "isError=false" \
+    || fail "动作被拒: isError=$ISERR code=$(jq_ "d['result']['structuredContent']['error']['code']")"
+  MARK=$(jq_ "d['result']['structuredContent']['result']['board'][4]")
+  [ "$MARK" = "O" ] && ok "Agent 作为 O 落在 board[4]" || fail "board[4]='$MARK' (期望 Agent 的 O)"
+
+  # 真人这一侧: 同一个 URI, 同一个读路径
+  CODE=$(http GET "/api/v1/resources?uri=$(encoded "$URI")")
+  [ "$CODE" = "200" ] && ok "真人读同一个 URI 200" || fail "读资源状态码 $CODE"
+  B0=$(jq_ "d[0]['state']['board'][0]"); B4=$(jq_ "d[0]['state']['board'][4]")
+  if [ "$B0" = "X" ] && [ "$B4" = "O" ]; then
+    ok "共享世界: 同一行 resource, board[0]=X(真人) / board[4]=O(Agent)"
+  else
+    fail "两边不是同一盘棋: board[0]='$B0' board[4]='$B4'"
+  fi
+
+  # MCP Session ≠ ApplicationSession —— R6 最要紧的那条不变量
+  SESSIONS_AFTER=$(sql "select count(*) from application_session")
+  [ "$SESSIONS_AFTER" = "$SESSIONS_BEFORE" ] && ok "整条 MCP 链路没有创建 ApplicationSession" \
+    || fail "application_session 从 $SESSIONS_BEFORE 涨到 $SESSIONS_AFTER —— MCP 会话污染了归属链"
+
+  mcp_cleanup
+fi
+
+# ── 断言 15 ──
 skip "共享世界: 真人落子后数字人的应手落在同一行 resource — R7"
 
 echo ""

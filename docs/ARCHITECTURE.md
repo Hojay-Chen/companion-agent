@@ -183,6 +183,46 @@ POST /api/v1/actions:execute                     唯一的动作入口（Canonic
 `scripts/check-lap.sh` 是这一面唯一的端到端守卫：`check.sh` 覆盖的是聊天/数字人链路，
 对应用平台**零覆盖** —— 这就是为什么"测试全绿"在这里什么也保护不了。
 
+### MCP 适配器（`POST /mcp`，R6 起）
+
+MCP 是**适配器，不是第二个平台**。它只做两件翻译，两件都通向已经存在的那条路：
+
+| MCP 方法 | 通向哪里 |
+|---|---|
+| `initialize` / `notifications/*` / `ping` | 什么都不通 —— 纯协议状态，不碰数据库 |
+| `tools/list` | 动作发现（能力 → 应用 → 动作这条链，可由 `capabilityId` / `applicationId` 收窄） |
+| `tools/call` | `ActionGateway.execute()` —— 与真人 `POST /api/v1/actions:execute` **同一个**入口 |
+
+协议版本 `2025-06-18`，JSON-RPC 2.0。`DELETE /mcp` 关掉一个协议会话。
+
+> **MCP Session ≠ ApplicationSession。** MCP 的协议状态（协商版本、客户端信息）只活在适配器
+> 内存里（`McpSessions`），`application_session` 一行都不会因为它而增减 —— 归属链是平台的概念，
+> 不是某个传输的概念。这条不变量两边都有测试钉住：进程内的 `McpProtocolTest` 断言整条往返前后
+> `application_session` 计数不变，`check-lap.sh` 断言 14 在真实服务上再断言一遍。
+> 少了后半句，"没有创建会话"也可能只是因为那条链路根本没执行 —— 所以它同时断言棋盘真的变了。
+
+**工具名**是 `<应用短名>.<动作 id 里的点换成下划线>`（`tictactoe.game_make_move`）。井字棋与五子棋
+的**动作 id 完全一样**，靠应用短名分开；若两个应用的短名还撞车，整个目录一起退化成全名
+（`com_luxera_a_b.game_make_move`）—— 只给其中一个改的话，工具名会变成"取决于另一个应用存不存在"的
+东西。描述文字（`description`）是应用的 `agentHint` 与资源模板的投影，LLM 对应用的了解**只有**这一段。
+
+> **`/mcp` 在 `SecurityConfig` 里是 `permitAll`，这不是漏洞。** MCP 客户端没有 JWT —— 它是外部
+> Agent，手里只有 `X-Mcp-Principal` + `X-Mcp-Service-Key`，由 `McpPrincipalResolver` 自己验。
+> JWT 那一层**表达不了** MCP 的身份，所以留在 `anyRequest().authenticated()` 后面的结果是每个 MCP
+> 请求都在过滤器上变成 Spring 默认的 403 错误体,连 `initialize` 都到不了控制器。
+> 真正的门在控制器第一步：服务密钥（`app.lap.mcp.service-key`，生产上由 `LAP_MCP_SERVICE_KEY` 给）
+> **留空即 MCP 完全关闭**，每个请求都被拒。
+>
+> 这个坑是 `check-lap.sh` 断言 14 抓到的 —— 进程内测试抓不到它：`application-platform` 的测试应用
+> 没有 `SecurityConfig`（它在 `platform-kernel`），过滤器链压根不在场。补的守卫是
+> `bootstrap-app` 的 `McpEndpointSecurityTest`（唯一同时看得见 `SecurityConfig` 与 `McpController`
+> 的地方），断言"带正确密钥的握手必须成功"且"无凭据时回的是 JSON-RPC 信封而不是 Spring 错误体"。
+
+> **已知产品缺口（不是测试的将就）**：AGENT 身份目前**没有** HTTP 安装入口 —— `/install` 从 JWT 解析
+> principal（那是真人的路），而 MCP 面明确拒绝 `HUMAN` 声明。所以 `check-lap.sh` 断言 14 里的
+> AGENT 安装行是用 SQL 造的，`McpProtocolTest` 也直接调 `InstallationService`。将来要支持
+> "第三方 MCP Agent 自己装应用"，得有一条属于 AGENT 的安装路径。
+
 数据面另走 **DHCP v1**（`contracts.dhcp`：`DhcpFrame` + 11 种帧类型）经 `/ws/simulator`。
 聊天平台在这条链路上只看见一台"机器用户设备"（`simulator_devices` 表），完全不知道 Companion 的存在。
 
@@ -218,7 +258,7 @@ POST /api/v1/actions:execute                     唯一的动作入口（Canonic
 
 ```bash
 cd backend
-mvn clean test                       # 全模块 465 测试
+mvn clean test                       # 全模块 579 测试
 mvn -DskipTests package              # 产出可执行 jar
 ```
 

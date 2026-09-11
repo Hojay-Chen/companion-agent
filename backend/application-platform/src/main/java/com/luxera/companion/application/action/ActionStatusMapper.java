@@ -42,4 +42,18 @@ public final class ActionStatusMapper {
     public static boolean isError(ActionStatus status) {
         return status != ActionStatus.SUCCESS;
     }
+
+    /**
+     * 身份解析失败 → HTTP。两条传输面(REST 的 {@code LapExceptionHandler} 与 MCP 的
+     * {@code McpController})共用这一份判断, 各自只决定错误体的形状。
+     *
+     * <p>401 与 403 的分界是"重来一次有没有用": 凭据没给对(没身份、服务密钥不对)是 401,
+     * 客户端该去重拿凭据; 其余(比如"内部调用必须显式声明 principal 类型"、MCP 客户端声称自己
+     * 是真人)是 403 —— 再试一百次也一样, 得改调用方代码。
+     */
+    public static HttpStatus authenticationStatus(String code) {
+        boolean credentialProblem = "UNIDENTIFIED_PRINCIPAL".equals(code)
+                || "MCP_UNAUTHORIZED".equals(code);
+        return credentialProblem ? HttpStatus.UNAUTHORIZED : HttpStatus.FORBIDDEN;
+    }
 }

@@ -37,18 +37,15 @@ public class LapExceptionHandler {
     }
 
     /**
-     * 身份解析失败。{@code UNIDENTIFIED_PRINCIPAL} 与 {@code MCP_UNAUTHORIZED} 是 401 ——
-     * 凭据没给对, 重来一次可能就好; 其余(比如"内部调用必须显式声明 principal 类型")是 403,
-     * 因为再试一次也不会好, 得改调用方代码。
+     * 身份解析失败。401 与 403 的分界(凭据没给对 / 再试也不会好)在
+     * {@link ActionStatusMapper#authenticationStatus} 里 —— 与 MCP 面共用同一份判断,
+     * 两个传输面在这里只决定错误体的形状。
      */
     @ExceptionHandler(PrincipalResolver.PrincipalException.class)
     public ResponseEntity<ActionResponse> handlePrincipal(PrincipalResolver.PrincipalException e) {
-        boolean retriable = "UNIDENTIFIED_PRINCIPAL".equals(e.code())
-                || "MCP_UNAUTHORIZED".equals(e.code());
         // ActionStatus 里没有 UNAUTHENTICATED, 而它也不该有: 对权限模型而言两者都是"这个身份
         // 做不了这件事"。HTTP 层面才需要区分 —— 401 让客户端去重拿凭据, 403 让它别白费力气。
-        HttpStatus http = retriable ? HttpStatus.UNAUTHORIZED : HttpStatus.FORBIDDEN;
-        return ResponseEntity.status(http)
+        return ResponseEntity.status(ActionStatusMapper.authenticationStatus(e.code()))
                 .body(ActionResponse.failure(ActionStatus.DENIED, e.code(), e.getMessage()));
     }
 

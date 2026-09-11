@@ -71,7 +71,12 @@
 | 应用审计 | Action Log | `dh_application_action_log` |
 | 第三方接入 | Application Adapter | `TicTacToeApplicationAdapter`（首批） |
 
-> **诚实说明**：完整声明式 `lap-manifest.json` 解析、MCP Adapter、多语言 SDK、App Store 属"有真实第三方接入需求后再做"的部分，本轮未做。当前 `ActionDescriptor` 用 Java 常量描述，`describe()/listActions()` 已返回描述符，届时只换数据来源、不改调用方。
+> **诚实说明（V10 当时的边界，已于 LAP v1 落地）**：完整声明式 `lap-manifest.json` 解析、MCP Adapter、多语言 SDK、App Store 属"有真实第三方接入需求后再做"的部分，本轮未做。当前 `ActionDescriptor` 用 Java 常量描述，`describe()/listActions()` 已返回描述符，届时只换数据来源、不改调用方。
+>
+> **后续**：`lap-manifest.json` 已于 **LAP v1 R4** 落地（`ApplicationManifest` + `ManifestParser` /
+> `ManifestValidator` / `ManifestRegistrar`），MCP Adapter 已于 **R6** 落地（`POST /mcp`，
+> 见「LAP v1 · 应用平台」一节）。`ActionDescriptor` 已被 `contracts.application.ActionSpec` 取代，
+> 本次拆分后**不再存在两份**。
 
 ---
 
@@ -118,7 +123,7 @@ backend/
 数据面则经 **DHCP v1 WebSocket 协议**（`contracts.dhcp`）流动，聊天平台只看见一台"机器用户设备"，
 完全不知道 Companion 的存在。
 
-### 重构成果（9 轮，当时全量 294 测试全绿；应用平台拆出后为 329，LAP v1 的 R5 落地后为 558 —— 见下一节）
+### 重构成果（9 轮，当时全量 294 测试全绿；应用平台拆出后为 329，LAP v1 的 R6 落地后为 579 —— 见下一节）
 
 **架构解耦（R1-R4）**：
 1. **Maven 多模块拆分**：见上（V10 落地时为五模块，LAP v1 拆出 `application-platform` 后为六个）。
@@ -225,7 +230,7 @@ backend/
 3. **没有"操作"的抽象** —— `/api/v10/games/tictactoe/*` 从请求体里手取 `userId`/`companionId`，
    忽略已认证身份；`Idempotency-Key` 收下就丢。
 
-### 已完成（R1–R5）
+### 已完成（R1–R6）
 
 | 轮 | 内容 | 证据 |
 |---|---|---|
@@ -234,6 +239,7 @@ backend/
 | **R3** | 抽出第 6 个 Maven 模块 `application-platform`（`com.luxera.companion.application`）；DH 的 `digitalhuman/application/**` 21 个主文件 + 5 个测试全部删除；`/api/v10` 控制器原样搬走（前端不破）；边界守卫扩展到三方 | `check-v10.sh`（41 个顶层包分属 5 个所有权模块，10 对引用 + 10 对 pom 全过）、`LapEndToEndTest`、`DhReactsToApplicationEventTest` |
 | **R4** | **LAP 面 + 真人应用页，删 `/api/v10`**：manifest 类型/解析/校验/注册（`ManifestValidator` / `ManifestRegistrar`，发布时校验每个 action 都能解析到该版本的 handler）；`ActionGateway` + `POST /api/v1/actions:execute`（真幂等 + 两段式事务 + `ActionInvocationReaperJob` 崩溃恢复 + `expectedResourceVersion` CAS）；`/api/v1/{capabilities,applications,resources,sessions,subscriptions}`；安装/会话/订阅与四条归属不变量；`application-platform` 的**全部 12 张表**；前端「应用」页打**同一个** execute 端点 | `check-lap.sh`（断言 1–9、13 全过，11/12/14/15 待轮次）、application-platform **17 → 153 测试**、`npm run build`、`curl /api/v10/applications` → 404 |
 | **R5** | **参考应用：五子棋 + 提醒/日程**（含 DH 提醒只读改造）：`com.luxera.gomoku`（`game.play` 第二候选，action id 与井字棋相同、URI scheme 不同）；`com.luxera.reminder`（`reminder.manage`，`backing: APP_OWNED` + `ReminderResourceProjector` + `ReminderDispatchJob`）；DH 侧 `ReminderService` 改为读 Resource / 写 action，`ReminderRepository` 与 `@Entity Reminder` 删除，`Reminder` 降级为 DTO；新增 `ApplicationNotificationBridge`（`notify` 块 → `companion_notifications`）；`ProactiveEngine` 的提醒循环删除 | `check-lap.sh` 断言 2/3/9b/10 由 skip 转正（全绿，5 项待轮次）；`check.sh` 新增 16 条提醒契约断言全绿（含"旧 `reminders` 表一行没多"）；DH **229 → 253 测试**、application-platform **153 → 222**；三条禁止项逐条 grep 通过 |
+| **R6** | **MCP 适配器**：`POST /mcp`（JSON-RPC 2.0，协议 `2025-06-18`）实现 `initialize` / `notifications/*` / `ping` / `tools/list` / `tools/call`，`DELETE /mcp` 关会话；`McpToolCatalog` 把动作投影成工具（描述 = `agentHint` + 资源模板，schema = 动作 schema + 平台保留的 `target`）；工具名撞车时整个目录退化到全名；`McpPrincipalResolver`（`X-Mcp-Principal` + 服务密钥，**密钥留空即 MCP 关闭**）；`SecurityConfig` 放行 `/mcp`（MCP 客户端没有 JWT，身份由适配器自己验） | `McpProtocolTest` **19 条**（含"整条 MCP 往返不创建 `ApplicationSession`"）；`check-lap.sh` **断言 14 由 skip 转正** —— 真人经 REST 落子后，MCP 客户端在**同一行** resource 上应手；`McpEndpointSecurityTest`（过滤器链可达性）|
 
 **R5 的关键决定**（两个新增参考应用 + DH 提醒只读改造）：
 
@@ -257,6 +263,33 @@ backend/
    （`game.create` / `game.state` / `game.make_move` / `game.surrender`），只有 URI scheme
    （`gomoku://match/{id}` vs `game://session/{id}`）不同 —— 发现链的第 2 级（一个能力多个候选）
    这才算真的被走过。
+
+**R6 的关键决定**（MCP 只是一个适配器）：
+
+1. **`MCP Session ≠ ApplicationSession`。** MCP 的协议状态（协商版本、客户端信息）只活在适配器内存里
+   （`McpSessions`），`application_session` 一行都不会因它增减 —— 归属链是平台的概念，不是传输的概念。
+   这条不变量两边都有测试钉住：`McpProtocolTest` 断言整条往返前后 `application_session` 计数不变，
+   `check-lap.sh` 断言 14 在真实服务上再断言一遍。**两处都同时断言棋盘真的变了** —— 否则"没创建会话"
+   也可能只是因为那条链路根本没执行。
+2. **`/mcp` 在 `SecurityConfig` 里是 `permitAll`，这不是漏洞。** MCP 客户端是外部 Agent，手里没有 JWT，
+   只有 `X-Mcp-Principal` + 服务密钥 —— JWT 那一层**表达不了** MCP 的身份。留在
+   `anyRequest().authenticated()` 后面的结果是每个 MCP 请求都在过滤器上变成 Spring 默认的 403
+   （`{"status":403,"path":"/mcp"}`），连 `initialize` 都到不了控制器。真正的门在控制器第一步：
+   服务密钥留空即 MCP 完全关闭。
+   这个坑是 `check-lap.sh` 抓到的，**进程内测试抓不到** —— `application-platform` 的测试应用没有
+   `SecurityConfig`（它在 `platform-kernel`），过滤器链压根不在场。补的守卫是 `bootstrap-app` 的
+   `McpEndpointSecurityTest`（唯一同时看得见两者的地方）。
+3. **工具的 `target` 是平台级的，动作自己的输入是平铺的。** 工具 schema = 动作 `inputSchema` + 一个必需的
+   `target`，刻意**不**套一层 `{"input":{...}}` —— MCP 客户端照着 schema 填，声明成嵌套就得多填一层，
+   而那一层除了复述 LAP 的内部结构之外没有用处。`expectedResourceVersion` 与 `_idempotencyKey`
+   能收但不写进 schema：后者是给设不了请求头的客户端的退路，写进 schema 只会邀请模型为一个它无从知道的
+   字段编个值。
+4. **工具名撞车时整个目录一起退化，不是只改撞的那个。** 井字棋与五子棋的动作 id 完全一样，靠应用短名
+   分开；短名再撞（`a.b` 与 `c.b`）就都改用全名 —— 只给其中一个改的话，工具名会变成"取决于另一个应用
+   存不存在"的东西。
+5. **AGENT 身份目前没有 HTTP 安装入口**（`/install` 从 JWT 解析，那是真人的路；MCP 面明确拒绝 `HUMAN`
+   声明）。所以断言 14 里的 AGENT 安装行是 SQL 造的，`McpProtocolTest` 直接调 `InstallationService` ——
+   这是**已知的产品缺口**，不是测试的将就。
 
 **R2/R3 的关键设计**：`TicTacToeGameService` 在提交后不再直接投递事件，而是发一条
 `contracts.application.ApplicationEvent`（经注入的 `ApplicationEventSink`）—— 这是整个搬迁中
@@ -299,19 +332,20 @@ Decision 零修改"。提醒的所有权是**单一数据源：应用拥有，DH
 
 ### 当前验收
 
-- `mvn test`：**558 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform 24 /
-  digital-human-platform **253** / application-platform **222** / bootstrap-app 36
+- `mvn test`：**579 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform 24 /
+  digital-human-platform **253** / application-platform **241** / bootstrap-app **38**
 - `bash scripts/check-v10.sh` → `check-v10 OK`（41 个顶层包分属 5 个所有权模块，10 对引用 + 10 对 pom）
 - `bash scripts/check.sh`（起 jar）→ **✅ 全量验收全部通过**（聊天/数字人链路无回归；
   含 R5 新增的 16 条提醒契约断言）
-- `bash scripts/check-lap.sh` → **✅ 验收通过（5 项未到轮次，已跳过）**；断言 2 / 3 / 9b / 10 已转正
+- `bash scripts/check-lap.sh` → **✅ 验收通过（4 项未到轮次，已跳过）**；断言 2 / 3 / 9b / 10 / 14 已转正
   （`reminder.manage` 入目录、`game.play` 两个候选、未安装 → `NOT_INSTALLED`、
-  装上提醒应用后经同一个 execute 端点建提醒并读回收件箱）；断言 13 确认
-  `GET /api/v10/applications` → **404**，旧应用面已下线
+  装上提醒应用后经同一个 execute 端点建提醒并读回收件箱；**断言 14**：MCP 客户端与真人在
+  **同一行** resource 上对弈 —— `board[0]=X`(真人 REST) / `board[4]=O`(Agent MCP)，且
+  `application_session` 一行没多）；断言 13 确认 `GET /api/v10/applications` → **404**
 - `cd frontend && npm run build` → 通过
-- **CI 顺序**（每一轮都照这个跑）：`check-v10.sh` → `mvn test` → 起 jar → `check.sh` →
-  `check-lap.sh` → `npm run build`
-- 尚未完成：**R6** MCP 适配器、**R7** Agent 的 capability→action LLM 契约、
+- **CI 顺序**（每一轮都照这个跑）：`check-v10.sh` → `mvn test` → 起 jar（断言 14 要求带
+  `LAP_MCP_SERVICE_KEY`）→ `check.sh` → `check-lap.sh` → `npm run build`
+- 尚未完成：**R7** Agent 的 capability→action LLM 契约、
   **R8** 生命周期状态机 + REMOTE + outbox + `lap-drop-legacy.sh` 清理遗留表
 
 ---
@@ -1178,7 +1212,9 @@ BASE=http://127.0.0.1:8081 bash scripts/evaluate.sh    # Human-likeness 评测
 1. **向量检索需 embedding key 激活**：pgvector 已装+接线，但需配 `EMBEDDING_API_KEY`（DeepSeek 无 embedding 接口）才启用真实向量；未配时回退结构排序。
 2. **WorkingMemory 单实例内存**：多实例部署需换 Redis。
 3. **主动消息仅站内通知**：无 APNs/FCM 手机推送。
-4. **工具层仅提醒**：无 MCP / 日历 / 搜索（方案 §49 后置）。
+4. **工具层仅提醒**：数字人自己没有日历 / 搜索 / 天气工具（方案 §49 后置）。
+   > 与 LAP 的 `POST /mcp` **不是一回事**：那是平台把应用的动作**对外**暴露给外部 Agent（MCP
+   > **服务端**，R6 已落地）；这一条说的是数字人**作为调用方**还没有这些工具，两者互不替代。
 5. **模型 deepseek-chat**：无推理模式 / 语音 / 图片 / 多模态（后置）。
 6. **单机部署**：无高可用、无 K8s（方案后置）。
 7. **认证简单**：用户名+密码 JWT，无邮箱验证 / OAuth / 找回密码。

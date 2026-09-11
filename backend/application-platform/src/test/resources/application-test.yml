@@ -12,3 +12,11 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
+
+# MCP 的服务密钥。留空 = MCP 完全关闭(见 McpPrincipalResolver 的类注释), 那样 McpProtocolTest
+# 一整类用例都只会看到 403, 于是它测不到适配器本身。这里给的是**测试专用**的值 —— 它不在
+# src/main 里, 不是任何环境的默认值: 生产上必须由 LAP_MCP_SERVICE_KEY 显式给。
+app:
+  lap:
+    mcp:
+      service-key: test-mcp-service-key
