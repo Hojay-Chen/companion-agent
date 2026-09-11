@@ -2,6 +2,7 @@ package com.luxera.companion.application.manifest;
 
 import com.luxera.companion.application.action.ActionHandlerKey;
 import com.luxera.companion.application.action.ActionHandlerRegistry;
+import com.luxera.companion.application.action.PendingActionRegistry;
 import com.luxera.companion.application.spi.LapApplicationModule;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.SmartInitializingSingleton;
@@ -35,6 +36,7 @@ public class ManifestRegistrar implements SmartInitializingSingleton {
     private final ManifestValidator validator;
     private final ManifestRegistry registry;
     private final ActionHandlerRegistry handlers;
+    private final PendingActionRegistry pendingActions;
     private final ManifestCatalogueSync catalogue;
     private final ResourceLoader resourceLoader;
     private final List<LapApplicationModule> modules;
@@ -43,6 +45,7 @@ public class ManifestRegistrar implements SmartInitializingSingleton {
                              ManifestValidator validator,
                              ManifestRegistry registry,
                              ActionHandlerRegistry handlers,
+                             PendingActionRegistry pendingActions,
                              ManifestCatalogueSync catalogue,
                              ResourceLoader resourceLoader,
                              List<LapApplicationModule> modules) {
@@ -50,6 +53,7 @@ public class ManifestRegistrar implements SmartInitializingSingleton {
         this.validator = validator;
         this.registry = registry;
         this.handlers = handlers;
+        this.pendingActions = pendingActions;
         this.catalogue = catalogue;
         this.resourceLoader = resourceLoader;
         this.modules = List.copyOf(modules);
@@ -71,6 +75,7 @@ public class ManifestRegistrar implements SmartInitializingSingleton {
         validator.validate(manifest);
 
         module.registerHandlers(handlers);
+        module.registerPendingActions(pendingActions);
 
         String appId = manifest.applicationId();
         String version = manifest.version();

@@ -32,4 +32,13 @@ public class ApplicationPlatformTestApplication {
     RecordingApplicationEventSink recordingEventSink() {
         return new RecordingApplicationEventSink();
     }
+
+    /**
+     * 令牌读取在 kernel, 这里没有 kernel, 于是塞一个能用的替身 —— 见
+     * {@link StubPrincipalTokenReader} 的类注释: 替身能造出两种身份, 跨 principal 的用例才测得到。
+     */
+    @Bean
+    StubPrincipalTokenReader stubPrincipalTokenReader() {
+        return new StubPrincipalTokenReader();
+    }
 }

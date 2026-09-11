@@ -19,8 +19,11 @@ import java.util.Map;
  *
  * <ol>
  *   <li><b>personId 从 {@code data.companionId} 取。</b> {@code ApplicationEvent} 的信封被
- *       设计成六个字段, 没有"谁的"这一栏 —— 应用发射一条会唤起 Agent 的事件时, 必须把
- *       {@code companionId} 放进 {@code data}。缺了就丢弃并告警, 绝不猜。</li>
+ *       设计成六个字段, 没有"谁的"这一栏 —— 这个键由<em>平台</em>在投递前盖上
+ *       ({@code LapEventPublisher} + {@code AgentRouteResolver}: 应用只说"这盘棋里还有谁",
+ *       由平台查安装表认出其中的数字人)。应用自己不会也不需要知道 companionId。
+ *       缺了就丢弃并告警, 绝不猜 —— 这里留着这道检查是因为本类是个独立消费者, 不该假定
+ *       上游永远是对的。</li>
  *   <li><b>幂等由 {@code event.id()} 承担。</b> 平台已按 manifest 的 {@code idTemplate} 保证
  *       它确定性 —— 同一个 {@code ApplicationEvent} 重放会得到同一个 {@code eventId},
  *       于是被 DeduplicationHandler 短路, 数字人不会对同一步行动两次。</li>

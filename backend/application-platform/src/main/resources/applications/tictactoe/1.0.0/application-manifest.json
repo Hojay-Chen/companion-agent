@@ -3,15 +3,15 @@
     "id": "com.luxera.tictactoe",
     "name": "井字棋",
     "version": "1.0.0",
-    "description": "经典三连棋。真人与数字人共下一局, 双方各自落子, 谁先连成一条线谁赢。",
+    "description": "三乘三的经典对局。真人和数字人各坐一边, 共用同一盘棋。",
     "category": "game"
   },
 
   "capabilities": [
     {
       "id": "game.play",
-      "title": "对弈",
-      "description": "与另一个席位进行回合制棋类对弈",
+      "title": "对局",
+      "description": "可以和真人或数字人下一盘棋",
       "category": "game"
     }
   ],
@@ -20,32 +20,38 @@
     {
       "id": "game.create",
       "capability": "game.play",
-      "title": "开局",
-      "description": "在一个空的棋局资源上开一盘新棋。发起方占先手席位(执 X)。",
+      "title": "开一局",
+      "description": "为当前会话开一盘新棋; 已经开过则返回当前局面",
       "permission": "WRITE",
       "risk": "LOW",
       "attention": "AWARE",
       "inputSchema": {
         "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      }
+        "properties": {
+          "opponentPrincipalId": {
+            "type": "string",
+            "description": "预先指定对手的 principal id; 留空表示等对手自己落座"
+          }
+        }
+      },
+      "agentHint": "开局永远是 X 先走。你是执 O 的一方时, 开完局什么都不用做, 等对手落子。"
     },
     {
       "id": "game.state",
       "capability": "game.play",
       "title": "看棋局",
-      "description": "读取当前棋盘、轮到谁、是否已分出胜负。不改变任何状态。",
+      "description": "读取当前棋盘与轮次",
       "permission": "READ",
       "risk": "NONE",
-      "attention": "SUBCONSCIOUS"
+      "attention": "NONE",
+      "agentHint": "只读。看局面用它, 不要为了看局面而走一步棋。"
     },
     {
       "id": "game.make_move",
       "capability": "game.play",
       "title": "落子",
-      "description": "在当前轮到自己时, 把棋子放到一个空格上。",
-      "permission": "WRITE",
+      "description": "在 0..8 的某个格子上放自己的记号",
+      "permission": "EXECUTE",
       "risk": "LOW",
       "attention": "FOCUSED",
       "inputSchema": {
@@ -55,36 +61,35 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 8,
-            "description": "0-8 的空位编号, 按 0 1 2 / 3 4 5 / 6 7 8 排布"
+            "description": "格子序号, 从左到右、从上到下: 0 1 2 / 3 4 5 / 6 7 8"
           }
         },
-        "required": ["position"],
-        "additionalProperties": false
+        "required": ["position"]
       },
-      "agentHint": "棋盘编号: 0 1 2 / 3 4 5 / 6 7 8(三行三列)。只能落在空位上。\n选择位置的优先级: ① 能让自己立刻连成三子的位置 → ② 能阻断对手连成三子的位置 → ③ 正中央(4) → ④ 四个角(0/2/6/8) → ⑤ 四条边(1/3/5/7)。\n只在轮到你的时候落子; 已经分出胜负或棋局未开始时不要落子。"
+      "agentHint": "格子序号 0..8 按行排: 0 1 2 / 3 4 5 / 6 7 8。按这个顺序找落点, 找到第一个成立的就下那里: (1) 能立刻三连的位置 —— 直接赢; (2) 对手下一手能三连的位置 —— 必须堵; (3) 中心 4; (4) 自己顺手的一个角(0、2、6、8); (5) 任意空位。只能下在空格上, 只能在自己回合下。像真人一样下棋: 会赢就赢, 但别解释你的算法, 也别报格子序号, 说'我下中间'这种自然的话。"
     },
     {
       "id": "game.surrender",
       "capability": "game.play",
       "title": "认输",
-      "description": "结束当前棋局并判对方获胜。",
-      "permission": "WRITE",
+      "description": "放弃这一局, 对手获胜",
+      "permission": "EXECUTE",
       "risk": "LOW",
       "attention": "AWARE",
       "inputSchema": {
         "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      }
+        "properties": {}
+      },
+      "agentHint": "只在明确表示不想再下、或局面已经没救了的时候用。认输是一局结束, 不是暂停。"
     }
   ],
 
   "resources": [
     {
-      "type": "game.session",
+      "type": "tictactoe.game",
       "uriTemplate": "game://session/{sessionId}",
       "backing": "RESOURCE_STORE",
-      "agentHint": "state 形如 {\"board\":[9 个格子, \"X\"/\"O\"/空串], \"seats\":[先手席位, 后手席位], \"turn\":\"X\"|\"O\"|\"\", \"winner\":\"X\"|\"O\"|\"DRAW\"|\"\"}。seats 里存的是发起方与应战方的 principal id; winner 为空串表示未分胜负, turn 为空串表示棋局已结束。"
+      "agentHint": "state.board 是长度 9 的数组, 每项是 \"X\" / \"O\" / null; state.seats 是两个座位的 principal id(可能为 null); state.turn 是当前该谁走(\"X\" 或 \"O\"); state.winner 是 \"X\" / \"O\" / \"DRAW\" / null。你的记号由你的座位决定: seats[0] 执 X, seats[1] 执 O —— 与你是人还是数字人无关。"
     }
   ],
 
@@ -98,20 +103,20 @@
       "type": "game.move",
       "title": "有人落子",
       "triggersAgent": true,
-      "idTemplate": "{uri}#MOVE-{position}"
+      "idTemplate": "{uri}#MOVE-{moves}"
     },
     {
       "type": "game.finish",
-      "title": "棋局结束",
-      "triggersAgent": false,
-      "idTemplate": "{uri}#FINISH"
+      "title": "分出胜负",
+      "triggersAgent": true,
+      "idTemplate": "{uri}#FINISH-{winner}"
     }
   ],
 
   "permissions": [
     {
       "capability": "game.play",
-      "level": "WRITE",
+      "level": "EXECUTE",
       "riskCeiling": "LOW"
     }
   ],

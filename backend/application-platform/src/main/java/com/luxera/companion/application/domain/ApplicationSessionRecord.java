@@ -50,10 +50,16 @@ public class ApplicationSessionRecord {
     @Column(name = "principal_id", nullable = false, length = 64)
     private String principalId;
 
-    @Column(name = "companion_id", length = 36)
+    /**
+     * 与 {@code principal_id} 同为 64, 而不是 36 —— 这两个字段的值<em>直接来自</em>解析出来的
+     * principal({@code companionId} / {@code userId}), 而 principal id 的合法上限就是 64
+     * ({@code system:reaper} 这类系统身份、以及 MCP 客户端自报的 id 都可能超过 36)。取 36 的话
+     * 会出现"身份在门口被接受、写会话时被数据库拒绝"的分裂, 那种错误最难查。
+     */
+    @Column(name = "companion_id", length = 64)
     private String companionId;
 
-    @Column(name = "user_id", length = 36)
+    @Column(name = "user_id", length = 64)
     private String userId;
 
     @Column(nullable = false, length = 32)

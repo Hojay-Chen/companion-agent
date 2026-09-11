@@ -1,0 +1,78 @@
+{
+  "identity": {
+    "id": "com.luxera.fixture.board",
+    "name": "夹具棋类应用",
+    "version": "1.0.0",
+    "description": "只存在于测试里的第二个对局应用。它和井字棋共用 game.play 与 game.make_move —— 正是为了证明两者不会互相覆盖。",
+    "category": "game"
+  },
+
+  "capabilities": [
+    {
+      "id": "game.play",
+      "title": "对局",
+      "description": "可以和真人或数字人下一盘棋",
+      "category": "game"
+    }
+  ],
+
+  "actions": [
+    {
+      "id": "game.state",
+      "capability": "game.play",
+      "title": "看局面",
+      "description": "读取当前局面",
+      "permission": "READ",
+      "risk": "NONE",
+      "attention": "NONE",
+      "agentHint": "只读。"
+    },
+    {
+      "id": "game.make_move",
+      "capability": "game.play",
+      "title": "落子",
+      "description": "在一个交叉点上放自己的记号",
+      "permission": "EXECUTE",
+      "risk": "LOW",
+      "attention": "FOCUSED",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "position": {"type": "integer", "minimum": 0, "maximum": 224}
+        },
+        "required": ["position"]
+      },
+      "agentHint": "夹具用, 没有真的策略提示。"
+    }
+  ],
+
+  "resources": [
+    {
+      "type": "fixture.match",
+      "uriTemplate": "board://match/{matchId}",
+      "backing": "RESOURCE_STORE",
+      "agentHint": "夹具用。"
+    }
+  ],
+
+  "events": [
+    {
+      "type": "game.move",
+      "title": "有人落子",
+      "triggersAgent": true,
+      "idTemplate": "{uri}#MOVE-{moves}"
+    }
+  ],
+
+  "permissions": [
+    {
+      "capability": "game.play",
+      "level": "EXECUTE",
+      "riskCeiling": "LOW"
+    }
+  ],
+
+  "runtime": {
+    "type": "NATIVE"
+  }
+}

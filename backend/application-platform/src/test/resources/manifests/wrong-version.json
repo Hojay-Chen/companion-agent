@@ -1,0 +1,56 @@
+{
+  "identity": {
+    "id": "com.luxera.fixture.wrongversion",
+    "name": "处理器挂在别的版本上",
+    "version": "1.0.0",
+    "description": "manifest 是 1.0.0, 但处理器注册在 2.0.0 —— 处理器键必须带版本, 缺了这一维就会出现'新版应用跑旧版代码'。",
+    "category": "test"
+  },
+
+  "capabilities": [
+    {
+      "id": "board.versioned",
+      "title": "带版本的能力",
+      "description": "只用来验证处理器键里的版本维度",
+      "category": "test"
+    }
+  ],
+
+  "actions": [
+    {
+      "id": "board.place",
+      "capability": "board.versioned",
+      "title": "落子",
+      "description": "1.0.0 的动作",
+      "permission": "EXECUTE",
+      "risk": "LOW",
+      "attention": "AWARE",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ],
+
+  "resources": [
+    {
+      "type": "fixture.versioned",
+      "uriTemplate": "versioned://thing/{thingId}",
+      "backing": "RESOURCE_STORE"
+    }
+  ],
+
+  "events": [],
+
+  "permissions": [
+    {
+      "capability": "board.versioned",
+      "level": "EXECUTE",
+      "riskCeiling": "LOW"
+    }
+  ],
+
+  "runtime": {
+    "type": "NATIVE"
+  }
+}

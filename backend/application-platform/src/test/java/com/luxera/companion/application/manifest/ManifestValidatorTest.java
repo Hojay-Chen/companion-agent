@@ -1,212 +1,345 @@
 package com.luxera.companion.application.manifest;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.luxera.companion.contracts.application.AttentionPolicy;
+import com.luxera.companion.contracts.application.PermissionLevel;
+import com.luxera.companion.contracts.application.RiskLevel;
 import org.junit.jupiter.api.Test;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.util.StreamUtils;
 
-import java.nio.charset.StandardCharsets;
+import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * manifest 的七条 section 与它们的业务规则。
+ * manifest 是这套平台的<em>契约本身</em> —— 发现链、权限、幂等、事件全从它派生。校验器漏一条,
+ * 后果不是"数据脏了", 而是某个应用在运行时以错误的方式被调用。
  *
- * <p>这些用例看着琐碎, 但每一条都对应一次线上会踩的坑 —— 尤其是
- * {@code EVENT_ID_TEMPLATE_REQUIRED}: 随机事件 id 会让数字人侧去重失效, 于是它对同一步棋
- * 落两次子, 而"看起来一切正常"。把这条规则钉在发布前, 是唯一便宜的时机。
+ * <p>这个类把七个小节逐条钉住, 重点是<em>错误码</em>而不只是"抛异常": 调用方(开发者 API、
+ * 构建脚本)要靠码来决定怎么办, 只报"manifest 不合法"等于没报。
+ *
+ * <p>两条断言值得单独指出, 因为它们对应的是设计稿里最容易做反的地方:
+ *
+ * <ul>
+ *   <li><b>{@code HOSTED} 有自己的错误码, 不是被静默接受。</b>"第一阶段不做 JVM sandbox /
+ *       WASM"如果只写在文档里, 第一个上传代码的应用就会让它变成谎言。</li>
+ *   <li><b>顶层出现未知小节一律拒绝, 包括 {@code agentEndpoint} 这类按消费者分的字段。</b>
+ *       静默忽略未知字段的话, 一个作者写了 {@code humanEndpoint} 会得到"发布成功但从不生效",
+ *       这是最难查的一类问题。</li>
+ * </ul>
  */
 class ManifestValidatorTest {
 
-    private final ObjectMapper mapper = new ObjectMapper();
-    private final ManifestParser parser = new ManifestParser(mapper);
     private final ManifestValidator validator = new ManifestValidator();
+    private final ManifestParser parser = new ManifestParser(new ObjectMapper());
 
-    // ─────────────────────────── 形状 ───────────────────────────
+    // ─────────────────────────── 正常路径 ───────────────────────────
 
     @Test
-    void validManifestPasses() {
-        ApplicationManifest m = validate(manifest("com.luxera.demo", CAP_GAME, ACT_MOVE,
-                RES_GAME, "[]", PERM_GAME, RT_NATIVE));
-        assertEquals("com.luxera.demo", m.applicationId());
-        assertEquals("1.0.0", m.version());
-        assertEquals(1, m.actions().size());
-        assertTrue(m.action("game.make_move").orElseThrow().requiresIdempotencyKey());
+    void aWellFormedManifestPasses() {
+        assertDoesNotThrow(() -> validator.validate(valid()));
+    }
+
+    /** 七个 section 的名字与顺序就是契约 —— 多一个少一个都要在这里显形。 */
+    @Test
+    void theSevenSectionsAreExactlyTheOnesTheDesignNames() {
+        assertEquals(List.of("identity", "capabilities", "actions", "resources",
+                "events", "permissions", "runtime"), ApplicationManifest.SECTIONS);
+    }
+
+    // ─────────────────────────── identity ───────────────────────────
+
+    @Test
+    void identityIsRequired() {
+        assertCode("MANIFEST_INVALID", () -> validator.validate(withIdentity(null)));
     }
 
     @Test
-    void unknownSectionIsRejected() {
-        String json = """
-                {"identity":{"id":"com.luxera.demo","name":"T","version":"1.0.0"},
-                 "capabilities":%s,"actions":%s,"resources":%s,"events":[],
-                 "permissions":%s,"runtime":%s,
-                 "agentEndpoint":"/api/v1/agent"}
-                """.formatted(CAP_GAME, ACT_MOVE, RES_GAME, PERM_GAME, RT_NATIVE);
-        assertCode("UNKNOWN_SECTION", json);
-    }
-
-    @Test
-    void identityWithoutReverseDnsIdIsRejected() {
+    void identityIdMustLookLikeAReverseDomainName() {
         assertCode("INVALID_APPLICATION_ID",
-                manifest("tictactoe", CAP_GAME, ACT_MOVE, RES_GAME, "[]", PERM_GAME, RT_NATIVE));
+                () -> validator.validate(withIdentity(
+                        new ApplicationManifest.Identity("tictactoe", "井字棋", "1.0.0", null, null))));
     }
 
     @Test
-    void applicationWithNoActionsIsRejected() {
+    void identityVersionIsRequired() {
         assertCode("MANIFEST_INVALID",
-                manifest("com.luxera.demo", CAP_GAME, "[]", RES_GAME, "[]", PERM_GAME, RT_NATIVE));
+                () -> validator.validate(withIdentity(
+                        new ApplicationManifest.Identity("com.luxera.x", "x", "  ", null, null))));
+    }
+
+    // ─────────────────────────── capabilities ───────────────────────────
+
+    /** 发现链的第一级是能力; 一个没有能力的应用无处可被找到。 */
+    @Test
+    void anApplicationWithoutCapabilitiesIsRejected() {
+        assertCode("MANIFEST_INVALID", () -> validator.validate(withCapabilities(List.of())));
     }
 
     @Test
-    void duplicateActionIsRejected() {
-        String two = "[" + ACT_MOVE.substring(1, ACT_MOVE.length() - 1) + ","
-                + ACT_MOVE.substring(1, ACT_MOVE.length() - 1) + "]";
-        assertCode("DUPLICATE_ACTION",
-                manifest("com.luxera.demo", CAP_GAME, two, RES_GAME, "[]", PERM_GAME, RT_NATIVE));
+    void duplicateCapabilitiesAreRejected() {
+        assertCode("DUPLICATE_CAPABILITY", () -> validator.validate(withCapabilities(List.of(
+                capability("game.play"), capability("game.play")))));
     }
 
-    // ─────────────────────────── 规则 ───────────────────────────
+    // ─────────────────────────── actions ───────────────────────────
 
     @Test
-    void actionDeclaringAnUndeclaredCapabilityIsRejected() {
-        String action = "[{\"id\":\"game.make_move\",\"capability\":\"game.unknown\","
-                + "\"permission\":\"WRITE\",\"risk\":\"LOW\",\"inputSchema\":{\"type\":\"object\"}}]";
-        assertCode("UNKNOWN_CAPABILITY",
-                manifest("com.luxera.demo", CAP_GAME, action, RES_GAME, "[]", PERM_GAME, RT_NATIVE));
+    void anApplicationWithoutActionsIsRejected() {
+        assertCode("MANIFEST_INVALID", () -> validator.validate(withActions(List.of())));
     }
 
     @Test
-    void writeActionWithoutInputSchemaIsRejected() {
-        String action = "[{\"id\":\"game.make_move\",\"capability\":\"game.play\","
-                + "\"permission\":\"WRITE\",\"risk\":\"LOW\"}]";
-        assertCode("INPUT_SCHEMA_REQUIRED",
-                manifest("com.luxera.demo", CAP_GAME, action, RES_GAME, "[]", PERM_GAME, RT_NATIVE));
+    void duplicateActionIdsAreRejected() {
+        assertCode("DUPLICATE_ACTION", () -> validator.validate(withActions(List.of(
+                action("game.state", PermissionLevel.READ, RiskLevel.NONE, null),
+                action("game.state", PermissionLevel.READ, RiskLevel.NONE, null)))));
     }
 
     @Test
-    void readActionNeedsNoInputSchema() {
-        String action = "[{\"id\":\"game.state\",\"capability\":\"game.play\","
-                + "\"permission\":\"READ\",\"risk\":\"NONE\"}]";
-        assertDoesNotThrow(() -> validate(
-                manifest("com.luxera.demo", CAP_GAME, action, RES_GAME, "[]", PERM_GAME, RT_NATIVE)));
+    void anActionPointingAtAnUndeclaredCapabilityIsRejected() {
+        assertCode("UNKNOWN_CAPABILITY", () -> validator.validate(withActions(List.of(
+                new ApplicationManifest.ActionDecl("game.make_move", "game.teleport", "瞬移", null,
+                        PermissionLevel.EXECUTE, RiskLevel.LOW, AttentionPolicy.AWARE, schema(), null)))));
+    }
+
+    /**
+     * 写动作必须给出对象型 {@code inputSchema} —— 它是 LLM 唯一能看到"输入长什么样"的地方,
+     * 也是 MCP {@code tools/list} 唯一能转述的东西。缺了它, 动作就没法被安全地调用。
+     */
+    @Test
+    void aWriteActionWithoutAnObjectInputSchemaIsRejected() {
+        assertCode("INPUT_SCHEMA_REQUIRED", () -> validator.validate(withActions(List.of(
+                action("game.make_move", PermissionLevel.EXECUTE, RiskLevel.LOW, null)))));
     }
 
     @Test
-    void capabilityWithoutPermissionDeclarationIsRejected() {
-        assertCode("PERMISSION_DECL_MISSING",
-                manifest("com.luxera.demo", CAP_GAME, ACT_MOVE, RES_GAME, "[]", "[]", RT_NATIVE));
+    void aReadActionMayOmitTheInputSchema() {
+        assertDoesNotThrow(() -> validator.validate(withActions(List.of(
+                action("game.state", PermissionLevel.READ, RiskLevel.NONE, null)))));
     }
 
     @Test
-    void resourceWithoutUriTemplateIsRejected() {
-        String res = "[{\"type\":\"game.session\"}]";
-        assertCode("RESOURCE_URI_TEMPLATE_REQUIRED",
-                manifest("com.luxera.demo", CAP_GAME, ACT_MOVE, res, "[]", PERM_GAME, RT_NATIVE));
+    void anActionWithoutAPermissionLevelIsRejected() {
+        assertCode("MANIFEST_INVALID", () -> validator.validate(withActions(List.of(
+                action("game.state", null, RiskLevel.NONE, null)))));
+    }
+
+    // ─────────────────────────── resources ───────────────────────────
+
+    /** 网关靠 {@code uriTemplate} 判断一个 target 属于哪个应用 —— 没有它, 动作解析不了。 */
+    @Test
+    void aResourceWithoutAUriTemplateIsRejected() {
+        assertCode("RESOURCE_URI_TEMPLATE_REQUIRED", () -> validator.validate(withResources(List.of(
+                new ApplicationManifest.ResourceDecl("tictactoe.game", null,
+                        ApplicationManifest.Backing.RESOURCE_STORE, null)))));
+    }
+
+    // ─────────────────────────── events ───────────────────────────
+
+    @Test
+    void duplicateEventTypesAreRejected() {
+        assertCode("DUPLICATE_EVENT", () -> validator.validate(withEvents(List.of(
+                new ApplicationManifest.EventDecl("game.move", "落子", true, "{uri}#MOVE-{moves}"),
+                new ApplicationManifest.EventDecl("game.move", "落子再来一次", false, null)))));
+    }
+
+    /**
+     * 会唤起数字人的事件必须给出确定性 id 模板。随机 id 会让数字人侧的去重失效 ——
+     * 同一步棋被响应两次, 在用户看来就是"数字人自己跟自己下"。
+     */
+    @Test
+    void anAgentTriggeringEventWithoutAnIdTemplateIsRejected() {
+        assertCode("EVENT_ID_TEMPLATE_REQUIRED", () -> validator.validate(withEvents(List.of(
+                new ApplicationManifest.EventDecl("game.move", "有人落子", true, null)))));
     }
 
     @Test
-    void triggersAgentEventWithoutIdTemplateIsRejected() {
-        String events = "[{\"type\":\"game.move\",\"triggersAgent\":true}]";
-        assertCode("EVENT_ID_TEMPLATE_REQUIRED",
-                manifest("com.luxera.demo", CAP_GAME, ACT_MOVE, RES_GAME, events, PERM_GAME, RT_NATIVE));
+    void aNonAgentTriggeringEventNeedsNoIdTemplate() {
+        assertDoesNotThrow(() -> validator.validate(withEvents(List.of(
+                new ApplicationManifest.EventDecl("game.start", "开局", false, null)))));
+    }
+
+    // ─────────────────────────── permissions ───────────────────────────
+
+    /** "没声明"不等于"默认放行" —— 应用必须逐个能力表态。 */
+    @Test
+    void aCapabilityWithoutAPermissionDeclarationIsRejected() {
+        assertCode("PERMISSION_DECL_MISSING", () -> validator.validate(withPermissions(List.of())));
     }
 
     @Test
-    void triggersAgentEventWithIdTemplateIsAccepted() {
-        String events = "[{\"type\":\"game.move\",\"triggersAgent\":true,"
-                + "\"idTemplate\":\"{uri}#MOVE-{position}\"}]";
-        ApplicationManifest m = validate(
-                manifest("com.luxera.demo", CAP_GAME, ACT_MOVE, RES_GAME, events, PERM_GAME, RT_NATIVE));
-        assertTrue(m.events().get(0).triggersAgent());
+    void aPermissionDeclarationForAnUndeclaredCapabilityIsRejected() {
+        assertCode("PERMISSION_DECL_UNKNOWN_CAPABILITY", () -> validator.validate(withPermissions(List.of(
+                new ApplicationManifest.PermissionDecl("game.watch", PermissionLevel.READ, RiskLevel.NONE)))));
+    }
+
+    @Test
+    void aPermissionDeclarationWithoutARiskCeilingIsRejected() {
+        assertCode("MANIFEST_INVALID", () -> validator.validate(withPermissions(List.of(
+                new ApplicationManifest.PermissionDecl("game.play", PermissionLevel.EXECUTE, null)))));
     }
 
     // ─────────────────────────── runtime ───────────────────────────
 
     @Test
+    void runtimeTypeIsRequired() {
+        assertCode("MANIFEST_INVALID", () -> validator.validate(
+                withRuntime(new ApplicationManifest.RuntimeDecl(null, null))));
+    }
+
+    /** 平台不替应用跑代码。这条以错误码的形式钉住, 而不是只在文档里写一句。 */
+    @Test
     void hostedRuntimeIsRejectedWithItsOwnCode() {
-        assertCode("RUNTIME_TYPE_NOT_SUPPORTED",
-                manifest("com.luxera.demo", CAP_GAME, ACT_MOVE, RES_GAME, "[]", PERM_GAME,
-                        "{\"type\":\"HOSTED\"}"));
+        ManifestException e = assertCode("RUNTIME_TYPE_NOT_SUPPORTED", () -> validator.validate(
+                withRuntime(new ApplicationManifest.RuntimeDecl(RuntimeType.HOSTED, null))));
+        assertTrue(e.getMessage().contains("HOSTED"), "报错要说清是哪个类型被拒: " + e.getMessage());
     }
 
     @Test
-    void remoteRuntimeWithoutEndpointIsRejected() {
-        assertCode("REMOTE_ENDPOINT_REQUIRED",
-                manifest("com.luxera.demo", CAP_GAME, ACT_MOVE, RES_GAME, "[]", PERM_GAME,
-                        "{\"type\":\"REMOTE\"}"));
+    void aRemoteRuntimeWithoutABaseUrlIsRejected() {
+        assertCode("REMOTE_ENDPOINT_REQUIRED", () -> validator.validate(
+                withRuntime(new ApplicationManifest.RuntimeDecl(RuntimeType.REMOTE, null))));
     }
+
+    /** REMOTE 应用有且只有一个<b>规范</b> endpoint —— 不是按消费者各来一个。 */
+    @Test
+    void aRemoteRuntimeWithOneCanonicalEndpointPasses() {
+        assertDoesNotThrow(() -> validator.validate(withRuntime(new ApplicationManifest.RuntimeDecl(
+                RuntimeType.REMOTE,
+                new ApplicationManifest.RemoteDecl("https://apps.example.com/gomoku", "gomoku-key")))));
+    }
+
+    // ─────────────────────────── 解析期拒绝 ───────────────────────────
 
     @Test
-    void remoteRuntimeWithEndpointIsAccepted() {
-        assertDoesNotThrow(() -> validate(
-                manifest("com.luxera.demo", CAP_GAME, ACT_MOVE, RES_GAME, "[]", PERM_GAME,
-                        "{\"type\":\"REMOTE\",\"remote\":{\"baseUrl\":\"https://app.example.com\","
-                                + "\"authRef\":\"demo-app\"}}")));
+    void parsingRejectsUnknownSections() {
+        assertCode("UNKNOWN_SECTION", () -> parser.parse("""
+                {"identity":{"id":"com.luxera.x","name":"x","version":"1.0.0"},
+                 "capabilities":[],"actions":[],"resources":[],"events":[],"permissions":[],
+                 "runtime":{"type":"NATIVE"},
+                 "somethingElse":{}}"""));
     }
-
-    // ─────────────────────────── 真正发货的那份 ───────────────────────────
 
     /**
-     * 井字棋自己的 manifest 必须能通过校验 —— 否则服务根本起不来
-     * ({@code ManifestRegistrar} 在启动时跑同一套规则)。这条用例的价值是:
-     * 改 JSON 打错一个字, 在这里就报出来, 而不是等到启动失败。
+     * 按消费者分的 endpoint 字段是最该被拒的一种未知 section: 它看起来"能用",
+     * 于是最容易被加进来, 然后某天被当成真的生效了。
      */
     @Test
-    void theShippedTicTacToeManifestIsValid() throws Exception {
-        String json = StreamUtils.copyToString(
-                new ClassPathResource("applications/tictactoe/1.0.0/application-manifest.json")
-                        .getInputStream(), StandardCharsets.UTF_8);
-        ApplicationManifest m = validate(json);
-        assertEquals("com.luxera.tictactoe", m.applicationId());
-        assertTrue(m.action("game.make_move").isPresent(), "manifest 必须声明 game.make_move");
-        assertTrue(m.declaresCapability("game.play"));
-        assertTrue(m.runtime().type() == RuntimeType.NATIVE);
-        assertTrue(m.resources().get(0).backing() == ApplicationManifest.Backing.RESOURCE_STORE);
-        // 策略文本必须住在 manifest 里, 不能回流 DH —— R7 的终局验收靠这一条
-        assertNotNull(m.action("game.make_move").orElseThrow().agentHint(),
-                "走子策略属于 manifest 的 agentHint, 不属于数字人");
+    void parsingRejectsPerConsumerEndpointFields() {
+        ManifestException e = assertCode("UNKNOWN_SECTION", () -> parser.parse("""
+                {"identity":{"id":"com.luxera.x","name":"x","version":"1.0.0"},
+                 "agentEndpoint":"/agent","humanEndpoint":"/human",
+                 "capabilities":[],"actions":[],"resources":[],"events":[],"permissions":[],
+                 "runtime":{"type":"NATIVE"}}"""));
+        assertTrue(e.getMessage().contains("agentEndpoint"), "报错要指名道姓: " + e.getMessage());
     }
 
-    // ─────────────────────────── 工具 ───────────────────────────
-
-    private static final String CAP_GAME =
-            "[{\"id\":\"game.play\",\"title\":\"对弈\",\"description\":\"回合制对弈\",\"category\":\"game\"}]";
-
-    private static final String ACT_MOVE =
-            "[{\"id\":\"game.make_move\",\"capability\":\"game.play\",\"title\":\"落子\","
-                    + "\"description\":\"放一颗子\",\"permission\":\"WRITE\",\"risk\":\"LOW\","
-                    + "\"inputSchema\":{\"type\":\"object\"}}]";
-
-    private static final String RES_GAME =
-            "[{\"type\":\"game.session\",\"uriTemplate\":\"game://session/{sessionId}\"}]";
-
-    private static final String PERM_GAME =
-            "[{\"capability\":\"game.play\",\"level\":\"WRITE\",\"riskCeiling\":\"LOW\"}]";
-
-    private static final String RT_NATIVE = "{\"type\":\"NATIVE\"}";
-
-    private static String manifest(String id, String capabilities, String actions,
-                                   String resources, String events, String permissions, String runtime) {
-        return """
-                {"identity":{"id":"%s","name":"演示应用","version":"1.0.0",
-                            "description":"用例","category":"game"},
-                 "capabilities":%s,
-                 "actions":%s,
-                 "resources":%s,
-                 "events":%s,
-                 "permissions":%s,
-                 "runtime":%s}
-                """.formatted(id, capabilities, actions, resources, events, permissions, runtime);
+    @Test
+    void parsingRejectsAnUnknownEnumValue() {
+        assertCode("MANIFEST_PARSE_ERROR", () -> parser.parse("""
+                {"identity":{"id":"com.luxera.x","name":"x","version":"1.0.0"},
+                 "capabilities":[],
+                 "actions":[{"id":"x.y","capability":"game.play","permission":"SOMETIMES",
+                             "risk":"LOW","inputSchema":{"type":"object"}}],
+                 "resources":[],"events":[],"permissions":[{"capability":"game.play","level":"READ",
+                 "riskCeiling":"NONE"}],"runtime":{"type":"NATIVE"}}"""));
     }
 
-    private ApplicationManifest validate(String json) {
-        ApplicationManifest m = parser.parse(json);
-        validator.validate(m);
-        return m;
+    /** 内置应用自己得先过这道关 —— 否则校验器只是"对别人严格"。 */
+    @Test
+    void theBuiltInTicTacToeManifestPasses() throws Exception {
+        String json;
+        try (var in = getClass().getResourceAsStream(
+                "/applications/tictactoe/1.0.0/application-manifest.json")) {
+            json = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        ApplicationManifest manifest = parser.parse(json);
+        assertDoesNotThrow(() -> validator.validate(manifest));
+        assertEquals("com.luxera.tictactoe", manifest.applicationId());
+        assertEquals(4, manifest.actions().size());
     }
 
-    private void assertCode(String expectedCode, String json) {
-        ManifestException e = assertThrows(ManifestException.class, () -> validate(json));
-        assertEquals(expectedCode, e.code(), "错误码应能定位问题, 实际消息: " + e.getMessage());
+    // ─────────────────────────── 基线 manifest 与夹具 ───────────────────────────
+
+    private ApplicationManifest valid() {
+        return new ApplicationManifest(
+                new ApplicationManifest.Identity("com.luxera.fixture", "夹具应用", "1.0.0", "只用来喂校验器", "test"),
+                List.of(capability("game.play")),
+                List.of(action("game.state", PermissionLevel.READ, RiskLevel.NONE, null),
+                        action("game.make_move", PermissionLevel.EXECUTE, RiskLevel.LOW, schema())),
+                List.of(new ApplicationManifest.ResourceDecl("tictactoe.game", "game://session/{sessionId}",
+                        ApplicationManifest.Backing.RESOURCE_STORE, "读法说明")),
+                List.of(new ApplicationManifest.EventDecl("game.move", "有人落子", true, "{uri}#MOVE-{moves}")),
+                List.of(new ApplicationManifest.PermissionDecl("game.play", PermissionLevel.EXECUTE,
+                        RiskLevel.LOW)),
+                ApplicationManifest.RuntimeDecl.nativeRuntime());
+    }
+
+    private ApplicationManifest withIdentity(ApplicationManifest.Identity identity) {
+        ApplicationManifest b = valid();
+        return new ApplicationManifest(identity, b.capabilities(), b.actions(), b.resources(),
+                b.events(), b.permissions(), b.runtime());
+    }
+
+    private ApplicationManifest withCapabilities(List<ApplicationManifest.CapabilityDecl> capabilities) {
+        ApplicationManifest b = valid();
+        return new ApplicationManifest(b.identity(), capabilities, b.actions(), b.resources(),
+                b.events(), b.permissions(), b.runtime());
+    }
+
+    private ApplicationManifest withActions(List<ApplicationManifest.ActionDecl> actions) {
+        ApplicationManifest b = valid();
+        return new ApplicationManifest(b.identity(), b.capabilities(), actions, b.resources(),
+                b.events(), b.permissions(), b.runtime());
+    }
+
+    private ApplicationManifest withResources(List<ApplicationManifest.ResourceDecl> resources) {
+        ApplicationManifest b = valid();
+        return new ApplicationManifest(b.identity(), b.capabilities(), b.actions(), resources,
+                b.events(), b.permissions(), b.runtime());
+    }
+
+    private ApplicationManifest withEvents(List<ApplicationManifest.EventDecl> events) {
+        ApplicationManifest b = valid();
+        return new ApplicationManifest(b.identity(), b.capabilities(), b.actions(), b.resources(),
+                events, b.permissions(), b.runtime());
+    }
+
+    private ApplicationManifest withPermissions(List<ApplicationManifest.PermissionDecl> permissions) {
+        ApplicationManifest b = valid();
+        return new ApplicationManifest(b.identity(), b.capabilities(), b.actions(), b.resources(),
+                b.events(), permissions, b.runtime());
+    }
+
+    private ApplicationManifest withRuntime(ApplicationManifest.RuntimeDecl runtime) {
+        ApplicationManifest b = valid();
+        return new ApplicationManifest(b.identity(), b.capabilities(), b.actions(), b.resources(),
+                b.events(), b.permissions(), runtime);
+    }
+
+    private static ApplicationManifest.CapabilityDecl capability(String id) {
+        return new ApplicationManifest.CapabilityDecl(id, "标题", "描述", "game");
+    }
+
+    private static ApplicationManifest.ActionDecl action(String id, PermissionLevel permission,
+                                                         RiskLevel risk, ObjectNode schema) {
+        return new ApplicationManifest.ActionDecl(id, "game.play", "标题", "描述",
+                permission, risk, AttentionPolicy.AWARE, schema, "给模型看的提示");
+    }
+
+    private static ObjectNode schema() {
+        ObjectNode node = new ObjectMapper().createObjectNode();
+        node.put("type", "object");
+        return node;
+    }
+
+    private static ManifestException assertCode(String expectedCode, Runnable body) {
+        ManifestException e = assertThrows(ManifestException.class, body::run);
+        assertEquals(expectedCode, e.code(), "错误码是调用方唯一能据以行动的东西");
+        return e;
     }
 }

@@ -116,6 +116,20 @@ app:
     life-schedule-cron: '*/20 * * * * *'
     # V10 关系事实与 Reality 核对(默认每日 04:00; 测试环境禁用)
     relationship-projection-cron: '0 0 4 * * *'
+    # LAP v1 幂等调用回收(默认每 5 分钟) — 崩溃遗留的 IN_PROGRESS 行靠它收敛到 EXPIRED
+    invocation-reaper-cron: '0 */5 * * * *'
+
+  # ── LAP v1 应用平台 ────────────────────────
+  lap:
+    # WRITE/EXECUTE 的幂等键"在途"判定: 超过它才允许重试方 CAS 抢占。
+    # 调小会让正常的慢动作被误判成崩溃重跑; 调大只会让重试多等一会儿。
+    invocation-timeout-ms: ${LAP_INVOCATION_TIMEOUT_MS:60000}
+    # 回收器判定"这行永远不会有人回填"的门槛, 必须远大于上面那个 ——
+    # 两个值合并成一个, 回收器就会在客户端重试之前先把键烧掉。
+    invocation-reap-after-ms: ${LAP_INVOCATION_REAP_AFTER_MS:900000}
+    # MCP 适配器的服务密钥(R6); 留空 = MCP 完全关闭, 不是"无鉴权"
+    mcp:
+      service-key: ${LAP_MCP_SERVICE_KEY:}
 
   # 主动消息打断控制
   proactive:

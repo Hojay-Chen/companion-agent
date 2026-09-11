@@ -45,10 +45,11 @@ public class ApplicationActionLogRecord {
     @Column(name = "principal_id", length = 64)
     private String principalId;
 
-    @Column(name = "companion_id", length = 36)
+    /** 与 {@code principal_id} 同宽: 见 {@code ApplicationSessionRecord} 里的同名说明。 */
+    @Column(name = "companion_id", length = 64)
     private String companionId;
 
-    @Column(name = "user_id", length = 36)
+    @Column(name = "user_id", length = 64)
     private String userId;
 
     @Column(name = "resource_uri", length = 256)

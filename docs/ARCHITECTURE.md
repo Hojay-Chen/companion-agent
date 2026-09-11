@@ -128,6 +128,32 @@ DH 侧只有一个消费者：`digitalhuman.event.EventRouter` 的 `APPLICATION_
 > 不落子、不随机、不"取第一个空格"。`AgentApplicationFlowTest` 断言此时 `execute()` 调用次数为 0 ——
 > 这条断言是这条性质在整个重构过程中的保险丝。
 
+### LAP v1 的协议面（`/api/v1`，R4 起）
+
+真人和 Agent 走的是**同一条**路，协议里不存在"Agent 专用接口"：
+
+```
+GET  /api/v1/capabilities                        能力目录（发现链第 1 级）
+GET  /api/v1/capabilities/{capabilityId}/applications   候选应用（第 2 级）
+GET  /api/v1/applications/{applicationId}/actions       动作 + agentHint（第 3 级）
+POST /api/v1/applications/{id}/install           安装（顺带开一个会话）
+POST /api/v1/sessions   /  GET /api/v1/sessions   /  DELETE /api/v1/sessions/{id}
+POST /api/v1/subscriptions                       会话之内的事件订阅
+GET  /api/v1/resources?uri=                      统一读模型（只读，无幂等键）
+POST /api/v1/actions:execute                     唯一的动作入口（Canonical；/actions/execute 是别名）
+```
+
+动作请求是刻意做小的：`{"action","target","input"}` + `Idempotency-Key` 头；
+响应是 `{"status","result","resource","events","error"}`（顶层 `status`/`error` 是对设计稿的修正 ——
+`{"result","resource","events"}` 这个形状里 `DENIED` 和"成功但无事可报"分不开）。
+
+> **发现链就是"不要把 50000 个 action 塞给 LLM"的全部实现。** 每一级都比上一级窄一个数量级：
+> 能力有几十个、某能力下的应用有个位数、某应用的动作有个位数。Agent 永远只看到当前这一步该看的那一层，
+> 而"怎么做"（策略文本）是应用作者写在 `actions[].agentHint` 里的 —— 不在 DH 里。
+
+`scripts/check-lap.sh` 是这一面唯一的端到端守卫：`check.sh` 覆盖的是聊天/数字人链路，
+对应用平台**零覆盖** —— 这就是为什么"测试全绿"在这里什么也保护不了。
+
 数据面另走 **DHCP v1**（`contracts.dhcp`：`DhcpFrame` + 11 种帧类型）经 `/ws/simulator`。
 聊天平台在这条链路上只看见一台"机器用户设备"（`simulator_devices` 表），完全不知道 Companion 的存在。
 
@@ -163,7 +189,7 @@ DH 侧只有一个消费者：`digitalhuman.event.EventRouter` 的 `APPLICATION_
 
 ```bash
 cd backend
-mvn clean test                       # 全模块 329 测试
+mvn clean test                       # 全模块 465 测试
 mvn -DskipTests package              # 产出可执行 jar
 ```
 
@@ -226,12 +252,22 @@ java -jar backend/bootstrap-app/target/companion-platform-bootstrap-1.0.0.jar
 2. 共享 `outbox_event` 表（生产者 = chat，消费者 = DH 的 `OutboxRelayJob`；可靠兜底）；
 3. `event_log` SSE 表（前端唯一事件源）。
 
-应用平台当前的表（`dh_` 前缀的是过渡期遗留，R8 由 `scripts/lap-drop-legacy.sh` 删除）：
+应用平台的表（R4 起全部生效；`dh_` 前缀的是过渡期遗留，R8 由 `scripts/lap-drop-legacy.sh` 删除）：
 
-| 表 | 归属 | 说明 |
-|---|---|---|
-| `application` / `application_version` | 应用平台 | 稳定 id + 版本；**manifest 挂在版本上**，发布后不可变 |
-| `dh_application` / `dh_game_session` / `dh_application_action_log` / `reminders` | 遗留 | 迁移中，R3 仍由 `/api/v10` 与提醒读路径使用 |
+| 表 | 说明 |
+|---|---|
+| `developer` | 应用作者；R8 的 Developer API 挂在它上面 |
+| `application` | 稳定 id（如 `com.luxera.tictactoe`）+ 10 态生命周期状态 |
+| `application_version` | **manifest 挂在版本上**（不是挂在 application 上），`UQ(application_id, version)`，发布后不可变 |
+| `capability` / `application_capability` | 能力目录（`game.play` / `reminder.manage`）与版本-能力绑定，从 `capabilities.json` 播种 |
+| `installation` | Principal × Application，`UQ(application_id, principal_type, principal_id)`；安装**钉住版本** |
+| `permission_grant` | 安装之下的第二维：能力级或动作级授权 + 风险上限 + 过期 |
+| `application_session` | 平台级会话；应用自己的业务对象挂在它下面 |
+| `resource` | **统一读模型**：`uri` 唯一 + `state_json` + `state_version`（CAS 用） |
+| `subscription` | 会话之内的事件订阅（`SINK` 模式；`INBOX` 要等 R8 的 outbox） |
+| `action_invocation` | 幂等账本，`UQ(principal_type, principal_id, idempotency_key)` + `request_hash` + `started_at` |
+| `application_action_log` | 审计（权限判定 + 执行结果分开记 —— 旧表把两者塞进同一个字段，是废字段） |
+| `dh_application` / `dh_game_session` / `dh_application_action_log` / `reminders` | **遗留**：R4 起已无写入方（`/api/v10` 应用面已删、实测 404）；R8 由 `lap-drop-legacy.sh` 统一 DROP |
 
 > **棋局状态最终不建表**：棋盘**就是**一条 Resource（`game://session/{id}` 的 `state_json`），
 > 在 action 的同事务内经 `ResourceStore` 写入。这是「Resource 是统一读模型」最直接的证明。

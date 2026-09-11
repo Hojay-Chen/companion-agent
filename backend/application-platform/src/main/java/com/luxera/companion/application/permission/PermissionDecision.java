@@ -1,43 +1,59 @@
 package com.luxera.companion.application.permission;
 
 /**
- * V10 §14/LAP §15 权限决策结果。
+ * LAP v1: 权限判定的结果。
+ *
+ * <p>三态而不是两态 —— {@link #confirmationRequired} 是有意留出来的:
+ * "可以做, 但要先跟真人确认"既不是允许也不是拒绝, 把 MCP 的 {@code elicit} 与 REST 的
+ * 428 Precondition Required 都挂在这一态上。压成布尔值, 中等风险动作要么被静默执行,
+ * 要么被静默拒绝, 两种都不对。
+ *
+ * @param allowed               是否放行(确认态下为 false, 但没有"错误")
+ * @param confirmationRequired  需要调用方显式确认后再来一次
+ * @param code                  稳定的机器码({@code NOT_INSTALLED}, {@code RISK_TOO_HIGH}, …)
+ * @param message               给人看的说明
  */
-public record PermissionDecision(
-        Decision decision,
-        String code,
-        String reason
-) {
-    public enum Decision {
-        /** 允许执行 */
-        ALLOW,
-        /** 拒绝(风险过高/无授权) */
-        DENY,
-        /** 需要确认(中高风险, 需用户/系统确认后执行) */
-        REQUIRE_CONFIRMATION
+public record PermissionDecision(boolean allowed,
+                                 boolean confirmationRequired,
+                                 String code,
+                                 String message) {
+
+    public static final String ALLOW_CODE = "ALLOW";
+
+    public static PermissionDecision allow() {
+        return new PermissionDecision(true, false, ALLOW_CODE, null);
     }
 
+    public static PermissionDecision deny(String code, String message) {
+        return new PermissionDecision(false, false, code, message);
+    }
+
+    public static PermissionDecision confirm(String code, String message) {
+        return new PermissionDecision(false, true, code, message);
+    }
+
+    /** 与 {@link #confirm} 同义 —— 保留旧名, 让调用点的意图读起来更直接。 */
+    public static PermissionDecision requireConfirmation(String code, String message) {
+        return confirm(code, message);
+    }
+
+    /** 明确被拒(不含"待确认")。 */
     public boolean denied() {
-        return decision == Decision.DENY;
+        return !allowed && !confirmationRequired;
     }
 
     public boolean requiresConfirmation() {
-        return decision == Decision.REQUIRE_CONFIRMATION;
+        return confirmationRequired;
     }
 
-    public boolean allowed() {
-        return decision == Decision.ALLOW;
+    /** {@link #message()} 的别名, 用于"拒绝原因"读起来更顺的调用点。 */
+    public String reason() {
+        return message;
     }
 
-    public static PermissionDecision allow() {
-        return new PermissionDecision(Decision.ALLOW, null, null);
-    }
-
-    public static PermissionDecision deny(String code, String reason) {
-        return new PermissionDecision(Decision.DENY, code, reason);
-    }
-
-    public static PermissionDecision requireConfirmation(String code, String reason) {
-        return new PermissionDecision(Decision.REQUIRE_CONFIRMATION, code, reason);
+    /** 审计用的一格: ALLOW / DENY / REQUIRE_CONFIRMATION。 */
+    public String auditLabel() {
+        if (allowed) return "ALLOW";
+        return confirmationRequired ? "REQUIRE_CONFIRMATION" : "DENY";
     }
 }

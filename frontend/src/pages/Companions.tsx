@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Heart, LogOut, Plus, Settings } from 'lucide-react'
+import { Boxes, Heart, LogOut, Plus, Settings } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth'
 import { useCompanionStore } from '@/stores/companion'
 import CompanionAvatar from '@/components/CompanionAvatar'
@@ -35,6 +35,9 @@ export default function Companions() {
             <span className="font-editorial text-lg text-cocoa-50">Companion</span>
           </div>
           <div className="flex items-center gap-3">
+            <Link to="/applications" className="btn-ghost !px-3 !py-1.5" title="应用">
+              <Boxes size={15} />
+            </Link>
             <span className="text-sm text-cocoa-400">{user?.nickname || user?.username}</span>
             <button onClick={logout} className="btn-ghost !px-3 !py-1.5" title="退出登录">
               <LogOut size={15} />

@@ -31,7 +31,12 @@ public class ActionHandlerRegistry {
     }
 
     public Optional<ActionHandler> find(String applicationId, String version, String actionId) {
-        return Optional.ofNullable(handlers.get(new ActionHandlerKey(applicationId, version, actionId)));
+        return find(new ActionHandlerKey(applicationId, version, actionId));
+    }
+
+    /** 网关拿到的本来就是一把键({@code ActionResolution.handlerKey()}), 不必拆成三段再拼回来。 */
+    public Optional<ActionHandler> find(ActionHandlerKey key) {
+        return key == null ? Optional.empty() : Optional.ofNullable(handlers.get(key));
     }
 
     public boolean contains(String applicationId, String version, String actionId) {

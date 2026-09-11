@@ -1,0 +1,56 @@
+{
+  "identity": {
+    "id": "com.luxera.fixture.handlerless",
+    "name": "声明了却没有实现的应用",
+    "version": "1.0.0",
+    "description": "manifest 里写着一个动作, 但没有任何处理器。发布必须失败 —— 否则这个动作会以 500 的形式在运行期才暴露。",
+    "category": "test"
+  },
+
+  "capabilities": [
+    {
+      "id": "board.weird",
+      "title": "没有实现的能力",
+      "description": "只用来验证发布期的处理器校验",
+      "category": "test"
+    }
+  ],
+
+  "actions": [
+    {
+      "id": "board.explode",
+      "capability": "board.weird",
+      "title": "没有实现的动作",
+      "description": "声明了, 但没有 handler",
+      "permission": "EXECUTE",
+      "risk": "LOW",
+      "attention": "AWARE",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ],
+
+  "resources": [
+    {
+      "type": "fixture.weird",
+      "uriTemplate": "weird://thing/{thingId}",
+      "backing": "RESOURCE_STORE"
+    }
+  ],
+
+  "events": [],
+
+  "permissions": [
+    {
+      "capability": "board.weird",
+      "level": "EXECUTE",
+      "riskCeiling": "LOW"
+    }
+  ],
+
+  "runtime": {
+    "type": "NATIVE"
+  }
+}

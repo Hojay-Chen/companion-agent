@@ -4,6 +4,7 @@ import Login from '@/pages/Login'
 import Companions from '@/pages/Companions'
 import CompanionCreate from '@/pages/CompanionCreate'
 import Chat from '@/pages/Chat'
+import Applications from '@/pages/Applications'
 import Settings from '@/pages/Settings'
 import type { ReactNode } from 'react'
 
@@ -33,6 +34,14 @@ export default function App() {
         element={
           <RequireAuth>
             <Companions />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/applications"
+        element={
+          <RequireAuth>
+            <Applications />
           </RequireAuth>
         }
       />

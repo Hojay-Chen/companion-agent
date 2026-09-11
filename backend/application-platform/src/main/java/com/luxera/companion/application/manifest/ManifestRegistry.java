@@ -69,12 +69,16 @@ public class ManifestRegistry {
     }
 
     /**
-     * 声明了该动作的应用/版本。返回多于一说明调用方必须用 target 消歧 ——
+     * 声明了该动作的应用。返回多于一说明调用方必须用 target 消歧 ——
      * 这正是 {@code game.make_move} 在井字棋与五子棋之间的处境。
+     *
+     * <p>只看<em>已发布版本</em>(各应用的最新版本), 不是全部历史版本: 发现链面向的是
+     * 调用方"现在能做什么", 把 {@code 0.9.0} 的候选也端上去只会制造无解的歧义。
+     * 历史版本仍可用 {@link #find(String, String)} 精确寻址。
      */
     public List<ApplicationManifest> byActionId(String actionId) {
         if (actionId == null) return List.of();
-        return allVersions().stream()
+        return applications().stream()
                 .filter(m -> m.action(actionId).isPresent())
                 .toList();
     }

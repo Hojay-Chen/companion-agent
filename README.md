@@ -118,7 +118,7 @@ backend/
 数据面则经 **DHCP v1 WebSocket 协议**（`contracts.dhcp`）流动，聊天平台只看见一台"机器用户设备"，
 完全不知道 Companion 的存在。
 
-### 重构成果（9 轮，当时全量 294 测试全绿；应用平台拆出后为 329 —— 见下一节）
+### 重构成果（9 轮，当时全量 294 测试全绿；应用平台拆出后为 329，LAP v1 的 R4 落地后为 465 —— 见下一节）
 
 **架构解耦（R1-R4）**：
 1. **Maven 多模块拆分**：见上（V10 落地时为五模块，LAP v1 拆出 `application-platform` 后为六个）。
@@ -225,13 +225,14 @@ backend/
 3. **没有"操作"的抽象** —— `/api/v10/games/tictactoe/*` 从请求体里手取 `userId`/`companionId`，
    忽略已认证身份；`Idempotency-Key` 收下就丢。
 
-### 已完成（R1–R3）
+### 已完成（R1–R4）
 
 | 轮 | 内容 | 证据 |
 |---|---|---|
 | **R1** | `contracts` 增 LAP 词汇（`ActionRequest` / `ActionResponse` / `ActionSpec` / `ResourceView` / `ApplicationEvent` / `PrincipalType` / `PermissionLevel` / `RiskLevel` / `AttentionPolicy` / `CapabilityView` / `InvocationContext` / …）+ 两个 SPI 端口 | `ActionResponseJsonTest`（全字段 round-trip） |
 | **R2** | DH 泛化第一步：`EventRouter` 加 `subscribe`（`register` 保持覆盖语义）；新增 `AgentApplicationFlow`（过滤 → 读 Resource → 问能做什么 → 执行 + 记现实账本）；`DhApplicationEventSink` 永久留在 DH；`AgentRuntime` 删掉 `onApplicationEvent` / `parseBoardState` / `evaluateAndDecideMove` / `boardToString` | `AgentApplicationFlowTest`（mock LLM ⇒ **零次 execute**）、`EventRouterFanOutTest` |
 | **R3** | 抽出第 6 个 Maven 模块 `application-platform`（`com.luxera.companion.application`）；DH 的 `digitalhuman/application/**` 21 个主文件 + 5 个测试全部删除；`/api/v10` 控制器原样搬走（前端不破）；边界守卫扩展到三方 | `check-v10.sh`（41 个顶层包分属 5 个所有权模块，10 对引用 + 10 对 pom 全过）、`LapEndToEndTest`、`DhReactsToApplicationEventTest` |
+| **R4** | **LAP 面 + 真人应用页，删 `/api/v10`**：manifest 类型/解析/校验/注册（`ManifestValidator` / `ManifestRegistrar`，发布时校验每个 action 都能解析到该版本的 handler）；`ActionGateway` + `POST /api/v1/actions:execute`（真幂等 + 两段式事务 + `ActionInvocationReaperJob` 崩溃恢复 + `expectedResourceVersion` CAS）；`/api/v1/{capabilities,applications,resources,sessions,subscriptions}`；安装/会话/订阅与四条归属不变量；`application-platform` 的**全部 12 张表**；前端「应用」页打**同一个** execute 端点 | `check-lap.sh`（断言 1–9、13 全过，11/12/14/15 待轮次）、application-platform **17 → 153 测试**、`npm run build`、`curl /api/v10/applications` → 404 |
 
 **R2/R3 的关键设计**：`TicTacToeGameService` 在提交后不再直接投递事件，而是发一条
 `contracts.application.ApplicationEvent`（经注入的 `ApplicationEventSink`）—— 这是整个搬迁中
@@ -242,6 +243,29 @@ backend/
 事件 `data.agentTrigger`（实例级）都为真才唤起 Agent。故意做成两级而不是让 sink 硬编码 `true` ——
 否则 `AgentApplicationFlow` 里的过滤就变成了恒真式，测试也守不住什么。
 
+**R4 的四个关键决定**：
+
+1. **幂等是两段式事务，不是 `check → insert → execute`**（后者是 TOCTOU）。先在一个独立事务里插入
+   `IN_PROGRESS`（唯一索引 `(principal_type, principal_id, idempotency_key)` 即锁，插入失败即已存在）
+   并提交，再执行 handler + 写 Resource + 回填终态（同一事务）。终态三选一：
+   `IN_PROGRESS → {SUCCESS, FAILED, EXPIRED}`。`ActionInvocationReaperJob` 按 `started_at` 超时回收
+   崩溃遗留（未超时 `< 60s` → `409 IDEMPOTENCY_IN_PROGRESS` 而不是阻塞等待；已超时 → CAS 抢占用重放）。
+   **不变量**：留在 `IN_PROGRESS` 的行，意味着第二个事务从未提交 —— 也就是那个动作**确定没发生**。
+2. **READ 从不记 invocation，也从不要求幂等键。** 这条是被旧代码里的 `"state-"+roomId` 逼出来的：
+   一旦幂等对读生效，同一房间的第二次 `game.state` 会重放第一次的旧棋盘，表现为"数字人在同一步重复落子"。
+   `check-lap.sh` 断言 8 就是这条的保险丝。
+3. **Resource 的每次写入都走 CAS**（`WHERE uri = ? AND state_version = ?`），影响 0 行即
+   `409 STATE_CONFLICT` 并把当前版本与状态一起带回，让调用方立即重读重试；两个 principal 抢同一步
+   得到的是干净的冲突而不是丢招。
+4. **Handler 注册表的键是 `(applicationId, version, actionId)`。** 井字棋与五子棋都有 `game.make_move`，
+   用 `Map<String, ActionHandler>` 会让后注册的静默覆盖先注册的；`ManifestRegistrarTest`
+   专门断言两者并存互不覆盖。
+
+另外两处**行为修正是有意的**：`SESSION_ENDED` 从 400 改成 **409**（会话结束不是"你的请求写错了"，
+该做的是换一个 target 而不是改载荷）；`INSTALLATION_INACTIVE` 与 `NOT_INSTALLED` 是**两个不同的拒绝** ——
+前者该去重装，后者该去装。HTTP 状态与 `ActionStatus` 的映射集中在**唯一一个** `ActionStatusMapper`，
+REST / MCP / `ApplicationRuntimePort` 共用。
+
 ### 参考应用口径（统一说法，避免后续误判工作量）
 
 **一个迁移应用（TicTacToe）+ 两个新增参考应用（Gomoku 15×15、Reminder 提醒/日程）。**
@@ -251,14 +275,17 @@ Decision 零修改"。提醒的所有权是**单一数据源：应用拥有，DH
 
 ### 当前验收
 
-- `mvn clean test`：**329 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform 24 /
-  digital-human-platform 229 / application-platform 17 / bootstrap-app 36
-- `bash scripts/check-v10.sh` → `check-v10 OK`；`bash scripts/check.sh`（起 jar）→
-  **✅ 全量验收全部通过**，`/api/v10` 仍在服役（R4 才删）
-- 尚未完成：**R4** LAP 面 + 真人应用页（真幂等两段式事务 + `ActionInvocationReaperJob`、
-  `expectedResourceVersion` CAS、`ActionHandlerKey(applicationId, version, actionId)`）、
-  **R5** 五子棋 + 提醒、**R6** MCP 适配器、**R7** Agent 的 capability→action LLM 契约、
-  **R8** 生命周期状态机 + REMOTE + outbox + 清理遗留表
+- `mvn test`：**465 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform 24 /
+  digital-human-platform 229 / application-platform **153** / bootstrap-app 36
+- `bash scripts/check-v10.sh` → `check-v10 OK`（41 个顶层包分属 5 个所有权模块，10 对引用 + 10 对 pom）
+- `bash scripts/check.sh`（起 jar）→ **✅ 全量验收全部通过**（聊天/数字人链路无回归）
+- `bash scripts/check-lap.sh` → **✅ 验收通过（9 项未到轮次，已跳过）**；
+  断言 13 确认 `GET /api/v10/applications` → **404**，旧应用面已下线
+- `cd frontend && npm run build` → 通过
+- **CI 顺序**（每一轮都照这个跑）：`check-v10.sh` → `mvn test` → 起 jar → `check.sh` →
+  `check-lap.sh` → `npm run build`
+- 尚未完成：**R5** 五子棋 + 提醒/日程（含 DH 提醒只读改造）、**R6** MCP 适配器、
+  **R7** Agent 的 capability→action LLM 契约、**R8** 生命周期状态机 + REMOTE + outbox + 清理遗留表
 
 ---
 
