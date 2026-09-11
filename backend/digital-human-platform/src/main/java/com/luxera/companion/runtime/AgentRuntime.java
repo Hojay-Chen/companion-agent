@@ -33,19 +33,12 @@ import com.luxera.companion.runtime.agent.expression.ExpressionResult;
 import com.luxera.companion.relationship.Relationship;
 import com.luxera.companion.relationship.RelationshipService;
 import com.luxera.companion.runtime.pipeline.MessagePipeline;
-import com.luxera.companion.digitalhuman.application.builtin.tictactoe.TicTacToeApplicationAdapter;
-import com.luxera.companion.digitalhuman.application.runtime.ActionRuntime;
 import com.luxera.companion.state.AgentStateService;
 import com.luxera.companion.state.AvailabilityService;
 import com.luxera.companion.usermodel.UserChatStyleService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import com.luxera.companion.llm.LlmRouter;
-import com.luxera.companion.llm.StructuredRequest;
-import com.luxera.companion.llm.StructuredResult;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import javax.annotation.PostConstruct;
 import java.time.LocalDateTime;
@@ -105,10 +98,9 @@ public class AgentRuntime {
     /** V10 §4: Strangler 入口 — V10 感知决策影子对比 + 短路 */
     private final com.luxera.companion.digitalhuman.hotpath.V10HotpathGateway v10Hotpath;
 
-    private final LlmRouter llmRouter;
-    private final ObjectMapper objectMapper;
-    /** V10 §14/LAP: 应用动作统一执行入口(Agent 不直接碰具体应用类) */
-    private final ActionRuntime actionRuntime;
+    // V10 §14/LAP: 应用动作的执行入口已迁出本类 —— 见 AgentApplicationFlow。
+    // 认知链不再持有 ActionRuntime / LlmRouter / ObjectMapper: 它不认识任何应用,
+    // 也就不该有"读局面/评估/落子"这类需要的工具。
 
     public AgentRuntime(ChatWorldPort chatWorld, PerceptionEngine perceptionEngine,
                           WorkingMemory workingMemory,
@@ -127,9 +119,7 @@ public class AgentRuntime {
                           RealityLedger realityLedger,
                           EventProcessingChain eventProcessingChain, EventRouter eventRouter,
                           ConversationOutputValidator outputValidator,
-                          com.luxera.companion.digitalhuman.hotpath.V10HotpathGateway v10Hotpath,
-                          LlmRouter llmRouter, ObjectMapper objectMapper,
-                          ActionRuntime actionRuntime) {
+                          com.luxera.companion.digitalhuman.hotpath.V10HotpathGateway v10Hotpath) {
         this.chatWorld = chatWorld;
         this.perceptionEngine = perceptionEngine;
         this.workingMemory = workingMemory;
@@ -156,9 +146,6 @@ public class AgentRuntime {
         this.eventRouter = eventRouter;
         this.outputValidator = outputValidator;
         this.v10Hotpath = v10Hotpath;
-        this.llmRouter = llmRouter;
-        this.objectMapper = objectMapper;
-        this.actionRuntime = actionRuntime;
     }
 
     /**
@@ -168,7 +155,7 @@ public class AgentRuntime {
     @PostConstruct
     public void registerEventRoutes() {
         eventRouter.register(ExternalEventType.CHAT_MESSAGE_DELIVERED, this::onChatMessageDelivered);
-        eventRouter.register(ExternalEventType.APPLICATION_EVENT, this::onApplicationEvent);
+        // APPLICATION_EVENT 由 AgentApplicationFlow 以 subscribe 挂载 —— 认知链只保留消息送达这条主路由
     }
 
     /**
@@ -235,115 +222,6 @@ public class AgentRuntime {
                 .toList();
         if (messages.isEmpty()) return;
         process(userId, companionId, conversationId, messages);
-    }
-
-    /**
-     * V10 §9.3/§14/LAP 应用/游戏事件入口(APPLICATION_EVENT):
-     * 数字人"看到"应用/游戏里的变化 → 决策 → 经 ActionRuntime 执行动作。
-     *
-     * 边界: Agent 认知链不直接依赖具体应用类, 只通过 {@link ActionRuntime} 表达意图:
-     * 读局面 = game.state, 落子 = game.make_move。未来换应用/换实现, 此处无感知。
-     */
-    void onApplicationEvent(ExternalEvent event) {
-        if (event == null || !ExternalEventType.APPLICATION_EVENT.equals(event.type())) return;
-        String companionId = event.personId();
-        String roomId = event.str("roomId");
-        String type = event.str("type");
-        String turn = event.str("turn");
-        // 仅在"用户落子"且"轮到 Agent(O)"时触发
-        if (roomId == null || !"MOVE".equalsIgnoreCase(type)) return;
-        if (!"O".equalsIgnoreCase(turn)) return;
-
-        try {
-            // 经 ActionRuntime 读局面(game.state)
-            ActionRuntime.ActionContext ctx = ActionRuntime.ActionContext.of(
-                    TicTacToeApplicationAdapter.APP_CODE, companionId, event.str("userId"),
-                    roomId, event.eventId());
-            ActionRuntime.ActionResult stateResult = actionRuntime.execute(
-                    TicTacToeApplicationAdapter.ACTION_STATE,
-                    Map.of("roomId", roomId), "state-" + roomId, ctx);
-            if (!stateResult.succeeded()) return;
-            String stateJson = (String) stateResult.result().get("state");
-            if (stateJson == null) return;
-            String[] board = parseBoardState(stateJson);
-
-            int position = evaluateAndDecideMove(board, roomId, companionId);
-            if (position < 0 || position > 8) return;
-
-            // 经 ActionRuntime 落子(game.make_move)
-            ActionRuntime.ActionResult moveResult = actionRuntime.execute(
-                    TicTacToeApplicationAdapter.ACTION_MAKE_MOVE,
-                    Map.of("roomId", roomId, "player", "companion", "position", position),
-                    "move-" + roomId + "-" + position, ctx);
-            if (!moveResult.succeeded()) {
-                log.warn("[AgentRuntime] 落子被拒: room={}, pos={}, err={}",
-                        roomId, position, moveResult.errorMessage());
-                return;
-            }
-            log.info("[AgentRuntime] 数字人落子: room={}, pos={}, status={}",
-                    roomId, position, moveResult.result().get("status"));
-            appendReality(companionId, RealityEventType.APPLICATION_ACTION_EXECUTED,
-                    Map.of("appCode", TicTacToeApplicationAdapter.APP_CODE,
-                            "roomId", roomId, "action", "game.make_move",
-                            "position", position), null, null);
-        } catch (Exception e) {
-            log.warn("[AgentRuntime] 处理游戏事件失败 room={}: {}", roomId, e.getMessage());
-        }
-    }
-
-    /** 从 game.state 的 stateJson 解析 9 格棋盘(空位 -> "") */
-    private String[] parseBoardState(String stateJson) {
-        try {
-            JsonNode root = objectMapper.readTree(stateJson);
-            JsonNode board = root.path("board");
-            String[] b = new String[9];
-            for (int i = 0; i < 9; i++) b[i] = board.path(i).asText("");
-            return b;
-        } catch (Exception e) {
-            return new String[9];
-        }
-    }
-
-    /** LLM 基于局面评估决定落子位置(-1 表示放弃或失败, 无启发式兜底) */
-    private int evaluateAndDecideMove(String[] board, String roomId, String companionId) {
-        if (!llmRouter.available() || llmRouter.isMockActive()) {
-            log.warn("[AgentRuntime] LLM 不可用, 数字人不落子: room={}", roomId);
-            return -1;
-        }
-        try {
-            StructuredResult result = llmRouter.structured(StructuredRequest.builder()
-                    .system("你是一个正在玩井字棋的数字人(执 O)。现在轮到你落子。\n"
-                            + "请基于当前棋盘局面评估并选择最佳落子位置。\n"
-                            + "棋盘编号: 0 1 2 / 3 4 5 / 6 7 8(三行三列)。\n"
-                            + "X=对手(先手), O=你。只允许落在空位。\n"
-                            + "优先级: 若能立刻三连则必胜位 > 阻断对手三连 > 占中心 > 占角 > 占边。\n"
-                            + "严格输出 JSON: {\"position\": <0-8 的整数>, \"reason\": \"<一句话理由>\"}")
-                    .user("当前棋盘(空位用 . 表示):\n" + boardToString(board))
-                    .task("tictactoe-move")
-                    .schemaHint("{\"position\":0,\"reason\":\"占据中心\"}")
-                    .temperature(0.3)
-                    .metadata(Map.of("companionId", companionId, "purpose", "game"))
-                    .build());
-            JsonNode json = result.getJson();
-            int pos = json == null ? -1 : json.path("position").asInt(-1);
-            if (pos < 0 || pos > 8) {
-                log.warn("[AgentRuntime] LLM 落子位置非法: {}, room={}", pos, roomId);
-                return -1;
-            }
-            return pos;
-        } catch (Exception e) {
-            log.warn("[AgentRuntime] 局面评估失败 room={}: {}", roomId, e.getMessage());
-            return -1;
-        }
-    }
-
-    private static String boardToString(String[] board) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 9; i++) {
-            sb.append(board[i] == null || board[i].isEmpty() ? "." : board[i]);
-            sb.append(i % 3 == 2 ? "\n" : " ");
-        }
-        return sb.toString().trim();
     }
 
     /** Agent 异步处理已入库的用户消息(完整认知链) */

@@ -10,6 +10,8 @@ import com.luxera.companion.contracts.spi.ChatWorldPort;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -184,24 +186,50 @@ public class TicTacToeGameService {
         }
 
         // 2. Agent 认知链(APPLICATION_EVENT)—— 数字人"看到"游戏里的变化
-        try {
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("appCode", "tictactoe");
-            payload.put("roomId", s.getRoomId());
-            payload.put("type", type);
-            payload.put("userId", s.getUserId());
-            payload.put("companionId", s.getCompanionId());
-            payload.put("status", s.getStatus());
-            payload.put("board", board);
-            if (extra != null) payload.putAll(extra);
-            // 确定性 eventId: 同 room 同 type 同 position(若有)幂等去重
-            String dedupKey = s.getRoomId() + "-" + type
-                    + (extra != null && extra.containsKey("position") ? "-" + extra.get("position") : "");
-            ExternalEvent event = ExternalEvent.withDeterministicId(
-                    s.getCompanionId(), ExternalEventType.APPLICATION_EVENT, dedupKey, payload);
-            eventProcessingChain.process(event);
-        } catch (Exception e) {
-            log.warn("[TicTacToe] 投递 Agent 认知事件失败: {}", e.getMessage());
+        //
+        // LAP v1: 三条约束写在这里, R3 起它们由 ApplicationEventSink 承担。
+        //   (a) agentTrigger 由应用算出 —— 数字人不再硬编码 "MOVE" 与 turn=="O";
+        //   (b) 事件带 resourceUri —— 数字人用统一读模型读状态, 不解析应用自己的 JSON;
+        //   (c) 投递发生在**事务提交之后** —— 否则数字人可能读到随后回滚的状态,
+        //       据此自信地回应一步从未发生的棋。
+        boolean agentTrigger = "MOVE".equalsIgnoreCase(type)
+                && extra != null && "O".equalsIgnoreCase(String.valueOf(extra.get("turn")));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("appCode", TicTacToeApplicationAdapter.APP_CODE);
+        payload.put("roomId", s.getRoomId());
+        payload.put("resourceUri", TicTacToeApplicationAdapter.uriOf(s.getRoomId()));
+        payload.put("agentTrigger", agentTrigger);
+        payload.put("type", type);
+        payload.put("userId", s.getUserId());
+        payload.put("companionId", s.getCompanionId());
+        payload.put("status", s.getStatus());
+        payload.put("board", board);
+        if (extra != null) payload.putAll(extra);
+        // 确定性 eventId: 同 room 同 type 同 position(若有)幂等去重
+        String dedupKey = s.getRoomId() + "-" + type
+                + (extra != null && extra.containsKey("position") ? "-" + extra.get("position") : "");
+        afterCommit(() -> {
+            try {
+                ExternalEvent event = ExternalEvent.withDeterministicId(
+                        s.getCompanionId(), ExternalEventType.APPLICATION_EVENT, dedupKey, payload);
+                eventProcessingChain.process(event);
+            } catch (Exception e) {
+                log.warn("[TicTacToe] 投递 Agent 认知事件失败: {}", e.getMessage());
+            }
+        });
+    }
+
+    /** 有事务则挂 afterCommit, 无事务(单测/非事务调用)立即执行。 */
+    private static void afterCommit(Runnable action) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    action.run();
+                }
+            });
+        } else {
+            action.run();
         }
     }
 }
