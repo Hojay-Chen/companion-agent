@@ -35,6 +35,7 @@ public class ManifestRegistrar implements SmartInitializingSingleton {
     private final ManifestValidator validator;
     private final ManifestRegistry registry;
     private final ActionHandlerRegistry handlers;
+    private final ManifestCatalogueSync catalogue;
     private final ResourceLoader resourceLoader;
     private final List<LapApplicationModule> modules;
 
@@ -42,12 +43,14 @@ public class ManifestRegistrar implements SmartInitializingSingleton {
                              ManifestValidator validator,
                              ManifestRegistry registry,
                              ActionHandlerRegistry handlers,
+                             ManifestCatalogueSync catalogue,
                              ResourceLoader resourceLoader,
                              List<LapApplicationModule> modules) {
         this.parser = parser;
         this.validator = validator;
         this.registry = registry;
         this.handlers = handlers;
+        this.catalogue = catalogue;
         this.resourceLoader = resourceLoader;
         this.modules = List.copyOf(modules);
     }
@@ -63,7 +66,8 @@ public class ManifestRegistrar implements SmartInitializingSingleton {
 
     /** 单个应用的完整注册流程; 对测试也开放(让"缺 handler 就发布失败"可以被直接断言)。 */
     public ApplicationManifest register(LapApplicationModule module) {
-        ApplicationManifest manifest = parser.parse(read(module.manifestLocation()));
+        String json = read(module.manifestLocation());
+        ApplicationManifest manifest = parser.parse(json);
         validator.validate(manifest);
 
         module.registerHandlers(handlers);
@@ -78,6 +82,7 @@ public class ManifestRegistrar implements SmartInitializingSingleton {
             }
         }
         registry.register(manifest);
+        catalogue.sync(manifest, json);
         return manifest;
     }
 
