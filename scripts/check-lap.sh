@@ -808,6 +808,111 @@ else
   http DELETE "/api/v1/subscriptions/$SUB_ID" >/dev/null
 fi
 
+# ── 断言 19: 把应用带进一段对话 (R12 / §63–§66) ──
+# 这一段的判据与别处不同: 前面所有断言走的都是 /api/v1(应用平台自己的面), 而这里走的是
+# **聊天平台**的三个会话上下文端点。它们之所以必须存在, 是因为 chat-platform 在编译期
+# 看不见 application-platform(§115), 只能隔着契约端口 ApplicationCatalogPort 说话 ——
+# 于是"在一个真实进程里, 这个端口两侧真的接上了"只有端到端测得出来:
+# `ChatApplicationPortTest` 用的是假实现, 它证明不了真的适配器。
+#
+# 还要证明的是 §66 那句话: 卡片**是一条消息**, 不是一张新表。判据是 messages 表里那一行,
+# 以及它和同一段对话里别的消息排在同一条时间线上。
+note "断言 19: 在对话里开应用 → 卡片消息 → 分享链接 (R12)"
+if [ "$FAIL" != "0" ]; then
+  skip "对话内应用集成 — 前面的断言已经失败, 这一段的起点不可信"
+else
+  R12_PERSONA='{"name":"小满","description":"一个温柔独立的女生","traits":["温柔"]}'
+  R12_CID=$(curl -s -m 20 -X POST "$BASE/api/companions" \
+    -H "Authorization: Bearer $AUTH" -H 'Content-Type: application/json' \
+    -d "{\"persona\": $R12_PERSONA, \"relationshipType\": \"best_friend\"}" \
+    | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+  R12_CONV=$(curl -s -m 20 -X POST "$BASE/api/companions/$R12_CID/conversations/first" \
+    -H "Authorization: Bearer $AUTH" -H 'Content-Type: application/json' -d '{}' \
+    | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+
+  if [ -z "$R12_CID" ] || [ -z "$R12_CONV" ]; then
+    fail "建不出验收用的伴侣/对话 (companion='$R12_CID' conversation='$R12_CONV')"
+  else
+    R12_BASE="/api/companions/$R12_CID/conversations/$R12_CONV/applications"
+
+    # 19a: 看 —— 这段对话里能开什么
+    CODE=$(http GET "$R12_BASE")
+    [ "$CODE" = "200" ] && ok "GET 会话上下文 200" || fail "状态码 $CODE"
+    body | grep -q "$APP_ID" && ok "可开列表里有 $APP_ID" || fail "可开列表里没有 $APP_ID"
+
+    # 19b: 开 —— 应用真的开起来了, 而且会话行上记住了它属于哪段对话 (§85)
+    CODE=$(http POST "$R12_BASE" "{\"applicationId\":\"$APP_ID\"}")
+    [ "$CODE" = "201" ] && ok "POST 开应用 201" || fail "状态码 $CODE"
+    R12_SESSION=$(jq_ "d['session']['sessionId']")
+    R12_MSG=$(jq_ "d['messageId']")
+    [ "$(jq_ "d['participant']['role']")" = "OWNER" ] && ok "开的人是 OWNER" \
+      || fail "role = $(jq_ "d['participant']['role']")"
+    [ "$(jq_ "d['session']['conversationId']")" = "$R12_CONV" ] \
+      && ok "会话记住了它属于哪段对话" || fail "session.conversationId 不是这段对话"
+    # 端口另一侧那一列也要真的写上 —— 响应里对不算, 库里对才算。
+    DB_CONV=$(sql "select conversation_id from application_session where id='$R12_SESSION'")
+    [ "$DB_CONV" = "$R12_CONV" ] && ok "库里 application_session.conversation_id 一致" \
+      || fail "库里是 '$DB_CONV'"
+
+    # 19c: §66 —— 卡片是一条消息, 不是一张新表
+    KIND=$(sql "select message_kind from messages where id='$R12_MSG'")
+    [ "$KIND" = "APPLICATION_CARD" ] && ok "落下的是一条 APPLICATION_CARD 消息" \
+      || fail "message_kind = '$KIND'"
+    [ "$(sql "select sender_type from messages where id='$R12_MSG'")" = "system" ] \
+      && ok "发送者是 system (平台通告, 不是谁说的话)" || fail "sender_type 不对"
+
+    # 卡片和普通消息排在同一条时间线上 —— 没有第二套分页/排序/已读体系。
+    R12_COUNT=$(sql "select count(*) from messages where conversation_id='$R12_CONV'")
+    [ "${R12_COUNT:-0}" -ge 1 ] && ok "它在 $R12_CONV 的消息流里 (共 $R12_COUNT 条)" \
+      || fail "会话里一条消息都没有"
+
+    # 19d: 分享 —— 铸票 + 落一条带明文链接的消息; 而库里只有哈希
+    CODE=$(http POST "$R12_BASE/$R12_SESSION/share" '{"role":"MEMBER","maxUses":3}')
+    [ "$CODE" = "201" ] && ok "POST 分享 201" || fail "状态码 $CODE"
+    R12_TOKEN=$(jq_ "d['token']")
+    R12_INVITE_MSG=$(jq_ "d['messageId']")
+    [ -n "$R12_TOKEN" ] && ok "铸造响应里有明文令牌 (只此一次)" || fail "响应里没有 token"
+    [ "$(sql "select message_kind from messages where id='$R12_INVITE_MSG'")" = "APPLICATION_INVITATION" ] \
+      && ok "分享也落成了一条消息" || fail "分享消息的 message_kind 不对"
+    # 明文绝不进库 —— 拿到数据库的人不该能替别人加入。
+    R12_LEAK=$(sql "select count(*) from session_invitation where token_hash='$R12_TOKEN'")
+    [ "$R12_LEAK" = "0" ] && ok "明文令牌没有进库 (库里存的是哈希)" \
+      || fail "明文令牌出现在 token_hash 列里"
+
+    # 19e: 拒绝也要跨过端口说清楚 —— 一个不存在的应用
+    # 这一条验的是跨模块的错误翻译: 应用平台抛 SessionException, 端口那侧换成
+    # ApplicationCatalogException, 聊天侧再翻成 HTTP。三跳任何一跳断了, 客户端都会拿到 500。
+    CODE=$(http POST "$R12_BASE" '{"applicationId":"com.luxera.nope"}')
+    [ "$CODE" = "404" ] && ok "开一个不存在的应用 → 404 (错误跨过了模块边界)" \
+      || fail "状态码 $CODE (期望 404, 拿到 500 说明错误翻译断了)"
+    body | grep -q "UNKNOWN_APPLICATION" && ok "code=UNKNOWN_APPLICATION" \
+      || fail "错误码不对: $(body)"
+
+    # 19f: 别人开的应用不该从这个入口看出来 —— 会话上下文只回答"这段对话里的事"
+    R12_OTHER=$(sql "select count(*) from application_session where conversation_id='$R12_CONV'")
+    [ "$R12_OTHER" = "1" ] && ok "这段对话里只有刚开的那一局" || fail "会话数 = $R12_OTHER"
+
+    # 清理。两半各有各的归属, 所以走两条不同的路:
+    # 伴侣那一半交给 REST(它自己有一整套级联: 消息、会话、认知、事件), 手工删会漏表;
+    # 应用会话那一半反过来 —— 它不挂在伴侣下面(§2: Application 与 Digital Human 互不相识),
+    # 只能显式删。参与者与邀请票先走, 免得留下没有会话的孤儿行。
+    curl -s -X DELETE "$BASE/api/companions/$R12_CID" -H "Authorization: Bearer $AUTH" \
+      -o /dev/null 2>/dev/null || true
+    exec_sql "delete from session_permission where participant_id in
+                (select id from application_session_participant where session_id='$R12_SESSION')" \
+      >/dev/null 2>&1 || true
+    exec_sql "delete from application_session_participant where session_id='$R12_SESSION'" \
+      >/dev/null 2>&1 || true
+    exec_sql "delete from session_invitation where session_id='$R12_SESSION'" >/dev/null 2>&1 || true
+    exec_sql "delete from application_session where conversation_id='$R12_CONV'" >/dev/null 2>&1 || true
+    # REST 那次 DELETE 留下的是"软删"的伴侣与它的对话 —— 对产品是对的(用户要能恢复),
+    # 对验收脚本不是: 每跑一次就往库里多堆两条卡片消息。所以这里把它清干净。
+    exec_sql "delete from messages where conversation_id='$R12_CONV'" >/dev/null 2>&1 || true
+    exec_sql "delete from conversations where companion_id='$R12_CID'" >/dev/null 2>&1 || true
+    exec_sql "delete from companions where id='$R12_CID'" >/dev/null 2>&1 || true
+  fi
+fi
+
 # ── 断言 15: 共享世界 —— 一行 resource, 两个 principal ──
 # 这是整个 LAP 最想证明的一句话: 真人和数字人不是各玩各的, 他们操作的是同一个东西。
 # 判据不是"两边都返回 200", 而是数据行本身: 一行 resource、一条会话、两个不同的 principal

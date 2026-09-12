@@ -104,9 +104,9 @@ backend/
 > `InMemoryChatWorld` 顶替聊天平台）。反过来也成立，应用平台同理 —— 这不再是"一个模块里两个包"
 > 式的假解耦。
 
-### 解耦到底解在哪：五个 SPI 端口（Ports & Adapters）
+### 解耦到底解在哪：六个 SPI 端口（Ports & Adapters）
 
-跨平台调用**不再有任何 Java 直接依赖**，只剩 `contracts.spi` 里五个接口；两侧各写各的适配器：
+跨平台调用**不再有任何 Java 直接依赖**，只剩 `contracts.spi` 里六个接口；两侧各写各的适配器：
 
 | 端口（`contracts.spi`） | 方向 | 谁实现 | 用途 |
 |---|---|---|---|
@@ -115,6 +115,7 @@ backend/
 | `SimulatorAccessPort` | DH → Chat | chat 的 `SimulatorAccessAdapter` | 数字人换设备 token |
 | `ApplicationRuntimePort` | DH → Application | 应用平台的 `ActionGateway`（没有 `*Adapter` 类） | 读 Resource / 问能做什么 / 执行 action |
 | `ApplicationEventSink` | Application → DH | DH 的 `DhApplicationEventSink` | 应用通知数字人"有事发生"（**单向门**） |
+| `ApplicationCatalogPort` | Chat → Application | 应用平台的 `ApplicationCatalogAdapter` | 聊天里看/开/分享应用 —— 让 chat 在不认识应用平台的前提下做到 §63 |
 
 > **真人与 Agent 走同一条路**：没有"Agent 专用 API"。数字人操作应用时和真人一样经过
 > `ApplicationRuntimePort` → 同一个 Action 网关 → 同一个 Resource。数字人**不解析任何应用状态、
@@ -230,7 +231,7 @@ backend/
 3. **没有"操作"的抽象** —— `/api/v10/games/tictactoe/*` 从请求体里手取 `userId`/`companionId`，
    忽略已认证身份；`Idempotency-Key` 收下就丢。
 
-### 已完成（R1–R11）
+### 已完成（R1–R12）
 
 | 轮 | 内容 | 证据 |
 |---|---|---|
@@ -246,6 +247,7 @@ backend/
 | **R9** | **Session 重构：删 Installation。** `installation` / `permission_grant` 两张表 DROP（`scripts/lap-v2-reset.sh`），`ApplicationSession` 从"一个 principal 的实例"改成"一个多人实例"（`owner_principal_*` / `visibility` / `join_policy` / `min/max_participants` / `conversation_id` 进场，`installation_id` 与 `principal_*` 离场）；新增 `application_session_participant` + `session_permission`；`ApplicationSessionStateMachine`（五态）；`PermissionEvaluator` 从"查 installation"改成"查 participant"（`NOT_INSTALLED` → `NOT_A_PARTICIPANT`，`INSTALLATION_INACTIVE` → `PARTICIPANT_INACTIVE`）；`PrincipalType` 加 `EXTERNAL_AGENT`；`ActionGateway` 会话解析五档（新增"该 principal 最近的 ACTIVE 会话"与 `ensureSession`）；`ensureInstalled` → `ensureSession`；`AgentRouteResolver` 改从 participant 推；`action_invocation` 的唯一键加 `session_id`；DH 只改 `ReminderService` 一行 | `PermissionEvaluatorTest` **11 条逐条改写而非删除**、`ParticipantTest`、`SessionStateMachineTest`、`ApplicationSessionOwnershipTest`、`ResourceStoreTest` 新增"提醒收件箱没有会话可挂"专条；`check-lap.sh` 断言 1/9*/10/11/14/15 改写（断言 1 扩成"新列在、旧列不在"的反向断言） |
 | **R10** | **Participant + Invitation。** `session_invitation` + 邀请状态机（State Pattern）；token 铸造/哈希/校验/消费/收回（**库里只有 SHA-256，明文只在创建响应里出现一次**）；`LapParticipantController`（join / 名单 / 自己走）+ `LapInvitationController`（铸票 / 列表 / 收回 / 公开兑票）；`APPLICATION_INVITATION` 平台事件（由邀请服务发射，绕过 manifest 的 `triggersAgent` 闸门 —— 那道闸门是防**应用**的，不是防平台的）；前端分享链接 | `InviteCreateTest`、`InviteConsumeTest`、`InviteExpireTest`、`InviteRevokeTest`、`SessionJoinTest`、`SessionLeaveTest`；断言 token 明文不进库 |
 | **R11** | **Application Launch + Surface。** manifest 第 8 个 section `ui`（`type` / `entry` / `minClientVersion` / `surfaces[]`）+ 校验器（`UI_TYPE_REQUIRED` / `REMOTE_UI_ENTRY_NOT_ABSOLUTE` / `UI_SURFACE_MODE_CONFLICT` / `DUPLICATE_SURFACE` …）；`Availability` 投影（§4.1 那张表）+ 开会话闸门（不可用 → 409 `STATE_CONFLICT`）；`POST /applications/{id}/sessions` 改成 §16 形状（嵌套 `application` / `participant`，删掉平铺的 `ownerPrincipal*`）；新增 `GET /applications/{id}` 详情（十态 status + 三列布尔 + `ui` 段）；前端**应用市场 / 应用详情 / Session 页 / 分享链接加入页**四页 + `SurfaceHost` 五态全量 + EMBEDDED 登记表 + REMOTE iframe | `ManifestValidatorTest` 43 条（含 `ui` 段全套拒绝用例）、`AvailabilityProjectionTest` **13 条**（§4.1 逐行 + 投影全覆盖 + 闸门串成一条链）、`LapWebSurfaceTest` 新增详情页两条；前端 `SurfaceHost.test.tsx` **15 条**（vitest，读**后端那份真的 manifest**）；`check-lap.sh` 新增断言 18（§16 形状 / 详情三列 / 五条 Surface / 404）；`npm run build` |
+| **R12** | **Chat / Application 深度集成。** 新契约包 `contracts/chat/`（6 个 DTO `ApplicationCard` / `ApplicationLaunchRequest` / `ParticipantView` / `ApplicationSessionView` / `ApplicationLaunchResponse` / `ApplicationInvitation` + `ApplicationCatalogException` + `package-info`）与第 3 个 SPI 端口 **`ApplicationCatalogPort`**（`cards` / `card` / `sessionsOfConversation` / `session` / `launch` / `invite`）；平台侧实现 `ApplicationCatalogAdapter`（把 `SessionException` 翻成跨模块的 `ApplicationCatalogException`，保住 `ActionStatus`）；`ApplicationSessionService.ofConversation()` / `applyLaunchOptions()` + 仓储 `findByConversationId`；chat-platform 加**三个会话上下文端点** `GET/POST /api/companions/{c}/conversations/{v}/applications` 与 `POST …/{sessionId}/share`；**应用卡片就是一条消息**（`messageKind=APPLICATION_CARD` / `APPLICATION_INVITATION`，metadata 带 applicationId/sessionId/name/role/status，走 `ConversationService.addMessage` **不唤醒数字人**）；`application_session.conversation_id` 落库（§85）；前端 `api/chatApplications.ts` + `ApplicationCardBubble` 两张卡片（进入 / 分享到对话 / 复制链接）+ Chat 侧「一起玩点什么」面板 | `ChatApplicationPortTest` **6 条**（行为证明：整条链路跑在一个本仓库从未见过的应用 `com.example.paper-plane` 上；源码证明：扫集成代码里不出现任何一个真实应用 id/动作名）、`ApplicationCardMessageTest` **4 条**（卡片是一条消息 / 同一条时间线 / 令牌明文进消息 / **被拒时绝不留下说假话的卡片**）、`ModuleBoundaryArchitectureTest` 六条仍绿；前端 `ApplicationCardBubble.test.tsx` **9 条**；`check-lap.sh` 新增**断言 19**（16 条：真实适配器跨端口开应用 → 卡片落 `messages` → 分享落消息而明文不进库 → 未知应用 404 `UNKNOWN_APPLICATION`） |
 
 **R9 的关键决定**（删掉 Installation 之后，会话必须总是存在）：
 
@@ -316,6 +318,53 @@ backend/
    一个被挂起的应用需要能说出一句"它已下架"，而 404 只会让人以为是自己把 id 打错了。
    真正被拒的是"开一局新的"，而那个拒绝带着 `APPLICATION_NOT_AVAILABLE` 与 409 —— 
    "被下架了"和"没有这个应用"是两件事。
+
+**R12 的关键决定**（聊天侧看见应用，但一个应用都不认识）：
+
+1. **`chat-platform` 到现在也没有依赖 `application-platform`，这一轮一个字都没松。** 设计方案的
+   §63 要求聊天里能发现/启动/邀请应用，§115 又要求它不 import 具体应用，而既有守卫更强：
+   `check-v10.sh` 的 pom 禁令与 `ModuleBoundaryArchitectureTest` 直接不许这两个模块互相看见。
+   三者同时成立的唯一办法是多一个**契约端口**：
+   `contracts/spi/ApplicationCatalogPort` ← 实现在应用平台的 `ApplicationCatalogAdapter`，
+   chat 只调接口。放宽边界换功能是这次重构里最贵的偷懒 —— 一旦 chat 能 import 应用平台，
+   下一个功能就会直接去读它的表。
+2. **"聊天侧不认识任何具体应用"有两种证法，而它们证的**不是**同一件事，所以两条都要。**
+   *行为证明* 让整条链路跑在一个本仓库从未见过的应用（`com.example.paper-plane`）上 ——
+   它证明了"不认识也能跑"，但证明不了"没有偷偷认识一个"；*源码证明* 扫集成代码，断言里面不出现
+   `tictactoe` / `game.make_move` 这类词 —— 它证明了"没有偷偷认识"，但证明不了"不认识也能跑"。
+   一条的漏洞正好是另一条的强项。这是 §63 被认真对待的样子：只写一句注释说"我们不认识具体应用"，
+   是没有任何东西在守的。
+3. **注释不算。** 那条源码扫描会先把 `/* … */` 与 `// …` 剥掉再匹配。因为这条规则管的是代码
+   **认识**什么，而一段说"这个类不认识井字棋"的注释是一句*关于*应用的陈述。把注释也算进去，
+   规则会逼着人把话说含糊 —— 而它要防的东西（一个写死的 `applicationId`）一个都不会因此消失。
+4. **卡片是一条消息，不是第二种东西。** `messages` 表本来就有 `message_kind` 与 `metadata` 两列，
+   它们就是为这种"长得像消息、内容不是一句话"的东西准备的。另建一张 `application_card` 表会立刻
+   带来一个没有答案的问题：卡片和消息谁先出现？分页怎么合？已读状态算谁的？
+   所以 `ApplicationCardMessageTest` 钉的正是"它没有变成第二种东西" —— 有 senderType、有
+   messageKind、和别的消息排在同一条时间线上、也进 `messageCount`。
+5. **落卡片消息走 `addMessage` 而不是 `MessageCoreService.send`，因为平台通告不唤醒数字人。**
+   后者会在事务提交后唤醒数字人平台 —— 那是对的，一条用户消息值得它看一眼。而"井字棋已开启"
+   是系统文本，把它喂给 LLM 只会让数字人对着它生成一句自己的回复。数字人要知道这一局开起来了，
+   走的是应用事件那条路（§60 的 `APPLICATION_*` 家族），那条路说的事情比这行字准确得多。
+6. **先开应用、再落消息。** 顺序不是随手写的：反过来的话，一次被拒的启动（应用恰好被下架）
+   会先在对话里留下一条"已开启"的卡片，然后才失败 —— 一条说假话的历史，事后只能靠人删。
+   `ApplicationCardMessageTest.开应用被拒时绝不留下一条说假话的卡片` 断言的就是这个顺序。
+7. **`ApplicationCatalogException` 住在 `contracts.chat` 里，而不是让 chat 接住 `SessionException`。**
+   接住它就等于 chat 要编译应用平台的类型（边界破了）；而另造一套并行状态词表会让同一件事有两个
+   名字。所以跨模块那一层只做一件事：把 `SessionException` 的 code / message / `ActionStatus`
+   原样搬进一个双方都认识的壳里。聊天侧再翻成 HTTP 时有一份**刻意写下来的、四行的**状态映射重复
+   —— 它值得被明确承认，而不是假装没有：一份不被承认的重复会慢慢长歪，一份被承认的重复至少会有
+   人在改其中一份时想起来看看另一份。
+8. **`conversationId` 在路径上，不在请求体里。** 请求体里能写的东西，一个拿到别人 `conversationId`
+   的人就能把应用开到别人的对话里；放进路径则把"这一段对话"变成不可绕过的前提。而它同时是
+   §85 要求的落库字段（`application_session.conversation_id`）—— 会话行上要记住它属于哪段对话，
+   而这件事只有一个地方能做：在启动时传下去。
+9. **分享 = 把邀请链接发进对话，不是塞进剪贴板。** 铸出来的票只出现一次（库里只有哈希），
+   落成一条消息之后它就再也不会丢：换台设备、刷新页面，那条链接还在对话里，还能再点一次。
+   走剪贴板的话，用户没粘贴就是真的没了。
+10. **没注册过的应用从"可开列表"里消失，但已经开着的那一场还在。** 这是 §4.1 第二列
+    （`allowsNewSession`）与第一列（`inMarket`）的区别在聊天侧的样子 —— 平台不替运营惩罚用户，
+    用户什么都没有做错。
 
 **R5 的关键决定**（两个新增参考应用 + DH 提醒只读改造）：
 
@@ -489,8 +538,8 @@ DH 的改动全是提醒只读改造带来的），R7 之后它又多了一道�
 
 ### 当前验收
 
-- `mvn test`：**646 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform 24 /
-  digital-human-platform **275** / application-platform **285** / bootstrap-app **39**
+- `mvn test`：**750 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform **34** /
+  digital-human-platform **275** / application-platform **379** / bootstrap-app **39**
 - `bash scripts/check-v10.sh` → `check-v10 OK`（41 个顶层包分属 5 个所有权模块，10 对引用 + 10 对 pom）
 - `bash scripts/check.sh`（起 jar）→ **✅ 全量验收全部通过**（聊天/数字人链路无回归；
   含 R5 新增的 16 条提醒契约断言）
@@ -503,7 +552,12 @@ DH 的改动全是提醒只读改造带来的），R7 之后它又多了一道�
   真人 → `403`、复原后重新出现，最后对已发布版本写 manifest → `409 VERSION_IMMUTABLE`；
   **断言 17**：`INBOX` 订阅的事件先落进 `lap_outbox` 一行，再由 relay 在 20 秒内投成 `DELIVERED`，
   订阅自己的 `last_delivered_at` 同时跟上 —— 只断言"有一行"会让一个从不投递的 relay 全绿，
-  只断言"投出去了"会让一个不落库就直投的实现全绿）；断言 13 确认 `GET /api/v10/applications` → **404**
+  只断言"投出去了"会让一个不落库就直投的实现全绿）；**断言 18**：开会话返回 §16 形状、应用详情给出
+  十态 `status` + §4.1 三列布尔 + 五条 Surface；**断言 19**（R12）：走**聊天平台**的三个会话上下文端点
+  在真实进程里开一个应用 —— 库里 `application_session.conversation_id` 一致、落下的是
+  `message_kind=APPLICATION_CARD` 的 `system` 消息、分享铸出的**明文令牌不进库**、
+  开一个不存在的应用要回 `404 UNKNOWN_APPLICATION`（拿到 500 就说明跨模块的错误翻译断了）；
+  断言 13 确认 `GET /api/v10/applications` → **404**
 - **断言 1 的"旧表不存在"半边已在 R8 打开**（`lap-drop-legacy.sh` 已执行）：
   `dh_application` / `dh_game_session` / `dh_application_action_log` / `reminders` 四张表逐张断言不存在，
   于是"哪天有人把写入方加回来"会立刻炸在 CI 上
@@ -511,9 +565,10 @@ DH 的改动全是提醒只读改造带来的），R7 之后它又多了一道�
   两者是**同一个前提**：数字人真的动手了，而在本机的 mock LLM 下"不行动"是有意为之，所以它们只在
   `LAP_EXPECT_AGENT_MOVE=1` 且服务接了真实 LLM 时才会执行（断言 12 的判据是 `timeline_event` 里
   那一条 `APPLICATION_ACTION_EXECUTED`）
-- `cd frontend && npm run build` → 通过
+- `cd frontend && npm test` → **24 测试全绿**（`SurfaceHost.test.tsx` 15 条五种 Surface 的行为差别 +
+  `ApplicationCardBubble.test.tsx` 9 条卡片消息的降级路径）；`npm run build` → 通过
 - **CI 顺序**（每一轮都照这个跑）：`check-v10.sh` → `mvn test` → 起 jar（断言 14 要求带
-  `LAP_MCP_SERVICE_KEY`）→ `check.sh` → `check-lap.sh` → `npm run build`
+  `LAP_MCP_SERVICE_KEY`）→ `check.sh` → `check-lap.sh` → `npm test` → `npm run build`
 - **LAP v1 的九轮（R0–R8）已全部完成。**
 
 ---

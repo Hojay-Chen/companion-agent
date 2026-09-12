@@ -117,7 +117,7 @@ chat 与 DH 各自都有叫 `conversation` / `event` / `state` / `memory` 的包
 
 ---
 
-## 3. 跨平台通信：五个 SPI 端口
+## 3. 跨平台通信：六个 SPI 端口
 
 `contracts.spi` 是唯一的跨平台 Java 接口层。两边各写各的适配器，互相不认识对方的实现类。
 
@@ -128,6 +128,7 @@ chat 与 DH 各自都有叫 `conversation` / `event` / `state` / `memory` 的包
 | `SimulatorAccessPort` | DH → Chat | 聊天平台 | `chat-platform` : `com.luxera.companion.simulator.server.SimulatorAccessAdapter` |
 | `ApplicationRuntimePort` | DH → Application | 应用平台 | `application-platform` : `com.luxera.companion.application.action.ActionGateway` |
 | `ApplicationEventSink` | Application → DH | 数字人平台（**单向门**） | `digital-human-platform` : `com.luxera.companion.digitalhuman.event.DhApplicationEventSink` |
+| `ApplicationCatalogPort` | Chat → Application | 应用平台 | `application-platform` : `com.luxera.companion.application.port.ApplicationCatalogAdapter` |
 
 > 前三个端口各家都写了一个 `*Adapter`；**`ApplicationRuntimePort` 没有** —— 它的实现类就是
 > `ActionGateway` 本身。这不是漏了个名字，而是这个端口与其余三个不同：它不是"把本地 Bean 包一层
@@ -135,7 +136,15 @@ chat 与 DH 各自都有叫 `conversation` / `event` / `state` / `memory` 的包
 > 再包一个 `ApplicationRuntimeAdapter` 只会多一层什么都不做的委派。
 > （曾有一份设计文档写成 `...runtime.ApplicationRuntimeAdapter`，那个类从来没有存在过。）
 
-后两个端口是 LAP v1 的全部接触面。它们合起来只允许两件事：
+最后一个（R12 加的）是这三个端口里唯一不属于数字人的：它让**聊天平台**能在不认识应用平台的前提下
+"在这段对话里开一个应用"。它存在的理由不是"多一个抽象更优雅"，而是两个既有守卫同时成立时唯一的出路：
+`check-v10.sh` 的 pom 禁令不许 `chat-platform` 依赖 `application-platform`，而 §63 又要求聊天里
+能发现/启动/邀请应用。三件事同时为真，中间就必须隔一个契约端口。它的 DTO 全在 `contracts.chat`
+（不在 `contracts.application`）：那些形状是**聊天协议**的一部分，不是应用协议的一部分 ——
+`ApplicationCard` 只说"能不能开"，它甚至不是应用详情。
+
+后两个 LAP 端口（`ApplicationRuntimePort` / `ApplicationEventSink`）是 DH 与应用的**全部**接触面
+（`ApplicationCatalogPort` 面向的是聊天，不是数字人）。它们合起来只允许两件事：
 
 - 数字人**读**统一读模型（`read(uri)` → `ResourceView`）、**问**现在能做什么
   （`pendingActions(uri, ctx)` → `List<ActionSpec>`）、**做**（`execute(ActionRequest, ctx)`）。
@@ -160,7 +169,7 @@ DH 侧挂在 `digitalhuman.event.EventRouter` 的 `APPLICATION_EVENT` 上有**�
 > 不落子、不随机、不"取第一个空格"。`AgentApplicationFlowTest` 断言此时 `execute()` 调用次数为 0 ——
 > 这条断言是这条性质在整个重构过程中的保险丝。
 
-### LAP v2 的协议面（`/api/v1`，R9–R11 起）
+### LAP v2 的协议面（`/api/v1`，R9–R11 起；聊天侧那一面见下一节）
 
 真人和 Agent 走的是**同一条**路，协议里不存在"Agent 专用接口"：
 
@@ -189,6 +198,65 @@ PUT  /api/v1/applications/{id}/versions/{v}/manifest     写一份新版本的�
 > **`POST /api/v1/applications/{id}/install` 已经不存在了。** v2 里应用不需要"装"，也不需要
 > "卸" —— 打开就是开一场会话，结束会话不等于卸载应用。这条路径的消失是 §130 原则 1 的落点，
 > `check-lap.sh` 里有一条断言专门守着它（加回任何一个"安装"入口，那条立刻红）。
+
+### 把应用带进一段对话（R12 起，聊天平台的三个端点）
+
+应用平台那一面（上面那张表）回答的是"这个应用是什么、这一场里有谁"；它**不回答**
+"在我和小满的这段对话里，我们能一起玩点什么"。后者只有聊天平台答得了，所以它自己开了三个端点 ——
+注意路径前缀是 `/api/companions/{c}/conversations/{v}`，与 `/api/v1` 是**两个模块的两套面**，
+不是同一批数据的两条路：
+
+```
+GET  /api/companions/{c}/conversations/{v}/applications
+       这段对话里能开什么、已经开着什么 → { openable: [ApplicationCard], open: [ApplicationSessionView] }
+POST /api/companions/{c}/conversations/{v}/applications
+       在这段对话里开一个应用 → 201 { session, participant, messageId }
+       被拒时(下架/不允许新会话)**什么都不留下** —— 先开应用、再落卡片消息
+POST /api/companions/{c}/conversations/{v}/applications/{sessionId}/share
+       把加入链接作为一条消息发出去 → 201 { invitationId, token, joinUrl, role, maxUses, messageId }
+```
+
+**为什么聊天平台不直接调 `/api/v1`。** 它在编译期看不见应用平台 —— `check-v10.sh` 的 pom 禁令与
+`ModuleBoundaryArchitectureTest` 六条规则都不许。所以中间隔着一个契约端口：
+
+```
+chat-platform  ──►  contracts/spi/ApplicationCatalogPort  ◄──  application-platform
+   (三个端点)              (契约, DTO 全在 contracts.chat)        (ApplicationCatalogAdapter)
+```
+
+端口上每个方法都要一个 `InvocationContext`：进程内调用的信任模型是"**认证已经由聊天侧做完，
+但授权仍由应用平台执行**"，所以身份显式写下来（`HUMAN(userId)` + 一个 correlationId），
+而不是省掉 —— 一个省略身份的进程内调用会让应用平台无从判断"你能不能开这一场"。
+`ChatTestApplicationCatalog` 里那个假实现也会拒掉没有 `principalType` 的上下文，
+与真的 `InternalPrincipalResolver` 同形：测试不该在一个比生产宽松的世界里变绿。
+
+失败跨过这条边界时要脱一层壳：应用平台抛 `SessionException`，适配器翻成
+`ApplicationCatalogException`（保住 code / message / `ActionStatus`），聊天侧的
+`ConversationApplicationExceptionHandler` 再把 `ActionStatus` 翻成 HTTP。三跳任何一跳断了，
+客户端都会拿到 500 —— `check-lap.sh` 断言 19 里有一条"开一个不存在的应用要回 404
+`UNKNOWN_APPLICATION`"专门守这个。
+
+### 应用卡片就是一条消息（§66）
+
+```json
+{
+  "id": "msg_xxx",
+  "senderType": "system",
+  "messageKind": "APPLICATION_CARD",
+  "content": "「井字棋」已在这段对话里开启",
+  "metadata": { "applicationId": "com.luxera.tictactoe", "sessionId": "sess_xxx",
+                "name": "井字棋", "role": "OWNER", "status": "ACTIVE" }
+}
+```
+
+没有 `application_card` 表。卡片和别的消息排在同一条时间线上、进同一个 `messageCount`、
+走同一套分页 —— 另建一张表会立刻带来"卡片和消息谁先出现"这种没有答案的问题。
+`content` 同时写一句人能读的话：认不出这个 `messageKind` 的客户端会把它当普通消息显示，
+而那正是它该做的降级。
+
+落这类消息走 `ConversationService.addMessage` 而不是 `MessageCoreService.send`：
+后者会唤醒数字人，而"井字棋已开启"是**平台通告**，把它喂给 LLM 只会让它对着一段系统文本
+编一句回复。数字人要知道这一局开起来了，走的是应用事件那条路（`APPLICATION_*` 家族）。
 
 ### 打开一个应用返回什么（§16）
 
@@ -427,7 +495,7 @@ outbox 的主键是 `sha256(eventId + "@" + subscriptionId)` —— **该事件�
 
 ```bash
 cd backend
-mvn clean test                       # 全模块 646 测试
+mvn clean test                       # 全模块 750 测试
 mvn -DskipTests package              # 产出可执行 jar
 ```
 
@@ -467,7 +535,7 @@ java -jar backend/bootstrap-app/target/companion-platform-bootstrap-1.0.0.jar
 `digital-human-platform` / `application-platform` 一行代码，只需：
 
 1. 各加一个 launcher 模块（各自的 `@SpringBootApplication` + profile yml + repackage）；
-2. 让 SPI 端口走 HTTP/WS 而不是本地 Bean（当前五个端口都已有本地适配器实现，远程适配器尚未写）；
+2. 让 SPI 端口走 HTTP/WS 而不是本地 Bean（当前六个端口都已有本地适配器实现，远程适配器尚未写）；
 3. `app.simulator.chat-ws-url` 指向 chat 进程的 `/ws/simulator`（当前默认
    `ws://127.0.0.1:8081/ws/simulator`）；数据面若要走 WS 而非进程内直调，
    另开 `app.simulator.backend=websocket`（默认 `inprocess`，由 `ChatSimulatorClient` 的

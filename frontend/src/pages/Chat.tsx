@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   Bell,
+  Boxes,
   Brain,
   Heart,
   MessageSquarePlus,
@@ -11,6 +12,9 @@ import {
   Sun,
 } from 'lucide-react'
 import { api, openEventStream } from '@/api/client'
+import { chatApplications } from '@/api/chatApplications'
+import type { ConversationApplications, OpenableApplication, OpenSessionView } from '@/api/chatApplications'
+import ApplicationCardBubble from '@/components/ApplicationCardBubble'
 import CompanionAvatar from '@/components/CompanionAvatar'
 import ChatBubble from '@/components/ChatBubble'
 import Drawer from '@/components/Drawer'
@@ -41,7 +45,15 @@ import type {
 } from '@/types'
 import { format } from 'date-fns'
 
-type DrawerTab = 'recent' | 'memories' | 'usermodel' | 'relationship' | 'reminders' | 'notifications' | null
+type DrawerTab =
+  | 'recent'
+  | 'memories'
+  | 'usermodel'
+  | 'relationship'
+  | 'reminders'
+  | 'notifications'
+  | 'applications'
+  | null
 
 const STAGE_ZH: Record<string, string> = {
   new: '初识',
@@ -424,6 +436,13 @@ export default function Chat() {
 
         <div className="border-t border-cocoa-800 p-3">
           <button
+            onClick={() => setDrawer('applications')}
+            className="mb-1 flex w-full items-center gap-2 rounded-xl bg-cocoa-850 px-3 py-2 text-sm text-cocoa-300 transition hover:bg-cocoa-800"
+          >
+            <Boxes size={15} />
+            一起玩点什么
+          </button>
+          <button
             onClick={() => setDrawer('notifications')}
             className="relative flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-cocoa-400 transition hover:bg-cocoa-850"
           >
@@ -479,10 +498,28 @@ export default function Chat() {
               const showDivider = !prev || dateLabel(prev.createdAt) !== label
               const isUser = m.senderType === 'user'
               const status = isUser ? userStatus(m, readMap, userMsgStatus) : undefined
+              // §66: 应用卡片就是一条消息 —— 它和别的消息排在同一条时间线上, 只是换一种画法。
+              // 认不出的 messageKind 落回 ChatBubble, 而平台保证那种消息的 content 是一句人能读的话。
+              const isApplicationCard =
+                m.messageKind === 'APPLICATION_CARD' || m.messageKind === 'APPLICATION_INVITATION'
               return (
                 <Fragment key={m.id}>
                   {showDivider && <TimeDivider label={label} />}
-                  <ChatBubble sender={m.senderType} content={m.content} time={formatTime(m.createdAt)} status={status} />
+                  {isApplicationCard ? (
+                    <ApplicationCardBubble
+                      message={m}
+                      companionId={companionId}
+                      conversationId={activeConvId}
+                      onShared={() => loadMessages(activeConvId)}
+                    />
+                  ) : (
+                    <ChatBubble
+                      sender={m.senderType}
+                      content={m.content}
+                      time={formatTime(m.createdAt)}
+                      status={status}
+                    />
+                  )}
                 </Fragment>
               )
             })}
@@ -531,6 +568,13 @@ export default function Chat() {
         {drawer === 'relationship' && <RelationshipPanel companionId={companionId} />}
         {drawer === 'reminders' && <RemindersPanel companionId={companionId} />}
         {drawer === 'notifications' && <NotificationsPanel companionId={companionId} onRead={loadUnread} />}
+        {drawer === 'applications' && activeConvId && (
+          <ApplicationsPanel
+            companionId={companionId}
+            conversationId={activeConvId}
+            onOpened={() => loadMessages(activeConvId)}
+          />
+        )}
       </Drawer>
     </div>
   )
@@ -550,9 +594,158 @@ function drawerTitle(drawer: DrawerTab, companion: Companion) {
       return '提醒'
     case 'notifications':
       return '消息与提醒'
+    case 'applications':
+      return `和${companion.name}一起玩`
     default:
       return ''
   }
+}
+
+// ── 应用面板 (§63–§66) ──────────────────────
+/**
+ * 这段对话里能开什么、已经开着什么。
+ *
+ * 这个组件<b>不知道任何一个具体应用</b> —— 列表来自 `GET .../applications`, 每一项的
+ * 名字、描述、能力都是应用自己声明的。加一个新应用不需要动这里一行: 这正是 §63 要的
+ * 那种"第三方应用接进来时, 聊天侧零改动"。
+ *
+ * 卡片能不能按的判据是服务端给的 `allowsNewSession`(§4.1 第二列), 前端不复制这份判断 ——
+ * 复制了就会有一天两边不一致, 而不一致的那一次一定发生在用户按下去的时候。
+ */
+function ApplicationsPanel({
+  companionId,
+  conversationId,
+  onOpened,
+}: {
+  companionId: string
+  conversationId: string
+  /** 开完应用后重拉消息 —— 平台已经在对话里落下了一条卡片消息。 */
+  onOpened: () => void
+}) {
+  const navigate = useNavigate()
+  const [data, setData] = useState<ConversationApplications | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      setData(await chatApplications.context(companionId, conversationId))
+      setError(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '加载失败')
+    }
+  }, [companionId, conversationId])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const open = async (applicationId: string) => {
+    setBusy(applicationId)
+    setError(null)
+    try {
+      await chatApplications.open(companionId, conversationId, applicationId)
+      onOpened()
+      await load()
+    } catch (e) {
+      // 被拒时不留下任何痕迹(平台先开应用再落消息), 所以这里只需要说清原因。
+      setError(e instanceof Error ? e.message : '打开失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (!data) {
+    return <Empty>{error ?? '正在看看有什么…'}</Empty>
+  }
+
+  return (
+    <div className="space-y-5">
+      {error && (
+        <div className="rounded-xl border border-rosewood/30 bg-rosewood/10 px-3 py-2 text-sm text-rose-soft">
+          {error}
+        </div>
+      )}
+
+      <Section title="已经开着" hint={`${data.open.length} 场`}>
+        {data.open.length === 0 ? (
+          <p className="text-sm text-cocoa-500">这段对话里还没有开着的应用。</p>
+        ) : (
+          <div className="space-y-2">
+            {data.open.map((s) => (
+              <OpenSessionRow key={s.sessionId} session={s} onEnter={() => navigate(`/sessions/${s.sessionId}`)} />
+            ))}
+          </div>
+        )}
+      </Section>
+
+      <Section title="可以开一个" hint={`${data.openable.length} 个`}>
+        {data.openable.length === 0 ? (
+          <p className="text-sm text-cocoa-500">现在没有可以开的新应用。</p>
+        ) : (
+          <div className="space-y-2">
+            {data.openable.map((app) => (
+              <OpenableRow
+                key={app.applicationId}
+                application={app}
+                busy={busy === app.applicationId}
+                onOpen={() => open(app.applicationId)}
+              />
+            ))}
+          </div>
+        )}
+      </Section>
+    </div>
+  )
+}
+
+function OpenableRow({
+  application,
+  busy,
+  onOpen,
+}: {
+  application: OpenableApplication
+  busy: boolean
+  onOpen: () => void
+}) {
+  return (
+    <div className="flex items-start gap-3 rounded-xl border border-cocoa-800 bg-cocoa-900/60 px-3 py-2.5">
+      <span className="mt-0.5 rounded-lg bg-ember/15 p-1.5 text-ember-soft">
+        <Boxes size={14} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm text-cocoa-100">{application.name}</div>
+        {application.description && (
+          <p className="mt-0.5 line-clamp-2 text-xs text-cocoa-500">{application.description}</p>
+        )}
+      </div>
+      <button
+        onClick={onOpen}
+        // 服务端说不能开就是不能开 —— 下架的应用仍然出现在市场里(它认得出自己是谁),
+        // 但它不在这张"可以开一个"的列表里; 这里再挡一次是为了"恰好在这一刻被下架"。
+        disabled={busy || !application.allowsNewSession}
+        className="btn-primary shrink-0 !px-3 !py-1 text-xs disabled:opacity-50"
+      >
+        {busy ? '开启中…' : '打开'}
+      </button>
+    </div>
+  )
+}
+
+function OpenSessionRow({ session, onEnter }: { session: OpenSessionView; onEnter: () => void }) {
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-cocoa-800 bg-cocoa-900/60 px-3 py-2.5">
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm text-cocoa-100">{session.applicationId}</div>
+        <div className="mt-0.5 text-xs text-cocoa-500">
+          {session.participantCount} 人 · {session.status}
+        </div>
+      </div>
+      <button onClick={onEnter} className="shrink-0 rounded-lg border border-cocoa-700 px-3 py-1 text-xs text-cocoa-400 transition hover:text-ember-soft">
+        进入
+      </button>
+    </div>
+  )
 }
 
 // ── 记忆面板 ───────────────────────────────

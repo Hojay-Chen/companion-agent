@@ -130,10 +130,18 @@ export interface Message {
   /** 会话模型归属 */
   sessionId?: string | null
   exchangeId?: string | null
-  /** NORMAL/SHORT_ACK/PROACTIVE/FOLLOW_UP/SYSTEM/TOOL_RESULT */
+  /** NORMAL/SHORT_ACK/PROACTIVE/FOLLOW_UP/SYSTEM/TOOL_RESULT/APPLICATION_CARD/APPLICATION_INVITATION */
   messageKind?: string | null
   /** DELIVERED/READ/RESPONDED/DEFERRED/IGNORED */
   deliveryStatus?: string | null
+  /**
+   * 结构化的附带信息 —— 有些消息的全部内容都在这里。
+   *
+   * `APPLICATION_CARD` 靠它带 applicationId/sessionId/name/role/status, 客户端据此把一条
+   * 消息渲染成一张能点开的卡片而不是一段文字。不认识的 `messageKind` 会退回显示 `content`
+   * —— 所以带 metadata 的消息, `content` 也必须是一句人能读的话, 不能是空串。
+   */
+  metadata?: Record<string, unknown> | null
   createdAt: string
 }
 

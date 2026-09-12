@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * V10 §2 — conversation storage. Owned entirely by the chat platform.
@@ -123,6 +124,27 @@ public class ConversationService {
                               String clientMessageId) {
         return addMessage(conversationId, senderType, content, null, null, null,
                 false, null, null, null, clientMessageId);
+    }
+
+    /**
+     * LAP v2 §66: <b>一条带结构化载荷的消息</b> —— 应用卡片与邀请链接走这一条。
+     *
+     * <p>它比下面的全参重载少九个参数, 因为那九个里它只需要一个 {@code messageKind}:
+     * 一条平台通告没有感知结果、不属于任何 Exchange、也没有客户端幂等键。让它去传九个
+     * {@code null} 不只是难看 —— 那会让"这条消息到底有没有感知"变成一个要看调用点才知道的
+     * 问题, 而 {@code metadata} 是这条消息真正的载荷。
+     *
+     * <p>{@code metadata} 里的键由调用方定义, chat 只是存储方: 它不认识
+     * {@code sessionId} 指的是聊天自己的会话还是应用会话, 也不该去认识 —— 那是
+     * {@code ConversationApplicationService} 的事。
+     */
+    @Transactional
+    public Message addMessage(String conversationId, String senderType, String content,
+                              String messageKind, Map<String, Object> metadata) {
+        Message m = addMessage(conversationId, senderType, content, null, null, null, false,
+                messageKind, null, null, null);
+        m.setMetadata(metadata);
+        return msgRepo.save(m);
     }
 
     /**

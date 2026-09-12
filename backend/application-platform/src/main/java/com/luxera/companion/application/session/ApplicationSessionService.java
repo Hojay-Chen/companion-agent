@@ -138,6 +138,52 @@ public class ApplicationSessionService {
     }
 
     /**
+     * 把"开启选项"里 {@link #launch} 不管的那两列落到会话行上 —— {@code visibility} 与
+     * {@code joinPolicy}。空值<b>不覆盖</b>: 一个没有意见的调用方得到的应当是平台的默认姿态
+     * ({@code UNLISTED} / {@code INVITE_ONLY}), 而不是一个字面上的 {@code null}。
+     *
+     * <p>为什么单开一个方法而不是给 {@code launch} 再加两个参数: 那条通用开启路径的五个参数
+     * 已经说出了它要说的全部("哪个应用、谁、哪段对话、几个人"); 可见性与加入策略是
+     * <em>入口自己的姿态</em> —— 从 REST 开的人有自己的一套默认, 从对话里开的人有另一套。
+     * 把它们塞进 {@code launch}, 就等于让每个入口都要知道另外两个入口的默认值。
+     *
+     * <p>非法值(不在那一列的定义域里)一律<b>拒绝</b>, 不静默回落: 一个把 {@code PRIVATE}
+     * 拼成 {@code PRIVTE} 的调用方, 如果拿到的是一个"看起来成功了"的 UNLISTED 会话, 它会在
+     * 某一天发现自己的私密会话被列在了别人屏幕上, 而日志里什么也没有。
+     */
+    @Transactional
+    public ApplicationSessionRecord applyLaunchOptions(String sessionId, String visibility, String joinPolicy) {
+        ApplicationSessionRecord session = require(sessionId);
+        boolean changed = false;
+        if (visibility != null && !visibility.isBlank()) {
+            session.setVisibility(requireOneOf("visibility", visibility,
+                    ApplicationSessionRecord.VISIBILITY_PUBLIC,
+                    ApplicationSessionRecord.VISIBILITY_UNLISTED,
+                    ApplicationSessionRecord.VISIBILITY_PRIVATE));
+            changed = true;
+        }
+        if (joinPolicy != null && !joinPolicy.isBlank()) {
+            session.setJoinPolicy(requireOneOf("joinPolicy", joinPolicy,
+                    ApplicationSessionRecord.JOIN_OPEN,
+                    ApplicationSessionRecord.JOIN_INVITE_ONLY,
+                    ApplicationSessionRecord.JOIN_CLOSED));
+            changed = true;
+        }
+        return changed ? sessions.save(session) : session;
+    }
+
+    private static String requireOneOf(String field, String value, String... allowed) {
+        String normalized = value.trim().toUpperCase(java.util.Locale.ROOT);
+        for (String candidate : allowed) {
+            if (candidate.equals(normalized)) {
+                return normalized;
+            }
+        }
+        throw new SessionException("INVALID_ARGUMENT",
+                field + " 只能是 " + String.join(" / ", allowed) + ", 收到: " + value);
+    }
+
+    /**
      * 版本行的 id → 版本<em>号</em>(如 {@code 1.0.0})。
      *
      * <p>会话行上存的是 {@code version_id}(UUID), 因为那是外键该有的样子; 但对外说
@@ -321,6 +367,26 @@ public class ApplicationSessionService {
 
     public List<ApplicationSessionRecord> ofApplication(String applicationId) {
         return sessions.findByApplicationId(applicationId);
+    }
+
+    /**
+     * §85 —— 这段对话里开着的全部会话, 最近活跃的在前。
+     *
+     * <p><b>不筛状态, 也不筛参与者。</b> 前者: "这段对话里开过什么"是一个<em>历史</em>问题 ——
+     * 一局昨天结束的棋仍然是这段对话里发生过的事, 把它藏起来会让聊天界面在第二天
+     * 莫名其妙地少一条记录。后者: 说话的是聊天平台, 它在进程内代表<em>一段对话</em>,
+     * 而不是某一个参与者; 谁看得到这段对话, 是聊天平台自己的事(它已经验过了)。
+     * 在这里再筛一次参与者, 只会让"我在这段对话里看不见我朋友开的那一局"这种
+     * 没人定义过的行为长出来。
+     */
+    public List<ApplicationSessionRecord> ofConversation(String conversationId) {
+        if (conversationId == null || conversationId.isBlank()) {
+            return List.of();
+        }
+        return sessions.findByConversationId(conversationId).stream()
+                .sorted(Comparator.comparing(ApplicationSessionRecord::getLastActiveAt,
+                        Comparator.nullsFirst(Comparator.naturalOrder())).reversed())
+                .toList();
     }
 
     /** 这个 principal 参与的全部活跃会话 —— 真人 UI 的"我正在用的应用"用的就是它。 */
