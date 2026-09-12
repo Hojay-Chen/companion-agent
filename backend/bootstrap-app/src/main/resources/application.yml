@@ -157,9 +157,14 @@ app:
       max-attempts: ${LAP_OUTBOX_MAX_ATTEMPTS:5}
     # 远端应用(R8)。默认空 —— 一个默认指向某台服务器的地址, 会让一台什么都没部署的机器
     # 在启动时才暴露出来。密钥本身走 app.lap.remote.auth.<authRef>, 永不进 manifest。
+    # R14 的远端五子棋: LAP_REMOTE_APPLICATIONS=applications/remote-gomoku/1.0.0/application-manifest.json
+    # 时注册, 密钥 LAP_REMOTE_AUTH_REMOTE_GOMOKU 与之成对(缺一个 = 注册了但每次调用都
+    # REMOTE_AUTH_UNRESOLVED, check-remote-app.sh 会抓住这件事而不是让它看起来像"网络问题")。
     remote-applications: ${LAP_REMOTE_APPLICATIONS:}
     remote:
       timeout-ms: ${LAP_REMOTE_TIMEOUT_MS:3000}
+      auth:
+        remote-gomoku: ${LAP_REMOTE_AUTH_REMOTE_GOMOKU:}
       # auth:            # 形如
       #   probe: ${LAP_REMOTE_AUTH_PROBE:}   # key 是 manifest 里 runtime.remote.authRef 的名字
 

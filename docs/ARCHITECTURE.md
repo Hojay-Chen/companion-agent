@@ -515,6 +515,38 @@ DRAFT → DEVELOPING → TESTING → SUBMITTED → REVIEWING ─┬─→ REJECT
 | 幂等 | 转发的是**派生**键（`sha256(applicationId@version@action@principal@resource@input)`），不是调用方那把。调用方的键只在 `(principal, key)` 作用域里唯一，两个人各用 `"1"` 会在远端撞成同一次调用；派生键是"这一次逻辑调用"的确定函数，所以重试仍幂等、跨调用方必不同 |
 | 失败 | 硬超时 → `REMOTE_TIMEOUT`；连不上 → `REMOTE_UNAVAILABLE`；HTTP 409/404/403/401/400/422/500 映射到与 REST **同一套** `ActionStatus`；`authRef` 解析不到是**平台没部署好**（`REMOTE_AUTH_UNRESOLVED`，FAILED 而非 DENIED —— 报 403 会让人去查权限，查半天发现是配置漏了） |
 | 配置 | `app.lap.remote-applications` **默认为空** —— 一个默认指向某台服务器的地址，会让机器在启动时才暴露出来 |
+| 状态投影 | 写动作成功且远端返回 `state` 时，`RemoteActionHandler` 把它写进平台的 resource 行（R14 起）—— 见下节 |
+
+**远端状态的投影（R14）**回答的是 E2E 第一次跑就暴露的缺口：内置 handler 自己 `ctx.write(state)`，
+远端应用拿不到平台的写句柄，于是"远端下完了棋"与"平台读得到那盘棋"之间裂开 —— 真人 A 落子、
+真人 B `GET /api/v1/resources` 404。投影的三条规则，每一条都对着一个会写错的方向：
+
+```
+远端(真身)                    平台(resource 行)
+   │ make_move 成功, 返回 state ──► RemoteActionHandler 投影一次
+   │ 读动作(game.state) 成功    ──× 不投影: 读不该让资源版本 +1
+   │ 投影写失败                ──× 不回滚调用: 远端已改完, 回 409 等于说谎
+```
+
+远端仍是唯一真相（非法落子只有它判得出），平台这一行是它最新一次写入的快照 —— manifest 里
+这个资源因此声明 `RESOURCE_STORE` 而不是 `APP_OWNED`：后者的语义是"有一个 Java 投影器去读应用的
+真表"，而远端应用在平台进程之外没有 Java 投影器。
+
+**Developer API（R14）**补上"一个第三方要上架，得先有东西可推"的前一半：`developer` 表
+（`ownerUserId` 指向真人，一个真人可持多个开发者身份），`POST /api/v1/developers` 幂等，
+`POST /developers/{id}/applications` 的语义是**认领** —— 应用 id 就是 manifest 的反向域名身份，
+第二个认领者 409 `APPLICATION_TAKEN`；归属闸门是 `requireOwned`（`NOT_YOUR_APPLICATION`，
+平台自持 `null` actor 逃生口）；挂起开发者是**吊销钥匙**（不能再认领新的），已认领的应用一行
+不动。三个端点在 `SecurityConfig` 里逐条放行并写明理由 —— 它们的身份是服务密钥，JWT 这一层
+表达不了（过滤器层的 403 是控制器与单测都看不见的故障面，R14 的 E2E 抓出过一次）。
+
+**双 SDK（R14）**把协议的第一里交给应用作者：Python `sdk/python/luxera_application`
+（零依赖纯标准库 —— 第三方生态的第一里不该先问人要 pip）与 TS `sdk/typescript`
+（node:crypto）。两侧与 Java 平台共用**同一套 HMAC**（`sha256=` + hex(timestamp + "." + body)，
+300 秒重放窗，常数时间比较），Python 侧的 `IdempotencyStore` **连失败也缓存** —— 平台转发的
+是派生幂等键，重试时该拿到同一个答案（哪怕是失败答案），而不是第二次执行。参考实现
+`remote-apps/gomoku` 用纯标准库实现了动作/错误码与内置五子棋同名同义的远端，
+`LAP_SERVICE_SECRET` 缺失时它 503 `REMOTE_NOT_CONFIGURED` 而不是裸跑。
 
 **投递**分两种模式，同一个 `SubscriptionService` 发出去：`SINK` 立即调 `ApplicationEventSink`
 （`afterCommit`，无事务时立即投递），`INBOX` 落 `lap_outbox` 由 `OutboxRelay` 异步投递。
@@ -535,7 +567,7 @@ outbox 的主键是 `sha256(eventId + "@" + subscriptionId)` —— **该事件�
 
 ## 4. 测试怎么在"没有另一个平台"的情况下跑
 
-这是解耦是否彻底的**试金石**：`digital-human-platform` 的 275 个测试在 classpath 上
+这是解耦是否彻底的**试金石**：`digital-human-platform` 的 309 个测试在 classpath 上
 **既没有 chat-platform、也没有 application-platform** 的情况下全部跑通。
 
 - `digital-human-platform/src/test/java/com/luxera/companion/DigitalHumanTestApplication.java`

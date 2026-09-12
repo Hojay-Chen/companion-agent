@@ -1,0 +1,14 @@
+{
+  "name": "@luxera/lap-application-sdk",
+  "version": "1.0.0",
+  "description": "LAP 应用平台 TypeScript SDK —— 平台 REST 客户端 + 远端应用签名/幂等工具, 零依赖",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "license": "MIT",
+  "files": ["src"],
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/index.test.ts"
+  },
+  "keywords": ["lap", "luxera", "application", "sdk"]
+}

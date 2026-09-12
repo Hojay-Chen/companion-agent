@@ -231,7 +231,7 @@ backend/
 3. **没有"操作"的抽象** —— `/api/v10/games/tictactoe/*` 从请求体里手取 `userId`/`companionId`，
    忽略已认证身份；`Idempotency-Key` 收下就丢。
 
-### 已完成（R1–R13）
+### 已完成（R1–R14）
 
 | 轮 | 内容 | 证据 |
 |---|---|---|
@@ -249,6 +249,7 @@ backend/
 | **R11** | **Application Launch + Surface。** manifest 第 8 个 section `ui`（`type` / `entry` / `minClientVersion` / `surfaces[]`）+ 校验器（`UI_TYPE_REQUIRED` / `REMOTE_UI_ENTRY_NOT_ABSOLUTE` / `UI_SURFACE_MODE_CONFLICT` / `DUPLICATE_SURFACE` …）；`Availability` 投影（§4.1 那张表）+ 开会话闸门（不可用 → 409 `STATE_CONFLICT`）；`POST /applications/{id}/sessions` 改成 §16 形状（嵌套 `application` / `participant`，删掉平铺的 `ownerPrincipal*`）；新增 `GET /applications/{id}` 详情（十态 status + 三列布尔 + `ui` 段）；前端**应用市场 / 应用详情 / Session 页 / 分享链接加入页**四页 + `SurfaceHost` 五态全量 + EMBEDDED 登记表 + REMOTE iframe | `ManifestValidatorTest` 43 条（含 `ui` 段全套拒绝用例）、`AvailabilityProjectionTest` **13 条**（§4.1 逐行 + 投影全覆盖 + 闸门串成一条链）、`LapWebSurfaceTest` 新增详情页两条；前端 `SurfaceHost.test.tsx` **15 条**（vitest，读**后端那份真的 manifest**）；`check-lap.sh` 新增断言 18（§16 形状 / 详情三列 / 五条 Surface / 404）；`npm run build` |
 | **R12** | **Chat / Application 深度集成。** 新契约包 `contracts/chat/`（6 个 DTO `ApplicationCard` / `ApplicationLaunchRequest` / `ParticipantView` / `ApplicationSessionView` / `ApplicationLaunchResponse` / `ApplicationInvitation` + `ApplicationCatalogException` + `package-info`）与第 3 个 SPI 端口 **`ApplicationCatalogPort`**（`cards` / `card` / `sessionsOfConversation` / `session` / `launch` / `invite`）；平台侧实现 `ApplicationCatalogAdapter`（把 `SessionException` 翻成跨模块的 `ApplicationCatalogException`，保住 `ActionStatus`）；`ApplicationSessionService.ofConversation()` / `applyLaunchOptions()` + 仓储 `findByConversationId`；chat-platform 加**三个会话上下文端点** `GET/POST /api/companions/{c}/conversations/{v}/applications` 与 `POST …/{sessionId}/share`；**应用卡片就是一条消息**（`messageKind=APPLICATION_CARD` / `APPLICATION_INVITATION`，metadata 带 applicationId/sessionId/name/role/status，走 `ConversationService.addMessage` **不唤醒数字人**）；`application_session.conversation_id` 落库（§85）；前端 `api/chatApplications.ts` + `ApplicationCardBubble` 两张卡片（进入 / 分享到对话 / 复制链接）+ Chat 侧「一起玩点什么」面板 | `ChatApplicationPortTest` **6 条**（行为证明：整条链路跑在一个本仓库从未见过的应用 `com.example.paper-plane` 上；源码证明：扫集成代码里不出现任何一个真实应用 id/动作名）、`ApplicationCardMessageTest` **4 条**（卡片是一条消息 / 同一条时间线 / 令牌明文进消息 / **被拒时绝不留下说假话的卡片**）、`ModuleBoundaryArchitectureTest` 六条仍绿；前端 `ApplicationCardBubble.test.tsx` **9 条**；`check-lap.sh` 新增**断言 19**（16 条：真实适配器跨端口开应用 → 卡片落 `messages` → 分享落消息而明文不进库 → 未知应用 404 `UNKNOWN_APPLICATION`） |
 | **R13** | **Agent Participation —— 数字人成为一种用户。** `ApplicationRuntimePort` 加四个方法（`sessionsOf` / `joinByInvitation` / `joinSession` / `leaveSession`）+ `SessionRef` 记录；DH 侧新增 **`SessionResolver`**（定位四策略：显式 context > 资源行上的 sessionId > 平台说"我在这一场里" > 可发现的开着门的场；`locate` **只读**、`enter` 才进场，`enter` 遇到"点名了一场进不去的"**抛而不是另开一场**）；`CapabilityResolver` / `ApplicationResolver` / `ActionSelector` 从 `AgentApplicationFlow` 拆出；`AgentApplicationFlow` 改成**八段 Pipeline**（READ → LOCATE → CONTEXT → PENDING → ELIGIBLE → DECIDE → EXECUTE → RECORD）+ `PipelineReport`（停在哪一段、为什么、用的是哪条策略）；新增 **`AgentApplicationInvitationHandler`**（accept / reject / **ignore** 三态，兑票走 `joinByInvitation` —— 与真人点开 `/join/{token}` 逐字相同的门）；`RealityEventType` 加 `APPLICATION_INVITATION_ACCEPTED` / `APPLICATION_INVITATION_DECLINED` | `AgentApplicationFlowTest` **21 条一条不改**（R2/R7 留下的保险丝原样通过）、新增 `SessionResolverStrategyTest` **13 条**、`AgentApplicationInvitationTest` **12 条**（含"明文票一个字都不许进账本"与"LLM 不可用 ⇒ 没决定 ⇒ 不记账"）、`AgentApplicationPipelineTest` **9 条**（每段各自的停机理由 + "定位不到会话不是失败"）、`DhApplicationKnowledgeArchitectureTest` 仍绿；DH **275 → 309 测试**；`check-lap.sh` 新增**断言 20**（定向邀请 → 平台事件通道 → 单向门 → 数字人邮箱；含"收件人此刻还不在这一场里"的前置断言，证明邀请不走参与者名单） |
+| **R14** | **第三方生态 —— 一个 LAP 应用可以活在平台进程之外。** 三个入口同时打开：**① Developer API**（`developer` 表，一个真人多个开发者身份；`POST /api/v1/developers` 幂等、`POST /developers/{id}/applications` **认领**应用 id —— 应用 id 就是 manifest 的反向域名身份，第二个认领者 409 `APPLICATION_TAKEN`；`requireOwned` 归属闸门 + `NOT_YOUR_APPLICATION`；挂起开发者 = 吊销钥匙不删数据）；**② 双 SDK**（Python `sdk/python/luxera_application` 零依赖纯标准库：`LapServer` + `@action` 装饰器 + `verify_request` 三道闸（缺头/时窗/常数时间比较）+ `IdempotencyStore`（**失败也缓存**）+ `LAP_SERVICE_SECRET`；TS `sdk/typescript` 用 node:crypto，与 Java 平台、Python SDK **逐字节同一套 HMAC**：`sha256=` + hex(timestamp + "." + body)，300 秒重放窗，`timingSafeEqual`）；**③ 参考远端 `remote-apps/gomoku`**（纯标准库 Python 五子棋，动作/错误码与内置同名同义，`LAP_SERVICE_SECRET` 缺失时 503 `REMOTE_NOT_CONFIGURED` 而不是裸跑） | `DeveloperApiTest` **12 条**、`RemoteRegistrationTest` **8 条**（含"签名与独立实现逐字节一致"—— 测试里用裸 Mac/SecretKeySpec 另算一遍，不是拿 `RemoteSignature.sign` 自证；远端挂了回 `REMOTE_UNAVAILABLE/FAILED` 而非异常）、TS SDK `node --test` **4 条**、`check-remote-app.sh` **R1–R6 全绿**（R1 同能力两个实现并存于发现链；R2 从零到应用行 + 重认领 409；R3 一步棋跨 Java→HTTP→HMAC→Python 四层**且远端状态投影成 resource 行读得回**；R4 同键重发手数不变 —— 四层幂等；R5 远端 409 → `REMOTE_CONFLICT` + 远端原话带回；R6 manifest 无密钥）；两个由 E2E 抓出的真修复：`SecurityConfig` 放行三个开发者端点（过滤器层 403，控制器与单测都看不见）、`UNKNOWN_DEVELOPER` 进 `SessionException` 状态表（default 掉到 400，而"查无此人"是 404） |
 
 **R9 的关键决定**（删掉 Installation 之后，会话必须总是存在）：
 
@@ -409,6 +410,47 @@ backend/
    平台直接投给这个人。这不是绕过安全检查：能点名的人只能是会话主人（`InvitationService.mint`
    的 `requireOwned`），而收不收数字人自己决定。`check-lap.sh` 断言 20 里那条"收件人此刻还不在
    这一场里"的前置断言，就是这条决定有没有被实现的判据。
+
+**R14 的关键决定**（一个 LAP 应用可以活在平台进程之外）：
+
+1. **"建应用"= 认领一个 id，不是生成一个 id。** 应用 id 是 manifest 里的反向域名身份
+   （`com.example.paper-plane`），它要出现在 URI、日志、LLM 上下文里 —— 它在认领之前就已经
+   被决定了。所以 `POST /developers/{id}/applications` 的语义是认领：id 已有人认领就 409
+   `APPLICATION_TAKEN`。若这里放行，第二个开发者一个 POST 就能抢走第一个的应用 —— 而任何
+   权限模型都还没来得及建立。归属从此有一条唯一链：`developer → application → manifest`。
+2. **远端的状态必须投影回平台的一行 resource，否则"共享同一个 Resource"对远端应用失效。**
+   内置 handler 自己 `ctx.write(state)`；远端应用拿不到平台写句柄，状态在平台进程之外。
+   E2E 第一次跑就抓出了这个缺口：棋下完了 `GET /api/v1/resources` 404。修法是
+   `RemoteActionHandler` 在**写动作成功**且远端返回 `state` 时投影一次 —— 远端仍是唯一真相
+   （非法落子只有它判得出），平台这一行是它最新一次写入的快照；读动作不投影（读不该让
+   资源版本 +1），投影失败不改调用结果（远端已经改完，此刻回 409 等于对调用方说谎）。
+3. **manifest 里永远只有 `authRef`，密钥永远在平台配置里。** `authRef` 是名字不是密钥：
+   manifest 会进数据库、进日志、进导出包。`LAP_REMOTE_AUTH_<REF>` 缺失时注册直接
+   `REMOTE_AUTH_UNRESOLVED` —— 那是配置错，该在启动时炸响，而不是运行时才对一个真实调用方
+   说"网络问题"。`check-remote-app.sh` 断言 R6 逐字检查 manifest 里没有那个密钥。
+4. **三个实现（Java 平台 / Python SDK / TS SDK）共用同一套 HMAC，且不能互相自证。**
+   `sha256=` + hex(hmac-sha256(timestamp + "." + body))，300 秒重放窗，常数时间比较。
+   `RemoteRegistrationTest.theSignatureAgreesWithAnIndependentImplementationOfTheSameProtocol`
+   在测试里用裸 `Mac`/`SecretKeySpec` **另算一遍**再交给 `RemoteSignature.verify` —— 拿
+   `sign()` 自证等于没测。E2E 断言 R3/R4/R5 则证明 Python 那一份真的在同一套协议上。
+5. **远端的拒绝由平台按状态分类转述，但一个字都不改。** 409 → `REMOTE_CONFLICT`、
+   404 → `REMOTE_NOT_FOUND`、401/403 → `REMOTE_DENIED`：code 前缀点明"这是远端说的"，
+   而远端自己的解释原样落进 message（"现在轮到 O, 你执 X"）。少任何一半，排障的人手里
+   就只剩一个 409，既不知道是谁拒绝的、也不知道为什么。
+6. **`surefire:test` 不重编译，`mvn package` 不重打未变的 bootstrap jar。** R14 里两个
+   真缺陷都是这么漏掉的：新加的单测根本没跑（计数没涨）、改了依赖模块后 fat jar 里还是
+   旧的。从这轮起：跑测试用 `mvn test`（带编译），打包一律 `mvn clean package`。
+   断言 20 在 R13 就因为同类的"旧 jar"翻过车 —— 同一个坑，值得写进 README 两次。
+7. **过滤器层的 403 是单元测试与控制器都看不见的故障面。** Developer API 三个端点第一次
+   E2E 全 403：`SecurityConfig` 的放行名单里没有它们，请求死在 JWT 过滤器上 —— 控制器写好了、
+   单测也绿（单测直接调 service，不过过滤器）。修法是逐条 `antMatchers(method, path)`
+   放行并写明理由；发现它的不是测试套件，是 `check-remote-app.sh`。这也是验收脚本存在的
+   理由：有些错只有走完整条真实链路才暴露。
+8. **`SessionException` 的状态表要认得每一个新 code，default 是 400。** `UNKNOWN_DEVELOPER`
+   落在 default 上回了 400 —— 400 在对调用方说"你的载荷写错了"，于是门户会去改请求体，
+   而不是换一个 developerId。"查无此人"是 404。单测 `anUnknownDeveloperIsNotFoundNotABadRequest`
+   钉住这条；它反过来也说明：**新 code 必须带一个"它该映射成什么状态"的测试**，否则
+   default 不会自己开口说话。
 
 **R5 的关键决定**（两个新增参考应用 + DH 提醒只读改造）：
 
@@ -582,8 +624,8 @@ DH 的改动全是提醒只读改造带来的），R7 之后它又多了一道�
 
 ### 当前验收
 
-- `mvn test`：**750 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform **34** /
-  digital-human-platform **275** / application-platform **379** / bootstrap-app **39**
+- `mvn test`：**803 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform **34** /
+  digital-human-platform **309** / application-platform **398** / bootstrap-app **39**
 - `bash scripts/check-v10.sh` → `check-v10 OK`（41 个顶层包分属 5 个所有权模块，10 对引用 + 10 对 pom）
 - `bash scripts/check.sh`（起 jar）→ **✅ 全量验收全部通过**（聊天/数字人链路无回归；
   含 R5 新增的 16 条提醒契约断言）
@@ -611,8 +653,15 @@ DH 的改动全是提醒只读改造带来的），R7 之后它又多了一道�
   那一条 `APPLICATION_ACTION_EXECUTED`）
 - `cd frontend && npm test` → **24 测试全绿**（`SurfaceHost.test.tsx` 15 条五种 Surface 的行为差别 +
   `ApplicationCardBubble.test.tsx` 9 条卡片消息的降级路径）；`npm run build` → 通过
+- `bash scripts/check-remote-app.sh`（R14）→ **✅ 六条全绿**：自己起 Python 五子棋与带
+  `LAP_REMOTE_APPLICATIONS` 的 jar，验远端应用与内置同能力并存（R1）、开发者从零到应用行 +
+  重认领 409（R2）、一步棋跨 Java→HTTP→HMAC→Python 四层且**远端状态投影成 resource 行读得回**
+  （R3）、同键重发手数不变（R4）、远端 409 以 `REMOTE_CONFLICT` 转述且原话带回（R5）、
+  manifest 里只有 `authRef` 没有密钥（R6）；两个真缺陷由它抓出（过滤器层 403、
+  `UNKNOWN_DEVELOPER` 落 default 400）
 - **CI 顺序**（每一轮都照这个跑）：`check-v10.sh` → `mvn test` → 起 jar（断言 14 要求带
-  `LAP_MCP_SERVICE_KEY`）→ `check.sh` → `check-lap.sh` → `npm test` → `npm run build`
+  `LAP_MCP_SERVICE_KEY`）→ `check.sh` → `check-lap.sh` → `check-remote-app.sh` →
+  `npm test` → `npm run build`
 - **LAP v1 的九轮（R0–R8）已全部完成。**
 
 ---

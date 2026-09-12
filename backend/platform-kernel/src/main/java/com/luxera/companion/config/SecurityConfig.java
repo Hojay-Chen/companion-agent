@@ -58,6 +58,18 @@ public class SecurityConfig {
                         // 真人则被 ApplicationLifecycleService 以 LIFECYCLE_FORBIDDEN 拒成 403。
                         .antMatchers(HttpMethod.PATCH, "/api/v1/applications/*/status").permitAll()
                         .antMatchers(HttpMethod.PUT, "/api/v1/applications/*/versions/*/manifest").permitAll()
+                        // R14 §Developer API: 与上面两条同一个道理, 而 R14 差点又踩一遍 ——
+                        // "建开发者 / 认领应用 id" 的身份同样是服务密钥, 不是 JWT。这三个端点
+                        // 第一次跑 check-remote-app.sh 时全回 403, 就是漏在了这里: 控制器写好了、
+                        // 单元测试也绿(它直接调 service, 不经过过滤器), 而真实调用连门都进不来。
+                        //
+                        // 逐条列方法与路径而不是放行 /api/v1/developers/** —— 开发者身份的
+                        // 读面(GET /developers/{id}/applications)可以放宽, 但将来往这个前缀下
+                        // 加任何新端点的人, 必须自己来这里想一次"它该由谁鉴权", 而不是
+                        // 顺着通配符悄悄对外开放。
+                        .antMatchers(HttpMethod.POST, "/api/v1/developers").permitAll()
+                        .antMatchers(HttpMethod.GET, "/api/v1/developers/*/applications").permitAll()
+                        .antMatchers(HttpMethod.POST, "/api/v1/developers/*/applications").permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();

@@ -31,3 +31,4 @@ Thumbs.db
 # ── 运行时数据 ────────────────────────
 /data/
 *.sqlite
+__pycache__/

@@ -2,14 +2,18 @@ package com.luxera.companion.application.web;
 
 import com.luxera.companion.application.domain.ApplicationStatus;
 import com.luxera.companion.application.domain.ApplicationVersionRecord;
+import com.luxera.companion.application.domain.DeveloperRecord;
 import com.luxera.companion.application.lifecycle.ApplicationLifecycleService;
 import com.luxera.companion.application.lifecycle.ApplicationVersionService;
+import com.luxera.companion.application.lifecycle.DeveloperService;
 import com.luxera.companion.application.principal.PrincipalResolver;
 import com.luxera.companion.application.principal.PrincipalResolvers;
 import com.luxera.companion.application.principal.ResolvedPrincipal;
 import com.luxera.companion.contracts.application.ActionStatus;
 import com.luxera.companion.application.session.SessionException;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -24,9 +28,11 @@ import java.util.UUID;
 /**
  * LAP v1 §Developer API: <b>把应用推上架、把某一版的 manifest 写下去。</b>
  *
- * <p>它只有两件事, 因为本轮明确不做开发者门户前端 —— 这里给的是门户将来要调的那两个入口,
- * 不是一套临时脚本:
+ * <p>它原来只有两件事(R8), R14 补上"一个第三方要上架, 得先有东西可推"的那一半:
  * <ul>
+ *   <li>{@code POST /developers} —— 建开发者身份(按 owner 归属, 幂等);</li>
+ *   <li>{@code GET /developers/{id}/applications} —— 这个开发者名下的应用;</li>
+ *   <li>{@code POST /developers/{id}/applications} —— 认领一个应用 id 并建行(DRAFT);</li>
  *   <li>{@code PATCH /applications/{id}/status} —— 推生命周期状态机;</li>
  *   <li>{@code PUT /applications/{id}/versions/{version}/manifest} —— 写一个版本的 manifest。</li>
  * </ul>
@@ -47,14 +53,94 @@ public class LapDeveloperController {
 
     private final ApplicationLifecycleService lifecycle;
     private final ApplicationVersionService versions;
+    private final DeveloperService developers;
     private final PrincipalResolvers principals;
 
     public LapDeveloperController(ApplicationLifecycleService lifecycle,
                                   ApplicationVersionService versions,
+                                  DeveloperService developers,
                                   PrincipalResolvers principals) {
         this.lifecycle = lifecycle;
         this.versions = versions;
+        this.developers = developers;
         this.principals = principals;
+    }
+
+    // ─────────────────────────── 开发者 ───────────────────────────
+
+    public record CreateDeveloperRequest(String ownerUserId, String name) {}
+
+    public record DeveloperResponse(String developerId, String ownerUserId, String name, String status) {
+        static DeveloperResponse of(DeveloperRecord row) {
+            return new DeveloperResponse(row.getId(), row.getOwnerUserId(), row.getName(), row.getStatus());
+        }
+    }
+
+    public record ApplicationResponse(String applicationId, String developerId, String name,
+                                      String category, String status) {
+        static ApplicationResponse of(com.luxera.companion.application.domain.ApplicationRecord row) {
+            return new ApplicationResponse(row.getId(), row.getDeveloperId(), row.getName(),
+                    row.getCategory(), row.getStatus());
+        }
+    }
+
+    /**
+     * 建一个开发者身份 —— 门户的"注册成为开发者"。
+     *
+     * <p>这一步不验"你是哪个真人": 它在门户自己的鉴权层之后, 而平台这一层要管的是
+     * <em>谁拥有这个开发者身份</em>(ownerUserId), 那与"调用方的凭据指向谁"是两回事。
+     * 重复调用是幂等的(同名同 owner 返回既有行) —— 门户的"再点一次注册"不该得到一个 500。
+     */
+    @PostMapping("/developers")
+    public ResponseEntity<DeveloperResponse> createDeveloper(@RequestBody CreateDeveloperRequest request,
+                                      @RequestHeader(value = "Authorization", required = false) String authorization,
+                                      @RequestHeader(value = "X-Mcp-Principal", required = false) String mcpPrincipal,
+                                      @RequestHeader(value = "X-Mcp-Service-Key", required = false) String serviceKey,
+                                      @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
+        principal(authorization, mcpPrincipal, serviceKey, correlationId);
+        DeveloperRecord row = developers.createDeveloper(
+                request == null ? null : request.ownerUserId(),
+                request == null ? null : request.name());
+        return ResponseEntity.status(org.springframework.http.HttpStatus.CREATED)
+                .body(DeveloperResponse.of(row));
+    }
+
+    /** 这个开发者名下的应用 —— 门户的列表页; 查无此人就 {@code UNKNOWN_DEVELOPER}(404)。 */
+    @GetMapping("/developers/{developerId}/applications")
+    public List<ApplicationResponse> applicationsOfDeveloper(@PathVariable String developerId,
+                                        @RequestHeader(value = "Authorization", required = false) String authorization,
+                                        @RequestHeader(value = "X-Mcp-Principal", required = false) String mcpPrincipal,
+                                        @RequestHeader(value = "X-Mcp-Service-Key", required = false) String serviceKey,
+                                        @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
+        principal(authorization, mcpPrincipal, serviceKey, correlationId);
+        return developers.applicationsOf(developerId).stream()
+                .map(ApplicationResponse::of)
+                .toList();
+    }
+
+    public record CreateApplicationRequest(String applicationId, String name, String category) {}
+
+    /**
+     * 认领一个应用 id 并建行(DRAFT)。
+     *
+     * <p>这里先查"这个开发者是不是被挂起的"({@code DEVELOPER_SUSPENDED}), 再查
+     * "这个 id 有没有被人认领过"({@code APPLICATION_TAKEN})。顺序是刻意的: 挂起是一种
+     * 权限状态, 调用方应该先知道"你没有权限", 而不是"你的请求在这个具体 id 上碰巧不行"。
+     */
+    @PostMapping("/developers/{developerId}/applications")
+    public ResponseEntity<ApplicationResponse> createApplication(@PathVariable String developerId,
+                                            @RequestBody CreateApplicationRequest request,
+                                            @RequestHeader(value = "Authorization", required = false) String authorization,
+                                            @RequestHeader(value = "X-Mcp-Principal", required = false) String mcpPrincipal,
+                                            @RequestHeader(value = "X-Mcp-Service-Key", required = false) String serviceKey,
+                                            @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
+        principal(authorization, mcpPrincipal, serviceKey, correlationId);
+        var row = developers.createApplication(developerId,
+                request == null ? null : request.applicationId(),
+                request == null ? null : request.name(),
+                request == null ? null : request.category());
+        return ResponseEntity.status(org.springframework.http.HttpStatus.CREATED)
+                .body(ApplicationResponse.of(row));
     }
 
     // ─────────────────────────── 生命周期 ───────────────────────────

@@ -1,0 +1,136 @@
+{
+  "identity": {
+    "id": "com.luxera.remote-gomoku",
+    "name": "远端五子棋",
+    "version": "1.0.0",
+    "description": "与内置五子棋同规则的第三方参考实现: 应用本体是 remote-apps/gomoku 下一个独立的 Python HTTP 服务, 与平台之间只有一个应用协议与一把 HMAC 密钥 —— 它证明协议优先、SDK 非必须, 以及平台加一个远端应用不需要动任何一行平台代码。",
+    "category": "game"
+  },
+
+  "capabilities": [
+    {
+      "id": "game.play",
+      "title": "对局",
+      "description": "可以和真人或数字人下一盘棋(远端实现)",
+      "category": "game"
+    }
+  ],
+
+  "actions": [
+    {
+      "id": "game.create",
+      "capability": "game.play",
+      "title": "开一局",
+      "description": "为当前会话开一盘新棋; 已经开过则返回当前局面",
+      "permission": "WRITE",
+      "risk": "LOW",
+      "attention": "AWARE",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "opponentPrincipalId": {
+            "type": "string",
+            "description": "预先指定对手的 principal id; 留空表示等对手自己落座"
+          }
+        }
+      },
+      "agentHint": "开局永远是 X 先走。你是执 O 的一方时, 开完局什么都不用做, 等对手落子。"
+    },
+    {
+      "id": "game.state",
+      "capability": "game.play",
+      "title": "看棋局",
+      "description": "读取当前棋盘与轮次",
+      "permission": "READ",
+      "risk": "NONE",
+      "attention": "NONE",
+      "agentHint": "只读。看局面用它, 不要为了看局面而走一步棋。"
+    },
+    {
+      "id": "game.make_move",
+      "capability": "game.play",
+      "title": "落子",
+      "description": "在 0..224 的某个格子上放自己的子",
+      "permission": "EXECUTE",
+      "risk": "LOW",
+      "attention": "FOCUSED",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "position": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 224,
+            "description": "格子序号 = 行 × 15 + 列, 行列都从 0 起"
+          }
+        },
+        "required": ["position"]
+      },
+      "agentHint": "棋盘 15×15, 格子序号 = 行 × 15 + 列。按这个顺序找落点: (1) 自己下一手能连成五子的位置; (2) 对手下一手能连成五子的位置 —— 必须堵; (3) 自己三子补成活四; (4) 靠近已有棋子的空位; (5) 天元(序号 112)。只能下在空位、在自己回合。像真人一样下棋: 会赢就赢, 别解释算法。"
+    },
+    {
+      "id": "game.surrender",
+      "capability": "game.play",
+      "title": "认输",
+      "description": "放弃这一局, 对手获胜",
+      "permission": "EXECUTE",
+      "risk": "LOW",
+      "attention": "AWARE",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "agentHint": "只在明确不想再下、或局面已没救时用。"
+    }
+  ],
+
+  "resources": [
+    {
+      "type": "gomoku.game",
+      "uriTemplate": "gomoku-remote://match/{sessionId}",
+      "backing": "RESOURCE_STORE",
+      "agentHint": "state.board 是长度 225 的数组; state.seats 是两个座位的 principal id; state.turn 是当前该谁走; state.winner 是 X/O/DRAW/null。你的记号由你的座位决定, 与你是人还是数字人无关。这一局的真身在远端应用里, 平台这一行是它最近一次写入的状态投影 —— 从这里读到的棋盘, 与远端手上那一盘是同一盘。"
+    }
+  ],
+
+  "events": [
+    {
+      "type": "game.move",
+      "title": "有人落子",
+      "triggersAgent": true,
+      "idTemplate": "{uri}#MOVE-{moves}"
+    },
+    {
+      "type": "game.finish",
+      "title": "分出胜负",
+      "triggersAgent": true,
+      "idTemplate": "{uri}#FINISH-{winner}"
+    }
+  ],
+
+  "permissions": [
+    {
+      "capability": "game.play",
+      "level": "EXECUTE",
+      "riskCeiling": "LOW"
+    }
+  ],
+
+  "runtime": {
+    "type": "REMOTE",
+    "remote": {
+      "baseUrl": "http://127.0.0.1:8095/lap/actions:execute",
+      "authRef": "remote-gomoku"
+    }
+  },
+
+  "ui": {
+    "type": "REMOTE",
+    "entry": "http://127.0.0.1:8095/ui/{sessionId}",
+    "minClientVersion": "1.0.0",
+    "surfaces": [
+      { "type": "FULL_PAGE", "entry": "http://127.0.0.1:8095/ui/{sessionId}" },
+      { "type": "EMBEDDED",  "entry": "http://127.0.0.1:8095/ui/{sessionId}?surface=EMBEDDED" }
+    ]
+  }
+}

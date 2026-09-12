@@ -46,7 +46,12 @@ public class SessionException extends RuntimeException {
                      "SESSION_INVITE_ONLY", "SESSION_JOIN_CLOSED", "SESSION_FULL" ->
                         ActionStatus.DENIED;
                 case "UNKNOWN_APPLICATION", "VERSION_NOT_PUBLISHED", "UNKNOWN_SESSION",
-                     "UNKNOWN_INVITATION" ->
+                     "UNKNOWN_INVITATION",
+                     // R14 §Developer API: 查无此人也在这张表里 —— 它落在 default 上时是 400,
+                     // 而 400 在对调用方说"你的载荷写错了": 于是开发者门户会去改请求体,
+                     // 而不是意识到自己拿的是一个过期的 developerId。控制器当时的注释
+                     // 写的是 404, 实现却回了 400 —— 差的就是这一行。
+                     "UNKNOWN_DEVELOPER" ->
                         ActionStatus.NOT_FOUND;
                 // 不是"你的请求写错了"(400 会让客户端去改载荷), 而是"目标的状态不允许这件事了" ——
                 // 会话结束该另开一个, 会话没进入 ACTIVE 该等一会儿。两者都是换时机, 不是换载荷。
