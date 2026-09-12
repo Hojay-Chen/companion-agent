@@ -608,6 +608,6 @@ class McpProtocolTest {
                 List.of(),
                 List.of(),
                 List.of(),
-                new ApplicationManifest.RuntimeDecl(RuntimeType.NATIVE, null));
+                new ApplicationManifest.RuntimeDecl(RuntimeType.NATIVE, null), null);
     }
 }

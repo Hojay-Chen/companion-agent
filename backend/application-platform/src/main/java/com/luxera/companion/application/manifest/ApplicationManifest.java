@@ -16,14 +16,18 @@ import java.util.Optional;
  * "同一个应用的两个版本"在数据模型里表达得出来, 发布后冻结的是<em>那一版</em>的 manifest,
  * 而 {@code action_invocation} 指向的历史版本永远可解释。
  *
- * <p><b>恰好七个 section:</b> {@code identity} / {@code capabilities} / {@code actions} /
- * {@code resources} / {@code events} / {@code permissions} / {@code runtime}。
+ * <p><b>恰好八个 section:</b> {@code identity} / {@code capabilities} / {@code actions} /
+ * {@code resources} / {@code events} / {@code permissions} / {@code runtime} / {@code ui}。
  * 解析器对未知 section 直接报错 —— 多一个 section 就意味着多一套平台还不认识的语义,
  * 静默忽略它比报错危险得多。
  *
  * <p><b>这里绝不出现按消费者分的 endpoint</b>({@code agentEndpoint} / {@code humanEndpoint} /
  * {@code mcpEndpoint})。真人和 Agent 走的是<em>同一条</em> {@code actions:execute};
  * REMOTE 应用有且只有一个规范 endpoint, 落在 {@code runtime.remote}。
+ *
+ * <p><b>{@code ui} 是第八个 section, 也是唯一一个"只描述呈现、不描述行为"的 section。</b>
+ * 它只说三件事: {@code surface type} / {@code entry} / {@code minimum client version}(§68),
+ * 因为 LAP 是 Application Runtime Protocol, 不是 UI Rendering Protocol(§69)。
  */
 public record ApplicationManifest(
         Identity identity,
@@ -32,12 +36,14 @@ public record ApplicationManifest(
         List<ResourceDecl> resources,
         List<EventDecl> events,
         List<PermissionDecl> permissions,
-        RuntimeDecl runtime
+        RuntimeDecl runtime,
+        UiDecl ui
 ) {
 
-    /** 解析器保证的七个合法 section 名。 */
+    /** 解析器保证的八个合法 section 名。 */
     public static final List<String> SECTIONS = List.of(
-            "identity", "capabilities", "actions", "resources", "events", "permissions", "runtime");
+            "identity", "capabilities", "actions", "resources", "events", "permissions",
+            "runtime", "ui");
 
     public ApplicationManifest {
         capabilities = capabilities == null ? List.of() : List.copyOf(capabilities);
@@ -45,6 +51,18 @@ public record ApplicationManifest(
         resources = resources == null ? List.of() : List.copyOf(resources);
         events = events == null ? List.of() : List.copyOf(events);
         permissions = permissions == null ? List.of() : List.copyOf(permissions);
+    }
+
+    /**
+     * 八个 section 里唯一可以缺席的一个。
+     *
+     * <p>缺席 ≠ 没有 UI, 而是"<em>用平台默认的那种</em>"—— 一个由平台自己渲染的全页应用。
+     * 把默认值留在这里而不是在解析器里塞一个假的 {@code UiDecl}, 是因为"作者声明了什么"与
+     * "<em>客户端该拿到什么</em>"是两件事: 前者是 manifest, 后者是投影(见 {@code SurfaceCatalogue})。
+     * 一条提醒数据没有自己的界面, 但它仍然可以在平台里被打开。
+     */
+    public Optional<UiDecl> uiDeclaration() {
+        return Optional.ofNullable(ui);
     }
 
     public String applicationId() {
@@ -153,4 +171,65 @@ public record ApplicationManifest(
      * manifest 里永远不出现密钥 —— manifest 会进数据库、进日志、进导出包。
      */
     public record RemoteDecl(String baseUrl, String authRef) {}
+
+    // ─────────────────────────── 第八个 section: ui ───────────────────────────
+
+    /**
+     * {@code ui} —— <b>这个应用可以被怎样呈现</b>(§17/§18/§67/§68)。
+     *
+     * <p>平台对 UI 只认三样东西, 多一样都不认:
+     * <ul>
+     *   <li>{@code type} —— {@link UiMode}。谁来渲染: 平台自己(EMBEDDED) / 应用自己的网页
+     *       (REMOTE) / 原生客户端(NATIVE)。</li>
+     *   <li>{@code entry} —— 从哪儿进去。<b>它是一个模板</b>, 只有 {@code {applicationId}} 与
+     *       {@code {sessionId}} 两个变量; 客户端做且只做变量替换。</li>
+     *   <li>{@code surfaces[]} —— 同一个应用可以被放进哪几种容器, 每种容器各自的入口。</li>
+     *   <li>{@code minClientVersion} —— 低于这个版本号的客户端不该尝试渲染(它可能还不认识
+     *       新的 surface type)。</li>
+     * </ul>
+     *
+     * <p><b>刻意没有的东西</b>: 按钮、颜色、布局、字号、组件……(§69)。一旦这里出现了
+     * {@code layout} 或 {@code theme}, 平台就变成在造一个 Flutter —— 而它本来只需要
+     * 知道"把哪个应用放进哪个容器、从哪个入口进"。
+     */
+    public record UiDecl(UiMode type, String entry, String minClientVersion,
+                         List<SurfaceDecl> surfaces) {
+
+        public UiDecl {
+            surfaces = surfaces == null ? List.of() : List.copyOf(surfaces);
+        }
+    }
+
+    /** 谁渲染这个应用的界面。三种, 与 §18 一一对应。 */
+    public enum UiMode {
+        /** 平台自己渲染 —— 内置应用、官方应用、需要和平台深度互动的应用。 */
+        EMBEDDED,
+        /** 第三方开发者自己提供一个网页, 平台通过 iframe / WebView / 独立页面加载。 */
+        REMOTE,
+        /** 未来的移动端 / 桌面原生应用。平台只知道它存在, 渲染完全在客户端之外。 */
+        NATIVE
+    }
+
+    /**
+     * 一个 surface —— <b>同一个应用能被放进的一种容器</b>(§67)。
+     *
+     * <p>五种容器的区别不在"应用长什么样", 而在"它在页面上占多大、和别的东西怎么共处":
+     * 整页独享 / 嵌在聊天流里 / 弹成对话框 / 挂在侧栏 / 压成一行。应用本身一行代码都不用改 ——
+     * 这正是把 surface 做成 manifest 声明而不是应用代码分支的理由。
+     */
+    public record SurfaceDecl(SurfaceType type, String entry) {}
+
+    /** §67 的五个类型, 一个不多一个不少。 */
+    public enum SurfaceType {
+        /** 整页独享 —— 应用市场点进去的默认样子。 */
+        FULL_PAGE,
+        /** 嵌在宿主页面里(聊天流、卡片内)。 */
+        EMBEDDED,
+        /** 模态对话框。 */
+        MODAL,
+        /** 侧栏 / 抽屉。 */
+        PANEL,
+        /** 压成一行或一小块的缩略呈现。 */
+        INLINE
+    }
 }

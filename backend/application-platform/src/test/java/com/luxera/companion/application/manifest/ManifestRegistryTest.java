@@ -88,6 +88,6 @@ class ManifestRegistryTest {
                 List.of(),
                 List.of(new ApplicationManifest.PermissionDecl("game.play",
                         PermissionLevel.WRITE, RiskLevel.LOW)),
-                ApplicationManifest.RuntimeDecl.nativeRuntime());
+                ApplicationManifest.RuntimeDecl.nativeRuntime(), null);
     }
 }

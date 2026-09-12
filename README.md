@@ -212,7 +212,7 @@ backend/
 
 ---
 
-## LAP v1 · 应用平台（2026-09，进行中）
+## LAP · 应用平台与生态（2026-09，进行中；R9 起为 v2 重构）
 
 > **本轮依据**：《LAP v1 — Application Platform Final Architecture》。四层协议
 > （Chat Platform Protocol / Application Protocol / Application Manifest / Adapter-Transport），
@@ -230,7 +230,7 @@ backend/
 3. **没有"操作"的抽象** —— `/api/v10/games/tictactoe/*` 从请求体里手取 `userId`/`companionId`，
    忽略已认证身份；`Idempotency-Key` 收下就丢。
 
-### 已完成（R1–R8）
+### 已完成（R1–R11）
 
 | 轮 | 内容 | 证据 |
 |---|---|---|
@@ -242,6 +242,80 @@ backend/
 | **R6** | **MCP 适配器**：`POST /mcp`（JSON-RPC 2.0，协议 `2025-06-18`）实现 `initialize` / `notifications/*` / `ping` / `tools/list` / `tools/call`，`DELETE /mcp` 关会话；`McpToolCatalog` 把动作投影成工具（描述 = `agentHint` + 资源模板，schema = 动作 schema + 平台保留的 `target`）；工具名撞车时整个目录退化到全名；`McpPrincipalResolver`（`X-Mcp-Principal` + 服务密钥，**密钥留空即 MCP 关闭**）；`SecurityConfig` 放行 `/mcp`（MCP 客户端没有 JWT，身份由适配器自己验） | `McpProtocolTest` **19 条**（含"整条 MCP 往返不创建 `ApplicationSession`"）；`check-lap.sh` **断言 14 由 skip 转正** —— 真人经 REST 落子后，MCP 客户端在**同一行** resource 上应手；`McpEndpointSecurityTest`（过滤器链可达性）|
 | **R7** | **Agent 的 capability→action LLM 契约**：`AgentApplicationFlow` 长出**能力选择**与**应用选择**（`route()` = 意图 → 能力 → 应用，逐级收窄；门槛 `app.lap.capability-threshold`，默认 0.6）；动作选择改为**点名**（`pickAction`：在候选里挑一个；只有唯一候选时才允许不点名；编造的动作 id 一律不行动）；`LlmRouter` 三处修正（未知 task 原样通过 / 调用方给的 model 优先 / metadata 透传）；`application.yml` 加 `app.lap.capability-threshold` 与 `app.llm.purpose.application`；`ReminderPlanner` 成为 `route()` 的生产调用方 —— "这句话该不该动用应用"从此由平台回答，不由适配器自己猜 | `AgentApplicationFlowTest` **9 → 21 条**、新增 `LlmRouterPurposeTest` **7 条**、新增 `DhApplicationKnowledgeArchitectureTest` **3 条**（DH 源码里不许再出现任何具体应用的知识）、`check-lap.sh` 断言 11 从"跳过"改为**双模式断言**（见下）|
 | **R8** | **生命周期状态机 + REMOTE + 收尾**：`ApplicationStatus` 上的十态迁移表（`canMoveTo` / `legalSuccessorsOf`）+ `ApplicationLifecycleService` + `PATCH /api/v1/applications/{id}/status`（**只有 `SYSTEM`/`APPLICATION` 推得动**，真人 403）；应用与版本行状态**一起**推进，于是发现链真的会因挂起而收敛；`RemoteApplicationRegistrar` + `RemoteApplicationInvoker`（**每个 action 各挂一个转发 handler**、HMAC-SHA256 over `timestamp + "." + body`、转发**派生**幂等键、硬超时、HTTP → `ActionStatus` 同一套映射、`authRef` 是名字不是密钥）；`OutboxRelay` + `ApplicationOutboxRelayJob`（让 subscription 的 `INBOX` 模式成真，主键是事件的确定函数，至少一次投递、失败转 `DEAD` 不静默丢弃）；`SessionReaperJob`（7 天空闲会话**只结束不删除**）；`lap-drop-legacy.sh` DROP 四张遗留表 | 新增 `LifecycleStateMachineTest` **8 条**（含 `theVersionRowsMoveWithTheApplication`，它在实现里抓出一个真 bug —— 恢复分支的条件写反，成了死代码）、`VersionImmutabilityTest` **5 条**、`OutboxRelayTest` **7 条**、`SessionReaperTest` **5 条**、`RemoteApplicationInvokerTest` **12 条**（真 `HttpServer`，验签/超时/幂等键派生逐条断言）、`RemoteApplicationRegistrarTest` **7 条**（手工装配，避免污染共享内存注册表）；application-platform **241 → 285 测试**；`check-lap.sh` 断言 1 的"旧表不存在"半边**打开**（逐张断言四张遗留表已删）、新增断言 16（生命周期 + 版本不可变）与断言 17（`INBOX` 真的投出去了：`lap_outbox` 落行 → `status='DELIVERED'` → `last_delivered_at` 非空）|
+
+| **R9** | **Session 重构：删 Installation。** `installation` / `permission_grant` 两张表 DROP（`scripts/lap-v2-reset.sh`），`ApplicationSession` 从"一个 principal 的实例"改成"一个多人实例"（`owner_principal_*` / `visibility` / `join_policy` / `min/max_participants` / `conversation_id` 进场，`installation_id` 与 `principal_*` 离场）；新增 `application_session_participant` + `session_permission`；`ApplicationSessionStateMachine`（五态）；`PermissionEvaluator` 从"查 installation"改成"查 participant"（`NOT_INSTALLED` → `NOT_A_PARTICIPANT`，`INSTALLATION_INACTIVE` → `PARTICIPANT_INACTIVE`）；`PrincipalType` 加 `EXTERNAL_AGENT`；`ActionGateway` 会话解析五档（新增"该 principal 最近的 ACTIVE 会话"与 `ensureSession`）；`ensureInstalled` → `ensureSession`；`AgentRouteResolver` 改从 participant 推；`action_invocation` 的唯一键加 `session_id`；DH 只改 `ReminderService` 一行 | `PermissionEvaluatorTest` **11 条逐条改写而非删除**、`ParticipantTest`、`SessionStateMachineTest`、`ApplicationSessionOwnershipTest`、`ResourceStoreTest` 新增"提醒收件箱没有会话可挂"专条；`check-lap.sh` 断言 1/9*/10/11/14/15 改写（断言 1 扩成"新列在、旧列不在"的反向断言） |
+| **R10** | **Participant + Invitation。** `session_invitation` + 邀请状态机（State Pattern）；token 铸造/哈希/校验/消费/收回（**库里只有 SHA-256，明文只在创建响应里出现一次**）；`LapParticipantController`（join / 名单 / 自己走）+ `LapInvitationController`（铸票 / 列表 / 收回 / 公开兑票）；`APPLICATION_INVITATION` 平台事件（由邀请服务发射，绕过 manifest 的 `triggersAgent` 闸门 —— 那道闸门是防**应用**的，不是防平台的）；前端分享链接 | `InviteCreateTest`、`InviteConsumeTest`、`InviteExpireTest`、`InviteRevokeTest`、`SessionJoinTest`、`SessionLeaveTest`；断言 token 明文不进库 |
+| **R11** | **Application Launch + Surface。** manifest 第 8 个 section `ui`（`type` / `entry` / `minClientVersion` / `surfaces[]`）+ 校验器（`UI_TYPE_REQUIRED` / `REMOTE_UI_ENTRY_NOT_ABSOLUTE` / `UI_SURFACE_MODE_CONFLICT` / `DUPLICATE_SURFACE` …）；`Availability` 投影（§4.1 那张表）+ 开会话闸门（不可用 → 409 `STATE_CONFLICT`）；`POST /applications/{id}/sessions` 改成 §16 形状（嵌套 `application` / `participant`，删掉平铺的 `ownerPrincipal*`）；新增 `GET /applications/{id}` 详情（十态 status + 三列布尔 + `ui` 段）；前端**应用市场 / 应用详情 / Session 页 / 分享链接加入页**四页 + `SurfaceHost` 五态全量 + EMBEDDED 登记表 + REMOTE iframe | `ManifestValidatorTest` 43 条（含 `ui` 段全套拒绝用例）、`AvailabilityProjectionTest` **13 条**（§4.1 逐行 + 投影全覆盖 + 闸门串成一条链）、`LapWebSurfaceTest` 新增详情页两条；前端 `SurfaceHost.test.tsx` **15 条**（vitest，读**后端那份真的 manifest**）；`check-lap.sh` 新增断言 18（§16 形状 / 详情三列 / 五条 Surface / 404）；`npm run build` |
+
+**R9 的关键决定**（删掉 Installation 之后，会话必须总是存在）：
+
+1. **"装"这个概念从代码里彻底消失，而不是换个名字。** 删除的理由不是"少两张表好看"：
+   `Installation` 是 v1 整条归属链的根（`Application → Installation → Session → Resource`），
+   于是"用一下提醒应用"= "先装它"、"数字人能下棋" = "数据库里有一行 AGENT 的 installation"。
+   v2 的产品模型是微信小程序：**打开就是开一场会话**，而会话可以同时坐着好几个人。
+   `check-lap.sh` 有一条断言直接 `curl POST /applications/{id}/install` 要 **404** ——
+   加回任何一个"安装"入口，它立刻红。
+2. **`ensureInstalled(appId, ctx)` → `ensureSession(appId, ctx) → sessionId`。**
+   这是整次重构的拱心石，也是 DH 侧唯一要改的一行（`ReminderService`）。语义上它更诚实：
+   删掉 installation 之后，"我允许这个应用为我做事"不再是平台概念，剩下的是
+   "**我在这个应用里有一个正在进行的实例**" —— 那正是 Session。
+3. **会话必须总是存在，所以资源解析多了一档兜底。** `ActionGateway` 第 3 步"会话解析"的优先级
+   从四档扩成五档：`显式 context.sessionId > 已存在资源行的 sessionId > URI 模板里的 {sessionId} 段
+   > ★该 principal 在这个应用下最近的 ACTIVE 会话★ > 都没有 → ensureSession 新建一个(OWNER)`。
+   第 4 档是**删掉 installation 之后唯一会"静默失效"的地方**：`reminder://owner/{userId}` 的模板里
+   没有 `{sessionId}` 段，前三档全都匹配不上。没有它，DH 的每一次提醒调用都会退化成"新建一个会话"，
+   `application_session` 会被闲聊级调用灌满；没有第 5 档，"打开应用即用"的体验就不成立。
+4. **`AgentRouteResolver` 是最容易漏的一处，因为它不在 `permission/` 里。** 它住在 `event/`，
+   删表的编译错误不会指着它，改完权限测试也全绿 —— 但事件路由会**静默地一个人也不唤醒**。
+   所以它单列一条决定：从事件所属会话的 `application_session_participant` 里找
+   `principal_type='AGENT' AND status='ACTIVE'` 的参与者，而不是去 `installation` 表里找。
+5. **`SUSPENDED` 是"下架"不是"作废"，这一条在 v2 里有数据模型撑腰。** 挂起只影响**新会话**
+   （`allowsNewSession=false`），已经在进行的那一局照常读得出来 —— 见 §4.1 那张表与
+   `AvailabilityProjectionTest.suspendingAnApplicationRefusesNewSessionsButKeepsTheExistingOne`。
+   一局下到一半的棋因为运营点了一下"挂起"而当场作废，是平台在惩罚用户承担运营的后果，
+   而用户什么都没做错。
+
+**R10 的关键决定**（邀请是"把别人请进来"的唯一方式）：
+
+1. **join 的请求体里只有 `role`。** 方案 §12/§31 的请求体带着 `principalType` + `principalId`，
+   与 §36「身份从 Context 获得」直接冲突，而且是一个越权入口 —— 谁都能替别人报名。替**别人**加入
+   只有一条路：邀请链接。`principalType` / `principalId` 一律取自已认证身份。
+2. **链接里那 30 个字符不是 id，是 Capability Token 的明文。** 库里只存 SHA-256，于是拿到链接的人
+   能进这一场，但看不到这张票编号几号、谁铸的、给谁。明文在**创建响应里出现且只出现一次** ——
+   丢了只能重铸一张。这条性质由 `InviteCreateTest` 断言（库里查不到明文）。
+3. **`APPLICATION_INVITATION` 是平台事件，不是应用事件。** 方案 §53 说"事件不能表达
+   AgentShouldXxx"，§60 又说要有 `APPLICATION_INVITATION` —— 两者不冲突：邀请事件说的是
+   "有人邀请你"，不是"你必须来"。但它**由邀请服务发射**，绕过 manifest 的 `triggersAgent` 闸门：
+   那道闸门是防**应用**的（应用不该知道谁是 Agent），不是防平台的。
+4. **`INVITE_ONLY` 是默认姿态，不是"还没实现邀请"。** 一个会话默认不该是任何人都能进来的；
+   开放（或发行邀请链接）是会话主人的显式决定。所以 `POST /sessions/{id}/participants` 对
+   `INVITE_ONLY` 的会话只有开局的人走得通 —— 别人会拿到 `SESSION_INVITE_ONLY`，那不是错误。
+
+**R11 的关键决定**（平台不定义 UI 渲染协议）：
+
+1. **平台只声明三件事，一个字都不多。** §68 给的是 `surface type` / `entry` / `minClientVersion`；
+   §69 说清了为什么 —— 一旦开始定义 button/color/layout/font/component，最终会重新造一个
+   Flutter。这条边界在代码里是**机械的**：`ManifestParser` 拒绝 `ui` 与 `surfaces` 里任何不认识的
+   键（`UI_UNSUPPORTED_KEY`），而不是静默忽略 —— 静默忽略会让平台一点一点长出 UI 参数，
+   而每一步看起来都只是"多支持一个字段"。
+2. **`entry` 是模板，客户端做且只做替换。** 变量只有 `{applicationId}` 与 `{sessionId}` 两个 ——
+   平台唯一确定知道的就是这两件事。认不出的变量**原样留着**，不抹成空串：抹掉会得到一条看起来正常
+   的路径，直到 404 白屏才暴露。
+3. **五种 Surface 是五种交互契约，不是五个 CSS 类。** `FULL_PAGE` 铺满有返回、`EMBEDDED` 嵌在
+   别人页面里（所以**没有**关闭按钮 —— 关掉它不归它管）、`MODAL` 有遮罩能关、`PANEL` 是贴边抽屉
+   不吃遮罩、`INLINE` 是一行且带升级为整页的入口。`SurfaceHost.test.tsx` 断言的就是这些**行为差别**；
+   一个只测样式的测试改个 CSS 就红一片，最终会被人删掉。
+4. **呈现方式归平台，界面内容归应用。** 前端是一个 `SurfaceHost` + 一张内置应用登记表；
+   登记表按 **applicationId** 分键，不按 surface 分 —— 一个应用只有**一份**界面实现，五种 Surface
+   是这同一份界面的五种**摆法**。按 surface 分键的话，作者就要为 MODAL 再写一遍棋盘，
+   而两份棋盘很快就会不一样。
+5. **`ui` 是可选的，默认值现算不烘进解析结果。** `reminder`（一个面向 Agent 的应用）的清单里
+   没有 `ui` 段 —— 平台在 `SurfaceCatalogue` 里给它一个默认（EMBEDDED + 一条 FULL_PAGE）。
+   不把默认值烘进 `ApplicationManifest`，"作者没写"与"作者写了默认值"在版本 diff 里才分得开。
+6. **应用详情页在应用下架之后照样打得开。** 详情接口刻意不按 `inMarket` 过滤成 404：
+   一个被挂起的应用需要能说出一句"它已下架"，而 404 只会让人以为是自己把 id 打错了。
+   真正被拒的是"开一局新的"，而那个拒绝带着 `APPLICATION_NOT_AVAILABLE` 与 409 —— 
+   "被下架了"和"没有这个应用"是两件事。
 
 **R5 的关键决定**（两个新增参考应用 + DH 提醒只读改造）：
 

@@ -28,6 +28,15 @@ import java.util.Set;
  *       "这个 target 属于哪个应用"。</li>
  *   <li>{@code RUNTIME_TYPE_NOT_SUPPORTED} —— HOSTED 在本阶段明确不做, 显式报错而不是静默接受。</li>
  *   <li>{@code REMOTE_ENDPOINT_REQUIRED} —— REMOTE 却没有 {@code runtime.remote.baseUrl}。</li>
+ *   <li>{@code UI_TYPE_REQUIRED} / {@code UI_ENTRY_REQUIRED} —— 声明了 {@code ui} 却没说清
+ *       "谁渲染"或"从哪儿进"。</li>
+ *   <li>{@code REMOTE_UI_ENTRY_NOT_ABSOLUTE} —— {@code ui.type=REMOTE} 的 entry 不是绝对
+ *       http(s) 地址。这是最容易在本地看不出问题的一条: {@code /embed} 这样的相对路径会被
+ *       iframe 解释成"平台自己的某个页面", 于是第三方应用"打开是平台首页", 而两边都不报错。</li>
+ *   <li>{@code UI_SURFACE_MODE_CONFLICT} —— NATIVE 应用却声明了 web surface。</li>
+ *   <li>{@code DUPLICATE_SURFACE} —— 同一种容器声明了两遍(两个 FULL_PAGE 入口, 客户端该用哪个)。</li>
+ *   <li>{@code SURFACE_TYPE_REQUIRED} / {@code SURFACE_ENTRY_REQUIRED} —— surface 缺 type / entry。</li>
+ *   <li>{@code INVALID_CLIENT_VERSION} —— {@code minClientVersion} 不像版本号。</li>
  * </ul>
  */
 @Component
@@ -61,6 +70,65 @@ public class ManifestValidator {
         validateEvents(manifest);
         validatePermissions(manifest);
         validateRuntime(manifest);
+        validateUi(manifest);
+    }
+
+    /**
+     * 第八段: {@code ui}。<b>它整段可以不写</b> —— 缺席表示"平台默认的全页内嵌应用"。
+     *
+     * <p>写了就必须写全: 说得出谁渲染({@code type})、从哪儿进({@code entry})。半写的 {@code ui}
+     * 比不写更坏 —— 客户端拿到一个没有入口的声明, 只能各自发明一个兜底值, 于是同一个应用在
+     * 网页端和在聊天里从两个不同的地方进去。
+     */
+    private void validateUi(ApplicationManifest m) {
+        ApplicationManifest.UiDecl ui = m.ui();
+        if (ui == null) {
+            return;   // 缺席是合法的, 见方法注释
+        }
+        if (ui.type() == null) {
+            throw ManifestException.of("UI_TYPE_REQUIRED",
+                    "声明了 ui 就必须说清 type (EMBEDDED / REMOTE / NATIVE)");
+        }
+        // NATIVE 的界面在客户端里, 平台没有可打开的入口 —— 要求 entry 反而会逼作者编一个假的。
+        if (ui.type() != ApplicationManifest.UiMode.NATIVE) {
+            require(ui.entry(), "UI_ENTRY_REQUIRED",
+                    "ui.type=" + ui.type() + " 必须给 entry —— 客户端要有一个进去的地方");
+        }
+        if (ui.type() == ApplicationManifest.UiMode.REMOTE && !isAbsoluteHttpUrl(ui.entry())) {
+            throw ManifestException.of("REMOTE_UI_ENTRY_NOT_ABSOLUTE",
+                    "ui.type=REMOTE 的 entry 必须是绝对 http(s) 地址, 实际: " + ui.entry()
+                            + " —— 相对路径会被 iframe 当成平台自己的页面");
+        }
+        if (ui.minClientVersion() != null && !ui.minClientVersion().matches("\\d+(\\.\\d+)*")) {
+            throw ManifestException.of("INVALID_CLIENT_VERSION",
+                    "minClientVersion 必须是点分数字(如 1.0.0), 实际: " + ui.minClientVersion());
+        }
+        if (ui.type() == ApplicationManifest.UiMode.NATIVE && !ui.surfaces().isEmpty()) {
+            throw ManifestException.of("UI_SURFACE_MODE_CONFLICT",
+                    "ui.type=NATIVE 的应用不该声明 web surface —— 它的界面不在网页里");
+        }
+
+        Set<ApplicationManifest.SurfaceType> seen = new HashSet<>();
+        for (ApplicationManifest.SurfaceDecl s : ui.surfaces()) {
+            if (s.type() == null) {
+                throw ManifestException.of("SURFACE_TYPE_REQUIRED",
+                        "surface 必须给 type, 合法值: " + java.util.Arrays
+                                .toString(ApplicationManifest.SurfaceType.values()));
+            }
+            if (!seen.add(s.type())) {
+                throw ManifestException.of("DUPLICATE_SURFACE",
+                        "同一种 surface 声明了两遍: " + s.type()
+                                + " —— 两个入口等于没有入口, 客户端不知道该用哪个");
+            }
+            require(s.entry(), "SURFACE_ENTRY_REQUIRED",
+                    "surface " + s.type() + " 必须给 entry");
+        }
+    }
+
+    private static boolean isAbsoluteHttpUrl(String value) {
+        return value != null
+                && (value.startsWith("http://") || value.startsWith("https://"))
+                && value.length() > "https://".length();
     }
 
     private void validateCapabilities(ApplicationManifest m) {

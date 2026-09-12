@@ -83,5 +83,13 @@
       "baseUrl": "http://127.0.0.1:9/lap/actions:execute",
       "authRef": "probe"
     }
+  },
+
+  "ui": {
+    "type": "REMOTE",
+    "entry": "http://127.0.0.1:9/embed",
+    "surfaces": [
+      { "type": "FULL_PAGE", "entry": "http://127.0.0.1:9/embed" }
+    ]
   }
 }

@@ -270,21 +270,54 @@ body | grep -q '"agentHint"' && ok "agentHint 随发现一并返回" || fail "�
 #
 # $CAPABILITIES 是**这一局里我这个参与者**的授权摘要(不是应用声明的全部能力): 它由 join 时的
 # role → permission_profile 展开而来, 断言 9a 正是把它清空之后看动作会不会被拒。
-SESSION_ID=""; URI=""; PRINCIPAL_ID=""; CAPABILITIES=""
+SESSION_ID=""; URI=""; PRINCIPAL_ID=""; CAPABILITIES=""; SESSION_VERSION=""
 open_session() {
   local code
   code=$(http POST "/api/v1/applications/$APP_ID/sessions" '{}')
   if [ "$code" != "200" ]; then fail "打开应用状态码 $code"; return; fi
+  # R11 起响应是 §16 的形状: application 与 participant 各自嵌套。老的两个平铺字段
+  # (ownerPrincipal*) 已经不在响应里了 —— 主人只是 role=OWNER 的那一个参与者。
   SESSION_ID=$(jq_ "d['sessionId']")
-  PRINCIPAL_ID=$(jq_ "d['ownerPrincipalId']")
+  PRINCIPAL_ID=$(jq_ "d['participant']['principalId']")
+  SESSION_VERSION=$(jq_ "d['application']['version']")
   CAPABILITIES=$(jq_ "','.join(sorted(d['capabilities']))")
   URI="game://session/$SESSION_ID"
-  ok "已打开 → session=$SESSION_ID (owner=$PRINCIPAL_ID, 授权: $CAPABILITIES)"
+  ok "已打开 → session=$SESSION_ID (app=$APP_ID v$SESSION_VERSION, owner=$PRINCIPAL_ID, 授权: $CAPABILITIES)"
 }
 
 note "打开应用开一局 (动作的 target 从这里来)"
 open_session
 [ -n "$SESSION_ID" ] && ok "target = $URI" || fail "开会话响应里没有 sessionId"
+
+# ── 断言 18: §16 的响应形状 + 应用详情 + §4.1 可用性 (R11) ──
+note "断言 18: 开会话返回 §16 形状, 应用详情给出 status/availability/ui"
+[ "$SESSION_VERSION" = "1.0.0" ] && ok "application.version = $SESSION_VERSION" \
+  || fail "application.version 不对: '$SESSION_VERSION'"
+ROLE=$(jq_ "d['participant']['role']" 2>/dev/null || echo "")
+# 上面那次 open_session 只留了变量, 这里再开一局只为读形状(每次调用都是新的一局, 见脚本上文)
+code=$(http POST "/api/v1/applications/$APP_ID/sessions" '{}')
+[ "$(jq_ "d['participant']['role']")" = "OWNER" ] && ok "participant.role = OWNER" \
+  || fail "participant.role 不是 OWNER"
+
+note "断言 18b: GET /api/v1/applications/$APP_ID (应用详情)"
+CODE=$(http GET "/api/v1/applications/$APP_ID")
+[ "$CODE" = "200" ] && ok "200" || fail "状态码 $CODE"
+[ "$(jq_ "d['status']")" = "PUBLISHED" ] && ok "十态原值 status=PUBLISHED" \
+  || fail "status = $(jq_ "d['status']")"
+[ "$(jq_ "str(d['availability']['inMarket']).lower()")" = "true" ] && ok "availability.inMarket=true" \
+  || fail "inMarket 不是 true"
+[ "$(jq_ "str(d['availability']['allowsNewSession']).lower()")" = "true" ] && ok "allowsNewSession=true" \
+  || fail "allowsNewSession 不是 true"
+[ "$(jq_ "str(d['availability']['allowsExistingSession']).lower()")" = "true" ] && ok "allowsExistingSession=true" \
+  || fail "allowsExistingSession 不是 true"
+SURFACES=$(jq_ "len(d['ui']['surfaces'])")
+[ "$SURFACES" = "5" ] && ok "ui.surfaces 五态全在" || fail "ui.surfaces = $SURFACES, 期望 5"
+[ "$(jq_ "d['ui']['type']")" = "EMBEDDED" ] && ok "ui.type=EMBEDDED" || fail "ui.type 不对"
+
+note "断言 18c: 没注册过的应用详情是 404 UNKNOWN_APPLICATION"
+CODE=$(http GET "/api/v1/applications/com.luxera.nope")
+[ "$CODE" = "404" ] && ok "404" || fail "状态码 $CODE"
+body | grep -q "UNKNOWN_APPLICATION" && ok "错误码 UNKNOWN_APPLICATION" || fail "错误码不对"
 
 # ── 断言 5: 幂等重放 ──
 note "断言 5: 同 Idempotency-Key 两次 → 同响应 + Idempotent-Replay + 只有一行 invocation"

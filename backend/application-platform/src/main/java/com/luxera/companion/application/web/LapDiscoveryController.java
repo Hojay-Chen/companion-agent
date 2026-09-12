@@ -1,7 +1,14 @@
 package com.luxera.companion.application.web;
 
 import com.luxera.companion.application.action.ActionGateway;
+import com.luxera.companion.application.domain.ApplicationStatus;
+import com.luxera.companion.application.lifecycle.ApplicationCatalogue;
+import com.luxera.companion.application.lifecycle.Availability;
+import com.luxera.companion.application.manifest.ApplicationManifest;
+import com.luxera.companion.application.manifest.ManifestRegistry;
 import com.luxera.companion.application.resource.ResourceStore;
+import com.luxera.companion.application.session.SessionException;
+import com.luxera.companion.application.surface.SurfaceCatalogue;
 import com.luxera.companion.contracts.application.ActionSpec;
 import com.luxera.companion.contracts.application.ApplicationView;
 import com.luxera.companion.contracts.application.CapabilityView;
@@ -31,10 +38,20 @@ public class LapDiscoveryController {
 
     private final ActionGateway gateway;
     private final ResourceStore resources;
+    private final ManifestRegistry manifests;
+    private final ApplicationCatalogue catalogue;
+    private final SurfaceCatalogue surfaces;
 
-    public LapDiscoveryController(ActionGateway gateway, ResourceStore resources) {
+    public LapDiscoveryController(ActionGateway gateway,
+                                  ResourceStore resources,
+                                  ManifestRegistry manifests,
+                                  ApplicationCatalogue catalogue,
+                                  SurfaceCatalogue surfaces) {
         this.gateway = gateway;
         this.resources = resources;
+        this.manifests = manifests;
+        this.catalogue = catalogue;
+        this.surfaces = surfaces;
     }
 
     /** 全部能力 —— 发现链的第一级, 也是 Agent 做"要不要用应用"判断时看到的东西。 */
@@ -52,6 +69,80 @@ public class LapDiscoveryController {
     @GetMapping("/applications")
     public List<ApplicationView> applications() {
         return gateway.applications();
+    }
+
+    /**
+     * 一个应用的详情 —— §97 的 {@code GET /applications/{id}}, 应用详情页与 SurfaceHost
+     * 所需的一切。
+     *
+     * <p>比列表多三样东西, 而这三样恰恰是"打开"这个动作需要的:
+     * <ul>
+     *   <li>{@code status} —— 十态原值。给开发者后台与审核队列看, 那里需要知道"卡在哪一步"。</li>
+     *   <li>{@code availability} —— 五态投影(§4.1 那张表)。给"能不能打开"这个问题用,
+     *       三列各自是一个布尔, 客户端不必自己 interpret 十个状态。</li>
+     *   <li>{@code ui} —— 可以被放进哪几种容器、从哪个入口进(§68)。</li>
+     * </ul>
+     *
+     * <p><b>刻意不按 {@code availability.inMarket} 过滤成 404。</b> 一个被挂起的应用,
+     * 详情页该照常打得开并说一句"已下架" —— 那比一个 404 有用得多, 而 404 还会让人以为
+     * 是自己把应用 id 打错了。只有 manifest 根本没注册过才是 404。
+     */
+    @GetMapping("/applications/{applicationId}")
+    public ApplicationDetail application(@PathVariable String applicationId) {
+        ApplicationManifest manifest = manifests.published(applicationId).orElseThrow(() ->
+                new SessionException("UNKNOWN_APPLICATION", "没有已发布的应用 " + applicationId));
+        ApplicationStatus status = catalogue.statusOf(applicationId);
+        return new ApplicationDetail(
+                manifest.applicationId(),
+                manifest.version(),
+                manifest.identity().name(),
+                manifest.identity().description(),
+                manifest.identity().category(),
+                manifest.capabilities().stream().map(ApplicationManifest.CapabilityDecl::id).toList(),
+                manifest.actions().size(),
+                status == null ? null : status.name(),
+                AvailabilityView.of(catalogue.availabilityOf(applicationId)),
+                UiView.of(SurfaceCatalogue.effective(manifest)));
+    }
+
+    /** §97 的应用详情。字段名与 {@code ApplicationView} 对齐, 只多不少。 */
+    public record ApplicationDetail(String applicationId, String version, String name,
+                                    String description, String category,
+                                    List<String> capabilities, int actionCount,
+                                    String status, AvailabilityView availability, UiView ui) {}
+
+    /**
+     * §4.1 那张表在 HTTP 上的样子。<b>三列全部显式给出</b>, 而不是只给一个五态名 ——
+     * 客户端要回答的是"能不能开新会话", 让它自己去维护一份"哪些状态算在架"的映射,
+     * 就是让 §4.1 那张表在每一个客户端里各抄一份。
+     */
+    public record AvailabilityView(String state, boolean inMarket,
+                                   boolean allowsNewSession, boolean allowsExistingSession) {
+
+        static AvailabilityView of(Availability availability) {
+            return new AvailabilityView(availability.name(), availability.inMarket(),
+                    availability.allowsNewSession(), availability.allowsExistingSession());
+        }
+    }
+
+    /**
+     * {@code ui} 计划。{@code surfaces[].entry} 是模板, 变量只有 {@code {applicationId}}
+     * 与 {@code {sessionId}} —— 客户端做且只做替换(§68/§69)。
+     */
+    public record UiView(String type, String entry, String minClientVersion,
+                         List<SurfaceView> surfaces) {
+
+        static UiView of(ApplicationManifest.UiDecl ui) {
+            return new UiView(ui.type().name(), ui.entry(), ui.minClientVersion(),
+                    ui.surfaces().stream().map(SurfaceView::of).toList());
+        }
+    }
+
+    /** 一个 surface: 容器类型 + 该容器的入口模板。 */
+    public record SurfaceView(String type, String entry) {
+        static SurfaceView of(ApplicationManifest.SurfaceDecl decl) {
+            return new SurfaceView(decl.type().name(), decl.entry());
+        }
     }
 
     /**

@@ -81,6 +81,10 @@ class LapWebSurfaceTest {
      * <p>{@code $.installationId} 那条反向断言是刻意留的: 只断言"会话开出来了"的话, 哪天有人
      * 把 {@code /install} 加回来(哪怕只是顺手), 这个类照样绿。加上"没有安装 id 这个东西",
      * 加回来的那一刻就红。
+     *
+     * <p>R11 起响应是<b>§16 的形状</b>: {@code application} 与 {@code participant} 各自
+     * 嵌套着给出 —— 它们不是两个孤立的字符串, 而是"哪份软件的哪一版"与"你在这场里是谁"
+     * 两份声明。
      */
     @Test
     void openingAnApplicationStartsASessionAndMintsNoInstallation() throws Exception {
@@ -91,16 +95,56 @@ class LapWebSurfaceTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.applicationId").value(APP_ID))
-                .andExpect(jsonPath("$.ownerPrincipalType").value("HUMAN"))
-                .andExpect(jsonPath("$.ownerPrincipalId").value(alice))
+                .andExpect(jsonPath("$.application.id").value(APP_ID))
+                .andExpect(jsonPath("$.application.version").value("1.0.0"))
+                .andExpect(jsonPath("$.participant.principalType").value("HUMAN"))
+                .andExpect(jsonPath("$.participant.principalId").value(alice))
+                .andExpect(jsonPath("$.participant.role").value("OWNER"))
                 .andExpect(jsonPath("$.status").value("ACTIVE"))
                 .andExpect(jsonPath("$.participantCount").value(1))
                 .andExpect(jsonPath("$.installationId").doesNotExist())
+                // v1 的 ownerPrincipal* 从响应里消失了: 主人只是 role=OWNER 的那一个参与者,
+                // 会话行上的 owner 是"出处"不是"权柄" —— 见 SessionResponse 的注释。
+                .andExpect(jsonPath("$.ownerPrincipalId").doesNotExist())
                 .andReturn().getResponse().getContentAsString();
 
         assertEquals(36, objectMapper.readTree(body).path("sessionId").asText().length(),
                 "开出来的这个会话 id 就是调用方下一步下动作要用的那个");
+        assertEquals(36, objectMapper.readTree(body).path("participant").path("id").asText().length(),
+                "participant.id 是参与者行的 id, 不是 principal id");
+    }
+
+    /**
+     * §97 的应用详情 —— 应用市场与 SurfaceHost 的全部输入。
+     *
+     * <p>三样东西必须同时在场, 否则客户端只能自己去拼: 十态原值({@code status})、
+     * 五态投影({@code availability} 三列)、以及 ui 计划({@code ui} 五态 surface)。
+     */
+    @Test
+    void theApplicationDetailCarriesStatusAvailabilityAndSurfaces() throws Exception {
+        mvc.perform(get("/api/v1/applications/" + APP_ID)
+                        .header("Authorization", bearer(principalId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applicationId").value(APP_ID))
+                .andExpect(jsonPath("$.version").value("1.0.0"))
+                .andExpect(jsonPath("$.status").value("PUBLISHED"))
+                .andExpect(jsonPath("$.availability.state").value("PUBLISHED"))
+                .andExpect(jsonPath("$.availability.inMarket").value(true))
+                .andExpect(jsonPath("$.availability.allowsNewSession").value(true))
+                .andExpect(jsonPath("$.availability.allowsExistingSession").value(true))
+                .andExpect(jsonPath("$.ui.type").value("EMBEDDED"))
+                .andExpect(jsonPath("$.ui.surfaces.length()").value(5))
+                .andExpect(jsonPath("$.ui.surfaces[0].entry")
+                        .value("/applications/{applicationId}/sessions/{sessionId}"));
+    }
+
+    /** 没注册过的应用是 404, 而不是一份空壳详情。 */
+    @Test
+    void anUnregisteredApplicationHasNoDetailPage() throws Exception {
+        mvc.perform(get("/api/v1/applications/com.luxera.nope")
+                        .header("Authorization", bearer(principalId())))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("UNKNOWN_APPLICATION"));
     }
 
     /**

@@ -18,10 +18,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * manifest 是这套平台的<em>契约本身</em> —— 发现链、权限、幂等、事件全从它派生。校验器漏一条,
  * 后果不是"数据脏了", 而是某个应用在运行时以错误的方式被调用。
  *
- * <p>这个类把七个小节逐条钉住, 重点是<em>错误码</em>而不只是"抛异常": 调用方(开发者 API、
+ * <p>这个类把八个小节逐条钉住, 重点是<em>错误码</em>而不只是"抛异常": 调用方(开发者 API、
  * 构建脚本)要靠码来决定怎么办, 只报"manifest 不合法"等于没报。
  *
- * <p>两条断言值得单独指出, 因为它们对应的是设计稿里最容易做反的地方:
+ * <p>三条断言值得单独指出, 因为它们对应的是设计稿里最容易做反的地方:
  *
  * <ul>
  *   <li><b>{@code HOSTED} 有自己的错误码, 不是被静默接受。</b>"第一阶段不做 JVM sandbox /
@@ -29,6 +29,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li><b>顶层出现未知小节一律拒绝, 包括 {@code agentEndpoint} 这类按消费者分的字段。</b>
  *       静默忽略未知字段的话, 一个作者写了 {@code humanEndpoint} 会得到"发布成功但从不生效",
  *       这是最难查的一类问题。</li>
+ *   <li><b>{@code ui} 段里连一个不认识的键都拒绝(§69)。</b> 顶层多一个 section 是作者声明了
+ *       一件平台做不到的事; {@code ui} 里多一个 {@code theme} / {@code layout} 是<em>平台
+ *       正在变成 UI 框架</em>的开始。后面这条不会有编译错误, 只会有越来越长的参数清单。</li>
  * </ul>
  */
 class ManifestValidatorTest {
@@ -43,11 +46,11 @@ class ManifestValidatorTest {
         assertDoesNotThrow(() -> validator.validate(valid()));
     }
 
-    /** 七个 section 的名字与顺序就是契约 —— 多一个少一个都要在这里显形。 */
+    /** 八个 section 的名字与顺序就是契约 —— 多一个少一个都要在这里显形。 */
     @Test
-    void theSevenSectionsAreExactlyTheOnesTheDesignNames() {
+    void theEightSectionsAreExactlyTheOnesTheDesignNames() {
         assertEquals(List.of("identity", "capabilities", "actions", "resources",
-                "events", "permissions", "runtime"), ApplicationManifest.SECTIONS);
+                "events", "permissions", "runtime", "ui"), ApplicationManifest.SECTIONS);
     }
 
     // ─────────────────────────── identity ───────────────────────────
@@ -263,6 +266,202 @@ class ManifestValidatorTest {
         assertEquals(4, manifest.actions().size());
     }
 
+    /** 参考应用是"平台自己怎么用这套声明"的唯一示范, 五子棋与井字棋都得过。 */
+    @Test
+    void theBuiltInGomokuManifestPasses() throws Exception {
+        String json;
+        try (var in = getClass().getResourceAsStream(
+                "/applications/gomoku/1.0.0/application-manifest.json")) {
+            json = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        ApplicationManifest manifest = parser.parse(json);
+        assertDoesNotThrow(() -> validator.validate(manifest));
+        assertEquals("com.luxera.gomoku", manifest.applicationId());
+    }
+
+    // ─────────────────────────── ui (§17/§18/§67/§68/§69) ───────────────────────────
+
+    /**
+     * {@code ui} 整段可以不写 —— 一条没有自己界面的应用仍然是合法应用。
+     *
+     * <p>与"写了一半"的区别是全部: 不写是<em>一个决定</em>(用平台默认的全页应用),
+     * 写了一半是<em>一个错误</em>(客户端拿到没有入口的声明, 只能各自发明兜底值)。
+     */
+    @Test
+    void uiMayBeAbsentEntirely() {
+        assertDoesNotThrow(() -> validator.validate(withUi(null)));
+    }
+
+    @Test
+    void uiWithoutATypeIsRejected() {
+        assertCode("UI_TYPE_REQUIRED", () -> validator.validate(withUi(
+                new ApplicationManifest.UiDecl(null, "/applications/x", null, List.of()))));
+    }
+
+    /** 说了"谁渲染"就得说"从哪儿进" —— NATIVE 例外, 它的界面不在网页里。 */
+    @Test
+    void uiWithoutAnEntryIsRejectedUnlessItIsNative() {
+        assertCode("UI_ENTRY_REQUIRED", () -> validator.validate(withUi(
+                new ApplicationManifest.UiDecl(ApplicationManifest.UiMode.EMBEDDED, null, null,
+                        List.of()))));
+        assertDoesNotThrow(() -> validator.validate(withUi(
+                new ApplicationManifest.UiDecl(ApplicationManifest.UiMode.NATIVE, null, null,
+                        List.of()))));
+    }
+
+    /**
+     * REMOTE 的 entry 必须是绝对地址。这是本地最看不出来的一条: {@code /embed} 这样的相对路径
+     * 会被 iframe 解释成"平台自己的某个页面", 于是第三方应用打开是平台首页, 而两边都不报错。
+     */
+    @Test
+    void remoteUiEntryMustBeAnAbsoluteUrl() {
+        assertCode("REMOTE_UI_ENTRY_NOT_ABSOLUTE", () -> validator.validate(withUi(
+                new ApplicationManifest.UiDecl(ApplicationManifest.UiMode.REMOTE, "/embed", null,
+                        List.of()))));
+        assertDoesNotThrow(() -> validator.validate(withUi(
+                new ApplicationManifest.UiDecl(ApplicationManifest.UiMode.REMOTE,
+                        "https://app.example.com/embed", null, List.of()))));
+    }
+
+    /** NATIVE 应用声明 web surface 是自相矛盾: 它的界面根本不在网页里。 */
+    @Test
+    void aNativeApplicationCannotDeclareWebSurfaces() {
+        assertCode("UI_SURFACE_MODE_CONFLICT", () -> validator.validate(withUi(
+                new ApplicationManifest.UiDecl(ApplicationManifest.UiMode.NATIVE, null, null,
+                        List.of(new ApplicationManifest.SurfaceDecl(
+                                ApplicationManifest.SurfaceType.FULL_PAGE, "/app"))))));
+    }
+
+    /** 同一种容器声明两遍 —— 两个入口等于没有入口, 客户端不知道该用哪个。 */
+    @Test
+    void duplicateSurfaceTypesAreRejected() {
+        assertCode("DUPLICATE_SURFACE", () -> validator.validate(withUi(
+                new ApplicationManifest.UiDecl(ApplicationManifest.UiMode.EMBEDDED, "/app", null,
+                        List.of(surface(ApplicationManifest.SurfaceType.FULL_PAGE, "/a"),
+                                surface(ApplicationManifest.SurfaceType.FULL_PAGE, "/b"))))));
+    }
+
+    @Test
+    void aSurfaceNeedsBothTypeAndEntry() {
+        assertCode("SURFACE_TYPE_REQUIRED", () -> validator.validate(withUi(
+                new ApplicationManifest.UiDecl(ApplicationManifest.UiMode.EMBEDDED, "/app", null,
+                        List.of(surface(null, "/a"))))));
+        assertCode("SURFACE_ENTRY_REQUIRED", () -> validator.validate(withUi(
+                new ApplicationManifest.UiDecl(ApplicationManifest.UiMode.EMBEDDED, "/app", null,
+                        List.of(surface(ApplicationManifest.SurfaceType.PANEL, null))))));
+    }
+
+    /** {@code minClientVersion} 是一个版本号, 不是一句"最新版"。 */
+    @Test
+    void minClientVersionMustLookLikeAVersion() {
+        assertCode("INVALID_CLIENT_VERSION", () -> validator.validate(withUi(
+                new ApplicationManifest.UiDecl(ApplicationManifest.UiMode.EMBEDDED, "/app",
+                        "latest", List.of()))));
+        assertDoesNotThrow(() -> validator.validate(withUi(
+                new ApplicationManifest.UiDecl(ApplicationManifest.UiMode.EMBEDDED, "/app",
+                        "2.1", List.of()))));
+    }
+
+    /**
+     * §69 是这一整段里最要紧的一条: <b>平台不认 {@code layout} / {@code theme} / {@code button}。</b>
+     *
+     * <p>它挡的不是一次错误, 而是一条路 —— {@code ui} 段一旦开始接受"平台认得的 UI 参数",
+     * 那份清单就只会变长, 直到平台变成另一个 Flutter。所以认不出来的一律拒绝,
+     * 连"忽略掉"都不允许: 忽略等于让作者以为它生效了。
+     */
+    @Test
+    void parsingRejectsUiKeysThePlatformDoesNotUnderstand() {
+        ManifestException e = assertCode("UI_UNSUPPORTED_KEY", () -> parser.parse("""
+                {"identity":{"id":"com.luxera.x","name":"x","version":"1.0.0"},
+                 "capabilities":[],"actions":[],"resources":[],"events":[],"permissions":[],
+                 "runtime":{"type":"NATIVE"},
+                 "ui":{"type":"EMBEDDED","entry":"/app","theme":"dark","layout":"grid"}}"""));
+        assertTrue(e.getMessage().contains("theme"), "报错要指名道姓: " + e.getMessage());
+    }
+
+    /** surface 里也一样: 只有 {@code type} 与 {@code entry} 两件事。 */
+    @Test
+    void parsingRejectsSurfaceKeysThePlatformDoesNotUnderstand() {
+        assertCode("UI_UNSUPPORTED_KEY", () -> parser.parse("""
+                {"identity":{"id":"com.luxera.x","name":"x","version":"1.0.0"},
+                 "capabilities":[],"actions":[],"resources":[],"events":[],"permissions":[],
+                 "runtime":{"type":"NATIVE"},
+                 "ui":{"type":"EMBEDDED","entry":"/app",
+                       "surfaces":[{"type":"PANEL","entry":"/p","width":320}]}}"""));
+    }
+
+    /** 五个 surface type 与 §67 一字不差 —— 加第六种要改的是设计, 不是这里。 */
+    @Test
+    void theFiveSurfaceTypesAreExactlyTheOnesTheDesignNames() {
+        assertEquals(List.of("FULL_PAGE", "EMBEDDED", "MODAL", "PANEL", "INLINE"),
+                java.util.Arrays.stream(ApplicationManifest.SurfaceType.values())
+                        .map(Enum::name).toList());
+        assertEquals(List.of("EMBEDDED", "REMOTE", "NATIVE"),
+                java.util.Arrays.stream(ApplicationManifest.UiMode.values())
+                        .map(Enum::name).toList());
+    }
+
+    /** 一整份带 ui 的 manifest 走完整条解析 + 校验, 五个 surface 一个不少地留下来。 */
+    @Test
+    void aFullUiSectionSurvivesParsingAndValidation() {
+        ApplicationManifest manifest = parser.parse("""
+                {"identity":{"id":"com.luxera.x","name":"x","version":"1.0.0"},
+                 "capabilities":[{"id":"game.play"}],
+                 "actions":[{"id":"game.state","capability":"game.play","permission":"READ",
+                             "risk":"NONE"}],
+                 "resources":[{"type":"x.y","uriTemplate":"x://s/{sessionId}"}],
+                 "events":[],"permissions":[{"capability":"game.play","level":"READ",
+                 "riskCeiling":"NONE"}],"runtime":{"type":"NATIVE"},
+                 "ui":{"type":"EMBEDDED","entry":"/applications/{applicationId}",
+                       "minClientVersion":"1.0.0",
+                       "surfaces":[{"type":"FULL_PAGE","entry":"/a"},{"type":"EMBEDDED","entry":"/b"},
+                                   {"type":"MODAL","entry":"/c"},{"type":"PANEL","entry":"/d"},
+                                   {"type":"INLINE","entry":"/e"}]}}""");
+        assertDoesNotThrow(() -> validator.validate(manifest));
+        assertEquals(5, manifest.ui().surfaces().size());
+        assertEquals(ApplicationManifest.SurfaceType.INLINE,
+                manifest.ui().surfaces().get(4).type());
+        assertEquals("1.0.0", manifest.ui().minClientVersion());
+    }
+
+    /** 内置井字棋用的是真 ui 段(不是默认值), 五个 surface 全在。 */
+    @Test
+    void theBuiltInTicTacToeDeclaresAllFiveSurfaces() throws Exception {
+        String json;
+        try (var in = getClass().getResourceAsStream(
+                "/applications/tictactoe/1.0.0/application-manifest.json")) {
+            json = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        ApplicationManifest manifest = parser.parse(json);
+        assertTrue(manifest.uiDeclaration().isPresent(), "井字棋应当自己声明 ui, 而不是吃默认值");
+        assertEquals(5, manifest.ui().surfaces().size());
+        assertEquals(ApplicationManifest.UiMode.EMBEDDED, manifest.ui().type());
+    }
+
+    /** 提醒没有自己的界面声明 —— 它走平台默认的那条路, 这本身要有一条断言守着。 */
+    @Test
+    void theBuiltInReminderHasNoUiSectionAndThatIsLegal() throws Exception {
+        String json;
+        try (var in = getClass().getResourceAsStream(
+                "/applications/reminder/1.0.0/application-manifest.json")) {
+            json = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        ApplicationManifest manifest = parser.parse(json);
+        assertTrue(manifest.uiDeclaration().isEmpty());
+        assertDoesNotThrow(() -> validator.validate(manifest));
+    }
+
+    private static ApplicationManifest.SurfaceDecl surface(ApplicationManifest.SurfaceType type,
+                                                           String entry) {
+        return new ApplicationManifest.SurfaceDecl(type, entry);
+    }
+
+    private ApplicationManifest withUi(ApplicationManifest.UiDecl ui) {
+        ApplicationManifest b = valid();
+        return new ApplicationManifest(b.identity(), b.capabilities(), b.actions(), b.resources(),
+                b.events(), b.permissions(), b.runtime(), ui);
+    }
+
     // ─────────────────────────── 基线 manifest 与夹具 ───────────────────────────
 
     private ApplicationManifest valid() {
@@ -276,49 +475,49 @@ class ManifestValidatorTest {
                 List.of(new ApplicationManifest.EventDecl("game.move", "有人落子", true, "{uri}#MOVE-{moves}")),
                 List.of(new ApplicationManifest.PermissionDecl("game.play", PermissionLevel.EXECUTE,
                         RiskLevel.LOW)),
-                ApplicationManifest.RuntimeDecl.nativeRuntime());
+                ApplicationManifest.RuntimeDecl.nativeRuntime(), null);
     }
 
     private ApplicationManifest withIdentity(ApplicationManifest.Identity identity) {
         ApplicationManifest b = valid();
         return new ApplicationManifest(identity, b.capabilities(), b.actions(), b.resources(),
-                b.events(), b.permissions(), b.runtime());
+                b.events(), b.permissions(), b.runtime(), b.ui());
     }
 
     private ApplicationManifest withCapabilities(List<ApplicationManifest.CapabilityDecl> capabilities) {
         ApplicationManifest b = valid();
         return new ApplicationManifest(b.identity(), capabilities, b.actions(), b.resources(),
-                b.events(), b.permissions(), b.runtime());
+                b.events(), b.permissions(), b.runtime(), b.ui());
     }
 
     private ApplicationManifest withActions(List<ApplicationManifest.ActionDecl> actions) {
         ApplicationManifest b = valid();
         return new ApplicationManifest(b.identity(), b.capabilities(), actions, b.resources(),
-                b.events(), b.permissions(), b.runtime());
+                b.events(), b.permissions(), b.runtime(), b.ui());
     }
 
     private ApplicationManifest withResources(List<ApplicationManifest.ResourceDecl> resources) {
         ApplicationManifest b = valid();
         return new ApplicationManifest(b.identity(), b.capabilities(), b.actions(), resources,
-                b.events(), b.permissions(), b.runtime());
+                b.events(), b.permissions(), b.runtime(), b.ui());
     }
 
     private ApplicationManifest withEvents(List<ApplicationManifest.EventDecl> events) {
         ApplicationManifest b = valid();
         return new ApplicationManifest(b.identity(), b.capabilities(), b.actions(), b.resources(),
-                events, b.permissions(), b.runtime());
+                events, b.permissions(), b.runtime(), b.ui());
     }
 
     private ApplicationManifest withPermissions(List<ApplicationManifest.PermissionDecl> permissions) {
         ApplicationManifest b = valid();
         return new ApplicationManifest(b.identity(), b.capabilities(), b.actions(), b.resources(),
-                b.events(), permissions, b.runtime());
+                b.events(), permissions, b.runtime(), b.ui());
     }
 
     private ApplicationManifest withRuntime(ApplicationManifest.RuntimeDecl runtime) {
         ApplicationManifest b = valid();
         return new ApplicationManifest(b.identity(), b.capabilities(), b.actions(), b.resources(),
-                b.events(), b.permissions(), runtime);
+                b.events(), b.permissions(), runtime, b.ui());
     }
 
     private static ApplicationManifest.CapabilityDecl capability(String id) {

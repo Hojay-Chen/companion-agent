@@ -123,5 +123,17 @@
 
   "runtime": {
     "type": "NATIVE"
+  },
+
+  "ui": {
+    "type": "EMBEDDED",
+    "entry": "/applications/{applicationId}",
+    "minClientVersion": "1.0.0",
+    "surfaces": [
+      { "type": "FULL_PAGE", "entry": "/applications/{applicationId}/sessions/{sessionId}" },
+      { "type": "EMBEDDED",  "entry": "/applications/{applicationId}/sessions/{sessionId}?surface=EMBEDDED" },
+      { "type": "MODAL",     "entry": "/applications/{applicationId}/sessions/{sessionId}?surface=MODAL" },
+      { "type": "PANEL",     "entry": "/applications/{applicationId}/sessions/{sessionId}?surface=PANEL" }
+    ]
   }
 }

@@ -3,6 +3,8 @@ package com.luxera.companion.application.session;
 import com.luxera.companion.application.domain.ApplicationSessionRecord;
 import com.luxera.companion.application.domain.ApplicationVersionRecord;
 import com.luxera.companion.application.domain.SessionParticipantRecord;
+import com.luxera.companion.application.lifecycle.ApplicationCatalogue;
+import com.luxera.companion.application.lifecycle.Availability;
 import com.luxera.companion.application.manifest.ApplicationManifest;
 import com.luxera.companion.application.manifest.ManifestRegistry;
 import com.luxera.companion.application.principal.ResolvedPrincipal;
@@ -61,17 +63,20 @@ public class ApplicationSessionService {
     private final ApplicationVersionRepository versions;
     private final ManifestRegistry manifests;
     private final ParticipantService participantService;
+    private final ApplicationCatalogue catalogue;
 
     public ApplicationSessionService(ApplicationSessionRepository sessions,
                                      SessionParticipantRepository participants,
                                      ApplicationVersionRepository versions,
                                      ManifestRegistry manifests,
-                                     ParticipantService participantService) {
+                                     ParticipantService participantService,
+                                     ApplicationCatalogue catalogue) {
         this.sessions = sessions;
         this.participants = participants;
         this.versions = versions;
         this.manifests = manifests;
         this.participantService = participantService;
+        this.catalogue = catalogue;
     }
 
     // ─────────────────────────── 开启 ───────────────────────────
@@ -94,6 +99,14 @@ public class ApplicationSessionService {
                                            String conversationId,
                                            Integer minParticipants,
                                            Integer maxParticipants) {
+        // §4.1 的第二列: 这个应用此刻允许开新会话吗。挂在"开"这一条路上而不是挂在两处 ——
+        // ensureSession 找不到活会话时也走这里, 于是"被下架的应用不能凭空多出新会话"只有一处判据。
+        Availability availability = catalogue.availabilityOf(applicationId);
+        if (!availability.allowsNewSession()) {
+            throw new SessionException("APPLICATION_NOT_AVAILABLE",
+                    "应用 " + applicationId + " 当前不可开新会话(可用性: " + availability
+                            + ", 十态原值见 application.status)");
+        }
         ApplicationManifest manifest = manifests.published(applicationId).orElseThrow(() ->
                 new SessionException("UNKNOWN_APPLICATION", "没有已发布的应用 " + applicationId));
         ApplicationVersionRecord version = versions
@@ -122,6 +135,26 @@ public class ApplicationSessionService {
         log.info("[ApplicationSession] 开启 {} principal={}:{} (会话 {})",
                 applicationId, principal.typeName(), principal.principalId(), current.getId());
         return current;
+    }
+
+    /**
+     * 版本行的 id → 版本<em>号</em>(如 {@code 1.0.0})。
+     *
+     * <p>会话行上存的是 {@code version_id}(UUID), 因为那是外键该有的样子; 但对外说
+     * "你开的是哪一版"时必须说版本号 —— {@code 3f2a…-…} 对人、对客户端都没有意义(§16)。
+     * 这一层转换放在服务里而不是控制器里: 哪个字段是 id、哪个是给人看的号, 是数据模型的知识,
+     * 不是 HTTP 的知识。
+     *
+     * <p>版本行不在时返回 {@code null} 而不是抛: 一个会话的版本行被删掉是<em>数据损坏</em>,
+     * 但那不该让"看一眼这个会话"整个失败 —— 三个归属不变量已经在写路径上守住了
+     * "版本行必然存在"。这里降级成一个空版本号, 比 500 有用。
+     */
+    @Transactional(readOnly = true)
+    public String versionLabel(String versionId) {
+        if (versionId == null) {
+            return null;
+        }
+        return versions.findById(versionId).map(ApplicationVersionRecord::getVersion).orElse(null);
     }
 
     /**

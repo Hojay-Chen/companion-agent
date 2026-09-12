@@ -67,18 +67,39 @@ export interface ActionResponse<T = unknown> {
   error?: ActionError | null
 }
 
+/** 会话里"这是什么应用"那一栏 (§16)。只有 id 与版本 —— 名字与图标去详情页拿。 */
+export interface AppRef {
+  id: string
+  version?: string | null
+}
+
 /**
- * 打开一个应用的结果 —— 它 <b>就是</b> 一个会话。
+ * 会话里"我是谁"那一栏 (§16)。
+ *
+ * `id` 是<b>参与者</b>的 id, 不是 principal 的 id —— 同一个人在同一个应用的两局里是两个参与者。
+ * `principalId` 才是跨会话稳定的那个身份。
+ */
+export interface ParticipantRef {
+  id: string
+  principalType: string
+  principalId: string
+  role: string
+}
+
+/**
+ * 打开一个应用的结果 —— 它 <b>就是</b> 一个会话, 形状见方案 §16。
  *
  * v2 之前这里叫 `InstallResponse`, 装着 `installationId`。安装没了之后这个名字跟着消失:
  * 界面上"打开"这个动作产生的唯一东西就是一个会话, 而会话 id 就是接下来每一步动作要用的那个。
+ *
+ * 这里<b>没有</b> `ownerPrincipalId`。那曾经是一个平铺字段, 但它问的是一个错的问题 ——
+ * 一局里可以有好几个人, "主人"只是 `role === 'OWNER'` 的那一个参与者。把主人当成会话的属性,
+ * 就等于把"一个会话属于一个人"这个旧假设又写回了类型里。
  */
 export interface SessionResponse {
   sessionId: string
-  applicationId: string
-  versionId: string
-  ownerPrincipalType: string
-  ownerPrincipalId: string
+  application: AppRef
+  participant: ParticipantRef
   status: string
   visibility: string
   joinPolicy: string
@@ -91,6 +112,95 @@ export interface SessionResponse {
   startedAt?: string | null
   endedAt?: string | null
   lastActiveAt?: string | null
+}
+
+/** §4.1 那张表的三列 —— 应用详情页只说这三件事, 不说十个状态。 */
+export interface AvailabilityView {
+  state: string
+  inMarket: boolean
+  allowsNewSession: boolean
+  allowsExistingSession: boolean
+}
+
+/** §67 的呈现方式。平台只搬运这个词, 不解释它长什么样。 */
+export type SurfaceType = 'FULL_PAGE' | 'EMBEDDED' | 'MODAL' | 'PANEL' | 'INLINE'
+
+/** §18 的三种 UI 模式。`entry` 是<b>模板</b>, 变量只有 `{applicationId}` 与 `{sessionId}`。 */
+export type UiMode = 'EMBEDDED' | 'REMOTE' | 'NATIVE'
+
+export interface SurfaceView {
+  type: SurfaceType
+  entry: string
+}
+
+export interface UiView {
+  type: UiMode
+  entry: string
+  minClientVersion?: string | null
+  surfaces: SurfaceView[]
+}
+
+/**
+ * 应用详情 —— 「应用市场」点进去看到的那一页。
+ *
+ * `status` 是十态原值(给"为什么它不能开"一个准确的说法), `availability` 是五态投影 +
+ * 三列布尔(给"能不能打开"一个可执行的答案)。两个都给, 因为它们是给两种人看的。
+ */
+export interface ApplicationDetail {
+  applicationId: string
+  version?: string | null
+  name?: string | null
+  description?: string | null
+  category?: string | null
+  capabilities?: string[]
+  actionCount: number
+  status?: string | null
+  availability: AvailabilityView
+  ui: UiView
+}
+
+export interface ParticipantView {
+  participantId: string
+  sessionId: string
+  principalType: string
+  principalId: string
+  role: string
+  status: string
+  permissionProfile?: string | null
+  capabilities?: string[]
+  companionId?: string | null
+  userId?: string | null
+  joinedAt?: string | null
+  leftAt?: string | null
+}
+
+/** 铸出来的那张票。<b>`token` 只在铸造响应里出现这一次</b> —— 页面必须当场把它给用户。 */
+export interface InvitationView {
+  invitationId: string
+  sessionId: string
+  role: string
+  maxUses?: number | null
+  usedCount: number
+  status: string
+  expiresAt?: string | null
+  targetType?: string | null
+  targetId?: string | null
+}
+
+export interface MintedInvitation extends InvitationView {
+  token: string
+  joinUrl: string
+}
+
+/** 兑票的结果 —— 一次加入之后, "我在这一场里的位置"。 */
+export interface JoinResponse {
+  participantId: string
+  sessionId: string
+  principalType: string
+  principalId: string
+  role: string
+  status: string
+  capabilities: string[]
 }
 
 export class LapError extends Error {
@@ -148,6 +258,16 @@ export const lap = {
       `/api/v1/capabilities/${encodeURIComponent(capabilityId)}/applications`,
     ),
 
+  /** 全部在架应用 —— 「应用市场」那一页。 */
+  market: () => send<ApplicationView[]>('GET', '/api/v1/applications'),
+
+  /**
+   * 应用详情。**下架的应用这里也打得开** —— 详情页要能说出"它为什么打不开",
+   * 而一个 404 说不出这句话。真正被拒的是"开一局新的"。
+   */
+  application: (applicationId: string) =>
+    send<ApplicationDetail>('GET', `/api/v1/applications/${encodeURIComponent(applicationId)}`),
+
   actionsOf: (applicationId: string) =>
     send<ActionSpec[]>('GET', `/api/v1/applications/${encodeURIComponent(applicationId)}/actions`),
 
@@ -156,6 +276,9 @@ export const lap = {
    *
    * 想续上一局的人该拿旧的 `sessionId` 回来, 而不是指望这里返回同一个: "打开"与"回到刚才那局"
    * 是两件事, 把它们合并会让"再开一局"永远做不到。
+   *
+   * 应用不可用(下架/废弃/还没上架)时平台给 `APPLICATION_NOT_AVAILABLE` —— 抛 LapError, 由页面
+   * 决定怎么说。前端不预判: 判据在服务端一处, 复制一份到这里就会有一天两边不一致。
    */
   openSession: (applicationId: string, options?: { conversationId?: string }) =>
     send<SessionResponse>(
@@ -167,8 +290,77 @@ export const lap = {
   /** 我参与的全部活跃会话 —— "我正在用的应用"那个列表。 */
   sessions: () => send<SessionResponse[]>('GET', '/api/v1/sessions'),
 
+  /** 单独读一个会话。分享链接加入之后、以及任何深链接进来时用。 */
+  session: (sessionId: string) =>
+    send<SessionResponse>('GET', `/api/v1/sessions/${encodeURIComponent(sessionId)}`),
+
+  /** 结束会话。不是"卸载" —— 应用还在市场里, 只是这一局散了。 */
+  endSession: async (sessionId: string): Promise<void> => {
+    await send<null>('DELETE', `/api/v1/sessions/${encodeURIComponent(sessionId)}`)
+  },
+
+  /**
+   * 这一场里有谁。名单里含已经离开的人, 每个人带 `status` ——
+   * "他中途走了"是这一局历史的一部分, 不该被过滤掉。
+   */
+  participantsOf: (sessionId: string) =>
+    send<ParticipantView[]>('GET', `/api/v1/sessions/${encodeURIComponent(sessionId)}/participants`),
+
+  /** 自己走。会话不会因此结束。 */
+  leave: async (sessionId: string): Promise<void> => {
+    await send<null>('DELETE', `/api/v1/sessions/${encodeURIComponent(sessionId)}/participants/me`)
+  },
+
+  /**
+   * 铸一张邀请票。
+   *
+   * 响应里的 `token` 与 `joinUrl` <b>只出现这一次</b> —— 库里只有哈希, 丢了只能重铸一张。
+   * 页面的义务是当场把它交给用户(复制/分享), 而不是"以后再显示"。
+   *
+   * 带了 `targetType` + `targetId` 就是**定向票**: 平台顺手给那一位发一条
+   * `APPLICATION_INVITATION` 事件, 由对方自己决定来不来。不带就是普通的分享票。
+   */
+  invite: (
+    sessionId: string,
+    options?: { role?: string; maxUses?: number; targetType?: string; targetId?: string },
+  ) =>
+    send<MintedInvitation>(
+      'POST',
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/invitations`,
+      options ?? {},
+    ),
+
+  invitationsOf: (sessionId: string) =>
+    send<InvitationView[]>(
+      'GET',
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/invitations`,
+    ),
+
+  revokeInvitation: async (invitationId: string): Promise<void> => {
+    await send<null>('DELETE', `/api/v1/invitations/${encodeURIComponent(invitationId)}`)
+  },
+
+  /**
+   * 兑票进会话 —— **公开**端点, 需要登录但不需要先在会话里。
+   *
+   * 这里传的是 token 明文本身(分享链接里那 30 个字符)。平台侧拿它去比对哈希:
+   * 拿到链接的人进得来, 但看不出这张票编号几号、谁铸的、给谁。
+   */
+  joinByToken: (token: string) =>
+    send<JoinResponse>('POST', `/api/v1/join/${encodeURIComponent(token)}`),
+
   readResource: (uri: string) =>
     send<ResourceView[]>('GET', `/api/v1/resources?uri=${encodeURIComponent(uri)}`),
+
+  /**
+   * 这一场里的全部资源 —— <b>不按 URI 找</b>, 而是问"这一场有什么"。
+   *
+   * 界面组件不该知道 uriTemplate 拼出来的那条 URI 长什么样(`game://session/{id}` 还是
+   * `gomoku://match/{id}`), 那是应用自己的命名, 平台不解释它。资源行自己带着 `uri`,
+   * 从这一场里读出来即可。
+   */
+  resourcesOfSession: (sessionId: string) =>
+    send<ResourceView[]>('GET', `/api/v1/resources?sessionId=${encodeURIComponent(sessionId)}`),
 
   /**
    * 唯一的动作入口。`key` 只对 WRITE / EXECUTE 需要; READ 传空 ——

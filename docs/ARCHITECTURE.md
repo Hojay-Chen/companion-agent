@@ -37,7 +37,7 @@ V10 的世界观是三个系统：
 | `platform-kernel` | library jar | `auth` `common` `config` `outbox`（+ 根下 `HealthController` `ApplicationContextProvider`） | 各平台都要用的最小内核 |
 | `chat-platform` | library jar | `conversation` `event` `simulator` | 会话、消息、SSE、Simulator WS **服务端** |
 | `digital-human-platform` | library jar | `agent` `appraisal` `attention` `behavior` `cognition` `cognitive` `digitalhuman` `emotion` `eval` `experience` `intention` `interaction` `life` `llm` `memory` `openloop` `person` `persona` `phone` `plan` `proactive` `reality` `reflection` `relationship` `runtime` `selfmodel` `sleep` `state` `thought` `tool` `usermodel` `world` | 数字人的全部认知 / 生活 / 记忆 / 状态 + WS **客户端** |
-| `application-platform` | library jar | `application` | 应用的宿主：manifest、能力/应用/动作发现、Resource 统一读模型、Action 网关、权限、安装/会话、内置参考应用、MCP 适配器 |
+| `application-platform` | library jar | `application` | 应用的宿主：manifest（含 `ui` 段）、能力/应用/动作发现、Resource 统一读模型、Action 网关、参与者/权限/会话与邀请、生命周期与 §4.1 可用性投影、内置参考应用、MCP 适配器 |
 | `bootstrap-app` | **可执行 jar** | 无（只有启动类与测试） | 唯一同时看得见三方的模块；`spring-boot-maven-plugin:repackage` 只在这里开 |
 
 六组包两两不相交 —— 这既是为了边界清晰，也是 Java 的硬性要求（split package 会让两个模块的同名包在
@@ -60,6 +60,9 @@ classpath 上静默合并）。`scripts/check-v10.sh` 第 1 步就是自动化�
 | `com.luxera.tictactoe` | `game.play` | 从 DH 迁过来的 | 一个应用可以不认识数字人；棋盘**就是**一条 Resource，不建表 |
 | `com.luxera.gomoku` | `game.play` | 新增 | 第二个同域应用。它的 action id 与井字棋**一模一样**（`game.make_move` 等），只有 URI scheme 不同 —— 所以 handler 注册表的键必须是 `(applicationId, version, actionId)`，用 `Map<String, …>` 会让后注册的覆盖先注册的 |
 | `com.luxera.reminder` | `reminder.manage` | 新增 | 跨能力域；一个把状态放在**自己表里**的应用（`backing: APP_OWNED` + `ResourceProjector`），证明平台允许"会话型资源"与"主体型资源"两种锚点 |
+
+> `reminder` 的清单里**没有** `ui` 段 —— `ui` 是可选的（默认值在 `SurfaceCatalogue` 里现算，不烘进解析结果），
+> 这样一个面向 Agent 的应用可以没有界面，而"作者没写"与"作者写了默认值"在版本 diff 里仍然分得开。
 
 「加一个新应用 = 一份 manifest + 一个 handler 注册，DH 一行不改」这句话的验收方式，就是这三个应用：
 五子棋落地时 `digital-human-platform` 的改动为零。
@@ -157,20 +160,99 @@ DH 侧挂在 `digitalhuman.event.EventRouter` 的 `APPLICATION_EVENT` 上有**�
 > 不落子、不随机、不"取第一个空格"。`AgentApplicationFlowTest` 断言此时 `execute()` 调用次数为 0 ——
 > 这条断言是这条性质在整个重构过程中的保险丝。
 
-### LAP v1 的协议面（`/api/v1`，R4 起）
+### LAP v2 的协议面（`/api/v1`，R9–R11 起）
 
 真人和 Agent 走的是**同一条**路，协议里不存在"Agent 专用接口"：
 
 ```
 GET  /api/v1/capabilities                        能力目录（发现链第 1 级）
 GET  /api/v1/capabilities/{capabilityId}/applications   候选应用（第 2 级）
+GET  /api/v1/applications                        全部在架应用（应用市场那一页）
+GET  /api/v1/applications/{applicationId}        应用详情：十态 status + §4.1 可用性 + ui 段
 GET  /api/v1/applications/{applicationId}/actions       动作 + agentHint（第 3 级）
-POST /api/v1/applications/{id}/install           安装（顺带开一个会话）
-POST /api/v1/sessions   /  GET /api/v1/sessions   /  DELETE /api/v1/sessions/{id}
+POST /api/v1/applications/{applicationId}/sessions      打开应用 = 开一场会话（§16 形状）
+GET  /api/v1/sessions  /  GET /api/v1/sessions/{id}  /  DELETE /api/v1/sessions/{id}
+POST /api/v1/sessions/{id}/participants          加入（幂等；只认 role，身份取自凭据）
+GET  /api/v1/sessions/{id}/participants          这一场里有谁（含已离场者，各带 status）
+DEL  /api/v1/sessions/{id}/participants/me       自己走（会话不因此结束）
+POST /api/v1/sessions/{id}/invitations           铸一张邀请票（响应里的 token 只出现这一次）
+GET  /api/v1/sessions/{id}/invitations           这个会话发过的票（只有主人）
+DEL  /api/v1/invitations/{invitationId}          收回一张票
+POST /api/v1/join/{token}                        兑票进会话（公开端点，持票即入）
 POST /api/v1/subscriptions                       会话之内的事件订阅
-GET  /api/v1/resources?uri=                      统一读模型（只读，无幂等键）
+GET  /api/v1/resources?uri= | ?sessionId= | ?applicationId=   统一读模型（只读，无幂等键）
 POST /api/v1/actions:execute                     唯一的动作入口（Canonical；/actions/execute 是别名）
+PATCH /api/v1/applications/{id}/status           生命周期状态机（只有平台自己是演员）
+PUT  /api/v1/applications/{id}/versions/{v}/manifest     写一份新版本的清单
 ```
+
+> **`POST /api/v1/applications/{id}/install` 已经不存在了。** v2 里应用不需要"装"，也不需要
+> "卸" —— 打开就是开一场会话，结束会话不等于卸载应用。这条路径的消失是 §130 原则 1 的落点，
+> `check-lap.sh` 里有一条断言专门守着它（加回任何一个"安装"入口，那条立刻红）。
+
+### 打开一个应用返回什么（§16）
+
+```json
+{
+  "sessionId": "sess_xxx",
+  "application": { "id": "com.luxera.gomoku", "version": "1.0.0" },
+  "participant": { "id": "participant_xxx", "principalType": "HUMAN",
+                   "principalId": "u_xxx", "role": "OWNER" }
+}
+```
+
+响应里**没有** `ownerPrincipalId`。那曾经是一个平铺字段，但它问的是一个错的问题 ——
+一局里可以有好几个人，"主人"只是 `role === 'OWNER'` 的那一个参与者。把主人当成会话的属性，
+等于把"一个会话属于一个人"这个旧假设又写回类型里。
+
+### 可用性：十态是事实，五态是投影（§4.1）
+
+生命周期保留 R8 的**十个**状态（`DRAFT` … `DEPRECATED`），它们是对开发者后台说的；
+使用者问的永远只有三个问题，于是有一层投影把它们压成**五个** `Availability`：
+
+| Availability | 十态来源 | 在市场上 | 允许新会话 | 允许已有会话 |
+|---|---|---|---|---|
+| `DRAFT` | DRAFT, DEVELOPING, TESTING, REJECTED | ✗ | ✗ | ✗ |
+| `REVIEWING` | SUBMITTED, REVIEWING, APPROVED | ✗ | ✗ | ✗ |
+| `PUBLISHED` | PUBLISHED | ✓ | ✓ | ✓ |
+| `SUSPENDED` | SUSPENDED | ✗ | ✗ | ✓ |
+| `DEPRECATED` | DEPRECATED | ✗ | ✗ | ✓ |
+
+`ApplicationCatalogue.isDiscoverable(id)` 现在**就是** `availabilityOf(id).inMarket()` —— 一个真相源。
+应用不可用时开会话拿到的是 **409 `STATE_CONFLICT`（`APPLICATION_NOT_AVAILABLE`）而不是 404**：
+"被下架了"和"没有这个应用"是两件事，而前者需要一个能说出口的答案。
+`AvailabilityProjectionTest` 把这张表**逐行**钉住（不是断言"PUBLISHED 是 true、其他是 false" ——
+那种写法对 `SUSPENDED` 和 `DRAFT` 说了同一句话，而这两行的区别正是这张表唯一有价值的地方）。
+
+### 应用界面：`ui` 段与五种 Surface（§17/§18/§67–§69）
+
+manifest 的第 8 个小节 `ui` 只声明三件事：
+
+```json
+"ui": {
+  "type": "EMBEDDED",
+  "entry": "/applications/{applicationId}",
+  "minClientVersion": "1.0.0",
+  "surfaces": [ { "type": "FULL_PAGE", "entry": "/applications/{applicationId}/sessions/{sessionId}" } ]
+}
+```
+
+```
+ui.type   EMBEDDED（平台自己实现） | REMOTE（第三方 Web，iframe） | NATIVE（移动/桌面端）
+surfaces[].type   FULL_PAGE | EMBEDDED | MODAL | PANEL | INLINE     ← §67
+entry 是模板，变量只有 {applicationId} 与 {sessionId}；客户端做且只做替换
+```
+
+**平台不定义 UI 渲染协议**（§69）：没有 button/color/layout/font/component。LAP 是
+Application Runtime Protocol，不是 UI Rendering Protocol —— 否则最终会重新造一个 Flutter。
+这条边界在代码里是机械的：`ManifestParser` 拒绝 `ui` 与 `surfaces` 里任何不认识的键
+（`UI_UNSUPPORTED_KEY`），而不是静默忽略 —— 静默忽略会让平台一点一点长出 UI 参数，
+而每一步看起来都只是"多支持一个字段"。
+
+前端对应一侧是一个 `SurfaceHost` + 一张内置应用登记表（`frontend/src/surfaces/`）：
+**呈现方式归平台，界面内容归应用**。五种 Surface 是五种**交互契约**（谁有遮罩、谁能被关掉、
+谁会被拒绝渲染），不是五个 CSS 类；`SurfaceHost.test.tsx` 断言的是这些行为差别，
+且它读的是**后端仓库里那份真的 manifest**，不是手抄的副本。
 
 动作请求是刻意做小的：`{"action","target","input"}` + `Idempotency-Key` 头；
 响应是 `{"status","result","resource","events","error"}`（顶层 `status`/`error` 是对设计稿的修正 ——
