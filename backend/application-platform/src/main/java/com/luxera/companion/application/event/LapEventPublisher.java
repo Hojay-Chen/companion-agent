@@ -16,7 +16,8 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * LAP v1: 应用事件出平台的唯一出口。
+ * LAP v1: 应用事件出平台的唯一出口 —— v2 起它同时是<em>平台事件</em>的出口(见
+ * {@link #publishPlatform})。
  *
  * <p><b>三道闸, 缺一不可</b>:
  * <ol>
@@ -104,6 +105,55 @@ public class LapEventPublisher {
     /** 平台自己的维护任务(回收器、测试)用: 立即投递, 不经事务同步。 */
     public void publishNow(ApplicationManifest manifest, List<ApplicationEvent> events) {
         deliver(forwardable(manifest, events));
+    }
+
+    /**
+     * LAP v2: <b>平台事件的发射通道</b> —— 不查 {@code triggersAgent}, 也不做路由。
+     *
+     * <p>为什么这里必须开一条与 {@link #publishAfterCommit} 不同的路: 那两道闸(类型级
+     * {@code triggersAgent} + 实例级 {@code agentTrigger})是防<em>应用</em>的 —— 应用不该
+     * 自己决定"叫醒数字人"。而平台自己的事件({@code APPLICATION_INVITATION}: "有人邀请你了",
+     * 计划修正 2)恰恰<em>就该</em>叫醒数字人, 且它不属于任何 manifest —— manifest 是应用作者
+     * 写的, 平台的意图不能寄存在应用作者的笔下。
+     *
+     * <p><b>路由也不经过 {@link AgentRouteResolver}。</b>那条路由回答的问题是"这条事件挂着的
+     * 会话里有哪些 AGENT 参与者" —— 而邀请事件收件的是一个<em>还没进来</em>的人(它正是被邀请
+     * 才有机会进来的)。问"他在不在这场里", 答案必然是没有。于是收件人由铸造调用方显式点名,
+     * {@code data.companionId} 在铸好那一刻就已经盖上 —— 平台直接投给这个人, 而不是查一遍
+     * 名单再投。这并不是绕过安全检查: 点名的人只能是会话主人({@code InvitationService.mint}
+     * 的 {@code requireOwned}), 而收不收数字人那边自己决定(accept / reject / ignore)。
+     *
+     * <p>实例级那道闸({@code data.agentTrigger})不查是同样的理由: 邀请事件的整个载荷就是
+     * "这一次该叫醒谁", 没有比它更细的一级了。
+     */
+    public void publishPlatform(List<ApplicationEvent> events) {
+        if (events == null || events.isEmpty() || sinks.isEmpty()) {
+            return;
+        }
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    deliverStamped(events);
+                }
+            });
+        } else {
+            deliverStamped(events);
+        }
+    }
+
+    /** 平台事件已被点名, 直接投给 sink —— 收件人在 {@code data.companionId} 上。 */
+    private void deliverStamped(List<ApplicationEvent> events) {
+        for (ApplicationEvent event : events) {
+            for (ApplicationEventSink sink : sinks) {
+                try {
+                    sink.emit(event);
+                } catch (Exception e) {
+                    log.warn("[LapEventPublisher] 平台事件投递失败 {} → {}: {}",
+                            event.id(), sink.getClass().getSimpleName(), e.getMessage());
+                }
+            }
+        }
     }
 
     private List<ApplicationEvent> forwardable(ApplicationManifest manifest, List<ApplicationEvent> events) {

@@ -45,11 +45,18 @@ public class SessionException extends RuntimeException {
                 case "NOT_A_PARTICIPANT", "PARTICIPANT_INACTIVE", "NOT_SESSION_OWNER",
                      "SESSION_INVITE_ONLY", "SESSION_JOIN_CLOSED", "SESSION_FULL" ->
                         ActionStatus.DENIED;
-                case "UNKNOWN_APPLICATION", "VERSION_NOT_PUBLISHED", "UNKNOWN_SESSION" ->
+                case "UNKNOWN_APPLICATION", "VERSION_NOT_PUBLISHED", "UNKNOWN_SESSION",
+                     "UNKNOWN_INVITATION" ->
                         ActionStatus.NOT_FOUND;
                 // 不是"你的请求写错了"(400 会让客户端去改载荷), 而是"目标的状态不允许这件事了" ——
                 // 会话结束该另开一个, 会话没进入 ACTIVE 该等一会儿。两者都是换时机, 不是换载荷。
                 case "SESSION_ENDED", "SESSION_NOT_ACTIVE" -> ActionStatus.STATE_CONFLICT;
+                // 邀请的终局。票已经死了(用过/过期/撤回), 这不是换载荷能解决的, 得换一张票;
+                // 409 让客户端认下"这张票到此为止"。
+                case "INVITATION_CONSUMED", "INVITATION_EXPIRED", "INVITATION_REVOKED" ->
+                        ActionStatus.STATE_CONFLICT;
+                // 邀请状态机上的非法转移: 两个调用方同时消费同一张票时, 输的那个该重读。
+                case "ILLEGAL_INVITATION_TRANSITION" -> ActionStatus.STATE_CONFLICT;
                 // 三条归属不变量破了。这不该发生; 真发生了说明库里的数据自相矛盾, 调用方无论
                 // 改什么载荷都过不去 —— 409 让它别重试, 500 会让它以为是服务挂了。
                 case "SESSION_VERSION_MISMATCH", "SESSION_OWNER_MISMATCH",
