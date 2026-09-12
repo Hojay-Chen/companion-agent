@@ -111,6 +111,14 @@ public class ParticipantService {
             existing.setPrincipalId(principalId);
         } else if (!existing.active()) {
             existing.setLeftAt(null);
+        } else {
+            // 已在场者: 角色/配置已是既定事实(尤其 OWNER 不该被邀请的 MEMBER 覆盖),
+            // 幂等只补齐授权与状态, 不改所有权归属。
+            grantsFor(session.getApplicationId(), existing);
+            syncStatus(session);
+            log.info("[Participant] {}:{} 已在会话 {} 中, 跳过角色重置",
+                    principalType, principalId, sessionId);
+            return existing;
         }
 
         existing.setRole(normalizeRole(role, session, principalType, principalId));

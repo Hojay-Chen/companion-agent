@@ -213,7 +213,7 @@ backend/
 
 ---
 
-## LAP · 应用平台与生态（2026-09，进行中；R9 起为 v2 重构）
+## LAP · 应用平台与生态（2026-09，R1–R15 全部完成）
 
 > **本轮依据**：《LAP v1 — Application Platform Final Architecture》。四层协议
 > （Chat Platform Protocol / Application Protocol / Application Manifest / Adapter-Transport），
@@ -231,7 +231,7 @@ backend/
 3. **没有"操作"的抽象** —— `/api/v10/games/tictactoe/*` 从请求体里手取 `userId`/`companionId`，
    忽略已认证身份；`Idempotency-Key` 收下就丢。
 
-### 已完成（R1–R14）
+### 已完成（R1–R15）
 
 | 轮 | 内容 | 证据 |
 |---|---|---|
@@ -250,6 +250,7 @@ backend/
 | **R12** | **Chat / Application 深度集成。** 新契约包 `contracts/chat/`（6 个 DTO `ApplicationCard` / `ApplicationLaunchRequest` / `ParticipantView` / `ApplicationSessionView` / `ApplicationLaunchResponse` / `ApplicationInvitation` + `ApplicationCatalogException` + `package-info`）与第 3 个 SPI 端口 **`ApplicationCatalogPort`**（`cards` / `card` / `sessionsOfConversation` / `session` / `launch` / `invite`）；平台侧实现 `ApplicationCatalogAdapter`（把 `SessionException` 翻成跨模块的 `ApplicationCatalogException`，保住 `ActionStatus`）；`ApplicationSessionService.ofConversation()` / `applyLaunchOptions()` + 仓储 `findByConversationId`；chat-platform 加**三个会话上下文端点** `GET/POST /api/companions/{c}/conversations/{v}/applications` 与 `POST …/{sessionId}/share`；**应用卡片就是一条消息**（`messageKind=APPLICATION_CARD` / `APPLICATION_INVITATION`，metadata 带 applicationId/sessionId/name/role/status，走 `ConversationService.addMessage` **不唤醒数字人**）；`application_session.conversation_id` 落库（§85）；前端 `api/chatApplications.ts` + `ApplicationCardBubble` 两张卡片（进入 / 分享到对话 / 复制链接）+ Chat 侧「一起玩点什么」面板 | `ChatApplicationPortTest` **6 条**（行为证明：整条链路跑在一个本仓库从未见过的应用 `com.example.paper-plane` 上；源码证明：扫集成代码里不出现任何一个真实应用 id/动作名）、`ApplicationCardMessageTest` **4 条**（卡片是一条消息 / 同一条时间线 / 令牌明文进消息 / **被拒时绝不留下说假话的卡片**）、`ModuleBoundaryArchitectureTest` 六条仍绿；前端 `ApplicationCardBubble.test.tsx` **9 条**；`check-lap.sh` 新增**断言 19**（16 条：真实适配器跨端口开应用 → 卡片落 `messages` → 分享落消息而明文不进库 → 未知应用 404 `UNKNOWN_APPLICATION`） |
 | **R13** | **Agent Participation —— 数字人成为一种用户。** `ApplicationRuntimePort` 加四个方法（`sessionsOf` / `joinByInvitation` / `joinSession` / `leaveSession`）+ `SessionRef` 记录；DH 侧新增 **`SessionResolver`**（定位四策略：显式 context > 资源行上的 sessionId > 平台说"我在这一场里" > 可发现的开着门的场；`locate` **只读**、`enter` 才进场，`enter` 遇到"点名了一场进不去的"**抛而不是另开一场**）；`CapabilityResolver` / `ApplicationResolver` / `ActionSelector` 从 `AgentApplicationFlow` 拆出；`AgentApplicationFlow` 改成**八段 Pipeline**（READ → LOCATE → CONTEXT → PENDING → ELIGIBLE → DECIDE → EXECUTE → RECORD）+ `PipelineReport`（停在哪一段、为什么、用的是哪条策略）；新增 **`AgentApplicationInvitationHandler`**（accept / reject / **ignore** 三态，兑票走 `joinByInvitation` —— 与真人点开 `/join/{token}` 逐字相同的门）；`RealityEventType` 加 `APPLICATION_INVITATION_ACCEPTED` / `APPLICATION_INVITATION_DECLINED` | `AgentApplicationFlowTest` **21 条一条不改**（R2/R7 留下的保险丝原样通过）、新增 `SessionResolverStrategyTest` **13 条**、`AgentApplicationInvitationTest` **12 条**（含"明文票一个字都不许进账本"与"LLM 不可用 ⇒ 没决定 ⇒ 不记账"）、`AgentApplicationPipelineTest` **9 条**（每段各自的停机理由 + "定位不到会话不是失败"）、`DhApplicationKnowledgeArchitectureTest` 仍绿；DH **275 → 309 测试**；`check-lap.sh` 新增**断言 20**（定向邀请 → 平台事件通道 → 单向门 → 数字人邮箱；含"收件人此刻还不在这一场里"的前置断言，证明邀请不走参与者名单） |
 | **R14** | **第三方生态 —— 一个 LAP 应用可以活在平台进程之外。** 三个入口同时打开：**① Developer API**（`developer` 表，一个真人多个开发者身份；`POST /api/v1/developers` 幂等、`POST /developers/{id}/applications` **认领**应用 id —— 应用 id 就是 manifest 的反向域名身份，第二个认领者 409 `APPLICATION_TAKEN`；`requireOwned` 归属闸门 + `NOT_YOUR_APPLICATION`；挂起开发者 = 吊销钥匙不删数据）；**② 双 SDK**（Python `sdk/python/luxera_application` 零依赖纯标准库：`LapServer` + `@action` 装饰器 + `verify_request` 三道闸（缺头/时窗/常数时间比较）+ `IdempotencyStore`（**失败也缓存**）+ `LAP_SERVICE_SECRET`；TS `sdk/typescript` 用 node:crypto，与 Java 平台、Python SDK **逐字节同一套 HMAC**：`sha256=` + hex(timestamp + "." + body)，300 秒重放窗，`timingSafeEqual`）；**③ 参考远端 `remote-apps/gomoku`**（纯标准库 Python 五子棋，动作/错误码与内置同名同义，`LAP_SERVICE_SECRET` 缺失时 503 `REMOTE_NOT_CONFIGURED` 而不是裸跑） | `DeveloperApiTest` **12 条**、`RemoteRegistrationTest` **8 条**（含"签名与独立实现逐字节一致"—— 测试里用裸 Mac/SecretKeySpec 另算一遍，不是拿 `RemoteSignature.sign` 自证；远端挂了回 `REMOTE_UNAVAILABLE/FAILED` 而非异常）、TS SDK `node --test` **4 条**、`check-remote-app.sh` **R1–R6 全绿**（R1 同能力两个实现并存于发现链；R2 从零到应用行 + 重认领 409；R3 一步棋跨 Java→HTTP→HMAC→Python 四层**且远端状态投影成 resource 行读得回**；R4 同键重发手数不变 —— 四层幂等；R5 远端 409 → `REMOTE_CONFLICT` + 远端原话带回；R6 manifest 无密钥）；两个由 E2E 抓出的真修复：`SecurityConfig` 放行三个开发者端点（过滤器层 403，控制器与单测都看不见）、`UNKNOWN_DEVELOPER` 进 `SessionException` 状态表（default 掉到 400，而"查无此人"是 404） |
+| **R15** | **生态收官 —— 架守护栏 + 整链验收。** 两个交付物：**① `LapEcosystemArchitectureTest`**（bootstrap-app，把 §115–§118 的四条架构不变量从文档变成会红的规则：聊天平台不许知道任何内置应用（§115）；动作执行永远经 `ActionGateway` —— web 层不许直接碰 Handler/Registry/Resolver 那一族，正面还断言 `LapActionController` 依赖 `ActionGateway`（§116）；对 `ResourceRepository` 的写只有 resource 与 repository 两个包（§117）；`AgentRuntime` 对应用平台的全部依赖被禁 —— Agent 只经 Port 或 MCP 进来（§118）。规则的**非空性是注入探针证过的**：往 web 与 chat 各写一个违规类，四条规则各自炸出真违规再删掉变绿 —— 一条从不失败的守卫等于没有守卫）；**② `scripts/check-ecosystem.sh`**（§126 那条完整链一条脚本走完：远端五子棋 + 带 `LAP_REMOTE_APPLICATIONS` 的 jar 一起起，E1 发现链上内置与远端并存；E2 Human A 开局落子天元；E3 铸票兑票（幂等不烧名额）；E4 定向邀请 Agent + MCP 落子；E5 同一行 resource 上 `board[112]=X`(Human) / `board[7]=O`(Agent 经 MCP)、手数=2、参与者行数与兑票幂等一致；E6 能力→应用→动作三级接口面 + `reminder.manage` 候选里没有游戏（能力隔离）；E7 审计账本上 HUMAN 与 AGENT 各有行动 —— 同一条审计链） | `LapEcosystemArchitectureTest` **4 条**（探针注入 → 真违规 → 清掉 → 绿）、`ParticipantTest` **24 → 25 条**（新钉"场主兑自己的 MEMBER 票不丢所有权"）；`check-ecosystem.sh` **E1–E7 全绿**；又一个由 E2E 抓出的真缺陷：`ParticipantService.join` 对**已在场者**也会拿邀请的 role 覆盖原 role —— 场主先兑自己的分享链接（幂等）就被降成 MEMBER，随后的定向邀请回 `NOT_SESSION_OWNER`。既有幂等单测只数行数，行数没变、所有权悄悄没了。修法：已在场者跳过角色重置，幂等只补授权与状态 |
 
 **R9 的关键决定**（删掉 Installation 之后，会话必须总是存在）：
 
@@ -452,6 +453,51 @@ backend/
    钉住这条；它反过来也说明：**新 code 必须带一个"它该映射成什么状态"的测试**，否则
    default 不会自己开口说话。
 
+**R15 的关键决定**（架构不变量变成会红的规则，整链一次走完）：
+
+1. **一条从不失败的守卫等于没有守卫 —— 所以每条规则都要先证明自己会红。** 四条 ArchUnit
+   规则（§115–§118）写完后的验证不是"跑一遍绿"，而是**注入探针**：往 web 包写一个引用
+   `RemoteApplicationInvoker` + `ResourceRepository` 的 `ProbeController`、往 chat 包写一个
+   引用内置应用的 `GuardProbe`，跑测试看四条规则各自炸出真违规，再删掉探针看它变绿。
+   中间还踩了 ArchUnit 1.0.1 的两个坑：`doNotResideInAnyPackage` / `haveAnyOfNames` 不存在
+   （用 `resideOutsideOfPackages(String...)` 与 `haveNameMatching(regex)`）；删掉探针源文件
+   后规则仍红 —— **target 里的旧 `.class` 还在**，必须 `clean` 才是真的删掉了。
+2. **§116 第一版规则阻塞了整个 action 包 —— 17 个违规里多数是合法的。** "web 不许依赖
+   action 包"会连 `LapActionController → ActionGateway` 一起禁掉，而 Gateway 恰恰就住在
+   action 包里。守卫要守的是"绕过 Gateway 直碰 Handler/Resolver 那一族"，不是"不许进门"。
+   修法：按**类名**禁（`haveNameMatching` 那一族 handler 侧类），外加一条正面断言
+   （Controller 必须依赖 `ActionGateway`）—— 只禁不证，规则改对了也看不出来。
+3. **幂等的第二层：行数没变 ≠ 什么都没变。** E2E 走到"场主给 Agent 发定向邀请"时回
+   `NOT_SESSION_OWNER` —— 而场主三分钟前才铸的票。链条是：`ParticipantService.join` 对
+   **已在场者**也执行 `setRole(normalizeRole(邀请的role))`，场主兑自己的分享链接（幂等、
+   不烧名额、行数不变）时被票上的 MEMBER 盖掉了 OWNER。既有幂等单测 `joiningTwiceIsTheSameAsJoiningOnce`
+   只断言行数与 id —— 全绿，所有权悄悄没了。修法：已在场者跳过角色重置；新单测
+   `anOwnerRedeemingTheirOwnMemberTicketStaysOwner` 钉住。教训与 R14 决定 7/8 同族：
+   **过滤器层、状态表 default、行数不变的角色漂移，都是"单测绿而真链路红"的同一类盲区** ——
+   这也是每轮都要跑真进程 E2E 的理由。
+4. **MCP 工具名的"全名退化"是保护，不是默认。** 远端五子棋（`com.luxera.remote-gomoku`）与
+   内置（`com.luxera.gomoku`）并存，但短名各是 `remote-gomoku` 与 `gomoku`（短名 = id 的
+   **最后一段**），census 各为 1 —— **不撞，所以用短名**。第一版脚本想当然写了全名
+   `com_luxera_remote_gomoku.game_make_move` 而吃 `TOOL_NOT_FOUND`：全名只在短名真的撞车时
+   才出现。"两个五子棋并存"是 §107 的证据，但并存 ≠ 撞车 —— 那条退化规则有自己的单测钉着，
+   E2E 这里反而是它的反例面。
+5. **EXECUTE 级动作的幂等键在 MCP 面同样必须。** MCP 适配器收两处：请求头 `Idempotency-Key`
+   优先，`arguments._idempotencyKey` 兜底（给设不了请求头的客户端）。E2E 第一版没带，网关
+   回 `IDEMPOTENCY_KEY_REQUIRED` —— 适配器不另判一套"写动作要不要键"，统一交给网关按
+   权限级别说话。**Agent 落子与真人落子遵守同一条幂等纪律**，这就是"Gateway 的一个 Adapter"
+   的含义。
+6. **验收脚本的诚实性：单账号下的 join 断言写什么。** 验收机注册关闭、只有一个登录账号 ——
+   "Human B 从分享链接进来"这一跳没有第二个真人。脚本没有假装它发生了：默认断言是
+   "场主幂等兑票不加行"（参与者=2：场主+Agent），而 `CHECK_USER_B`/`CHECK_PASS_B` 给出第二
+   个账号时同一脚本自动升级为完整三人局断言（参与者=3）。**断言要跟事实走，而不是跟
+   叙事走** —— 硬写 3 会把幂等兑票的真行为（这正是要验的）判成失败。
+7. **生态链上每一跳都有守着自己的另一条断言，E2E 不重复它们，只把链走通。** §107 的"DH
+   零改动"由 `DhApplicationKnowledgeArchitectureTest` 守（源码里不出现 `gomoku`）；
+   §109–§111 的 LLM 三级收窄由 `check-lap.sh` 断言 11 与 `AgentApplicationFlowTest` 守；
+   Agent 的"无 Application 专用 API"（原则 5）由 §118 规则守。`check-ecosystem.sh` 验的是
+   **这些已被单独证明的环节拼成一条链之后仍然成立** —— E2 的开局、E4 的定向邀请、E5 的
+   同一行 resource、E7 的同一条审计链，单独看哪一环都不新，连起来走通才是 §126。
+
 **R5 的关键决定**（两个新增参考应用 + DH 提醒只读改造）：
 
 1. **提醒的真相搬进了应用，DH 的 REST 面一个字没改。** `reminder_item` 表归
@@ -624,8 +670,8 @@ DH 的改动全是提醒只读改造带来的），R7 之后它又多了一道�
 
 ### 当前验收
 
-- `mvn test`：**803 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform **34** /
-  digital-human-platform **309** / application-platform **398** / bootstrap-app **39**
+- `mvn test`：**808 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform **34** /
+  digital-human-platform **309** / application-platform **399** / bootstrap-app **43**
 - `bash scripts/check-v10.sh` → `check-v10 OK`（41 个顶层包分属 5 个所有权模块，10 对引用 + 10 对 pom）
 - `bash scripts/check.sh`（起 jar）→ **✅ 全量验收全部通过**（聊天/数字人链路无回归；
   含 R5 新增的 16 条提醒契约断言）
@@ -659,10 +705,18 @@ DH 的改动全是提醒只读改造带来的），R7 之后它又多了一道�
   （R3）、同键重发手数不变（R4）、远端 409 以 `REMOTE_CONFLICT` 转述且原话带回（R5）、
   manifest 里只有 `authRef` 没有密钥（R6）；两个真缺陷由它抓出（过滤器层 403、
   `UNKNOWN_DEVELOPER` 落 default 400）
+- `bash scripts/check-ecosystem.sh`（R15）→ **✅ E1–E7 全绿**：自己起远端五子棋与带
+  `LAP_REMOTE_APPLICATIONS` + `LAP_MCP_SERVICE_KEY` 的 jar，把 §126 整条链一次走完 ——
+  E1 发现链上内置与远端两个五子棋并存；E2 Human A 开局落子天元；E3 铸票兑票（幂等不烧名额）；
+  E4 定向邀请 Agent 进场 + 经 MCP `remote-gomoku.game_make_move` 落子；E5 同一行 resource 上
+  `board[112]=X`（Human）/ `board[7]=O`（Agent）、手数=2、参与者行数与兑票幂等一致；
+  E6 能力→应用→动作三级接口面 + `reminder.manage` 候选里没有游戏（能力隔离）；E7 审计账本上
+  HUMAN 与 AGENT 各有行动 —— 同一条审计链。一个真缺陷由它抓出（`ParticipantService.join`
+  对已在场者也拿邀请 role 覆盖原 role，场主兑自己的分享链接后被降成 MEMBER）
 - **CI 顺序**（每一轮都照这个跑）：`check-v10.sh` → `mvn test` → 起 jar（断言 14 要求带
   `LAP_MCP_SERVICE_KEY`）→ `check.sh` → `check-lap.sh` → `check-remote-app.sh` →
-  `npm test` → `npm run build`
-- **LAP v1 的九轮（R0–R8）已全部完成。**
+  `check-ecosystem.sh` → `npm test` → `npm run build`
+- **LAP v1 的九轮（R0–R8）与 v2 的七轮（R9–R15）已全部完成。**
 
 ---
 

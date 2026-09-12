@@ -99,6 +99,22 @@ bootstrap-app            ──► chat + DH + application + contracts   （只�
 | 包归属互斥 + 源码引用 + pom 依赖图 | `scripts/check-v10.sh` | grep（快速第一道） | 提交前 / CI，`mvn compile` 之前就能发现问题 |
 | contracts 自足性（白名单） | `contracts/src/test/java/.../architecture/ArchitectureTest.java` | ArchUnit | `mvn test` |
 | 三方互不依赖 | `bootstrap-app/src/test/java/.../architecture/ModuleBoundaryArchitectureTest.java` | ArchUnit（看字节码） | `mvn test` |
+| 生态四层护栏 §115–§118 | `bootstrap-app/src/test/java/.../architecture/LapEcosystemArchitectureTest.java` | ArchUnit | `mvn test` |
+
+**R15 补的第四条守卫**守的是应用生态自身的四条不变量（§115–§118），与上面三条"模块之间"
+的规则互补 —— 它们守的是"同一模块里哪一层不许碰哪一层"：
+
+| 条款 | 不变量 | 症状（守不住会长什么样） |
+|---|---|---|
+| §115 | chat-platform 不认识任何内置应用 | 会话代码里长出 `if (app == gomoku)`，加第二个游戏要改聊天 |
+| §116 | 动作执行永远经 `ActionGateway` | web 层直接 new 一个 Handler，幂等/授权/审计全部绕开 |
+| §117 | 对 `ResourceRepository` 的写只在 resource 与 repository 两个包 | 业务代码直接 `save` resource 行，版本/CAS 悄悄失效 |
+| §118 | `AgentRuntime` 对应用平台的依赖被禁 | Agent 绕过 Gateway 调应用，"Agent 没有 Application 专用 API"变成空话 |
+
+四条规则的非空性是**注入探针证过的**：往 web 与 chat 各写一个违规类，看四条规则各自炸出真违规再删掉
+变绿 —— 一条从不失败的守卫等于没有守卫。§116 的写法值得记住：**按类名禁 handler 那一族，外加
+"Controller 必须依赖 Gateway"的正面断言** —— 只禁不证，规则改对了也看不出来（第一版按包禁，把
+合法的 `Controller → ActionGateway` 也禁了：Gateway 自己就住在 action 包里）。
 
 **为什么 ArchUnit 规则要放在两个不同的模块**：
 
@@ -448,10 +464,14 @@ MCP 是**适配器，不是第二个平台**。它只做两件翻译，两件都
 > `application_session` 计数不变，`check-lap.sh` 断言 14 在真实服务上再断言一遍。
 > 少了后半句，"没有创建会话"也可能只是因为那条链路根本没执行 —— 所以它同时断言棋盘真的变了。
 
-**工具名**是 `<应用短名>.<动作 id 里的点换成下划线>`（`tictactoe.game_make_move`）。井字棋与五子棋
-的**动作 id 完全一样**，靠应用短名分开；若两个应用的短名还撞车，整个目录一起退化成全名
-（`com_luxera_a_b.game_make_move`）—— 只给其中一个改的话，工具名会变成"取决于另一个应用存不存在"的
-东西。描述文字（`description`）是应用的 `agentHint` 与资源模板的投影，LLM 对应用的了解**只有**这一段。
+**工具名**是 `<应用短名>.<动作 id 里的点换成下划线>`（`tictactoe.game_make_move`），短名 = id 的
+最后一段。井字棋与五子棋的**动作 id 完全一样**，靠应用短名分开；若两个应用的短名还撞车，
+整个目录一起退化成全名（`com_luxera_a_b.game_make_move`）—— 只给其中一个改的话，工具名会变成
+"取决于另一个应用存不存在"的东西。**注意：短名是 id 的最后一段，不是"同类应用的统称"** ——
+远端五子棋 `com.luxera.remote-gomoku` 与内置 `com.luxera.gomoku` 的短名各是 `remote-gomoku` 与
+`gomoku`，census 各为 1，**不撞 → 用短名**；全名只在短名真的撞车时才出现（R15 的 E2E 第一版
+想当然写了全名而吃 `TOOL_NOT_FOUND` —— "两个五子棋并存"是 §107 的证据，但并存 ≠ 撞车）。
+描述文字（`description`）是应用的 `agentHint` 与资源模板的投影，LLM 对应用的了解**只有**这一段。
 
 > **`/mcp` 在 `SecurityConfig` 里是 `permitAll`，这不是漏洞。** MCP 客户端没有 JWT —— 它是外部
 > Agent，手里只有 `X-Mcp-Principal` + `X-Mcp-Service-Key`，由 `McpPrincipalResolver` 自己验。
@@ -557,6 +577,27 @@ outbox 的主键是 `sha256(eventId + "@" + subscriptionId)` —— **该事件�
 
 > **投递失败绝不静默丢弃**：`attempts` 累加 + `last_error` 落库，超过 `app.lap.outbox.max-attempts`
 > 转 `DEAD` 并停止重试。留一行能查的死信，好过让它消失。
+
+### 生态整链验收（R15）
+
+`scripts/check-ecosystem.sh` 把 §126 那条完整链一条脚本走完 —— 它自己起远端五子棋（Python）
+与带 `LAP_REMOTE_APPLICATIONS` + `LAP_MCP_SERVICE_KEY` 的 jar，然后依次验七组断言：
+
+| 断言 | 链上的那一跳 | 判据 |
+|---|---|---|
+| E1 | 发现链 | 内置与远端两个五子棋在 `game.play` 候选里并存（§107） |
+| E2 | Human A 开局 | `POST /applications/{id}/sessions` 200，`game.create` 200，落子天元 |
+| E3 | 分享链接的票 | 铸票 200 → `/join/{token}` 200（幂等不烧名额；第二个账号由 `CHECK_USER_B`/`CHECK_PASS_B` 升级成完整三人局） |
+| E4 | Agent 进场落子 | 定向邀请（`targetType=AGENT`）200 → participant 行 + 授权行 → MCP `remote-gomoku.game_make_move` 200 且 `isError=false` |
+| E5 | 共享世界 | 同一行 resource 上 `board[112]=X`(Human) / `board[7]=O`(Agent)、手数=2、参与者行数与兑票幂等一致、225 格整盘读回 |
+| E6 | 接口面 | `GET /capabilities` 有 `game.play`、`GET /actions` 有 `game.make_move`、`reminder.manage` 候选里没有游戏（§110 能力隔离） |
+| E7 | 审计链 | `application_action_log` 按 `resource_uri` 查，HUMAN 与 AGENT 各有行动 |
+
+它抓出过一个真缺陷：`ParticipantService.join` 对**已在场者**也拿邀请的 role 覆盖原 role ——
+场主兑自己的分享链接（幂等、行数不变）就被降成 MEMBER，随后的定向邀请回 `NOT_SESSION_OWNER`。
+既有幂等单测只数行数。修法是已在场者跳过角色重置，新单测钉住。这条链上每一步都有
+别的断言守着（§115–§118 的架构规则、`check-lap.sh` 断言 11/14、各单元测试），
+E2E 验的是**它们拼成一条链之后仍然成立**。
 
 **空闲会话回收**（`SessionReaperJob`，默认阈值 168 小时）**只结束、从不删除**。这条区别不是措辞上的：
 被结束的会话仍然解释得通（还记得是谁、装的哪一版、在哪个安装下开的），而删掉的会话会让它名下所有

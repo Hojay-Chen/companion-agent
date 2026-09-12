@@ -220,6 +220,28 @@ class ParticipantTest {
     }
 
     /**
+     * <b>主人兑自己的 MEMBER 票不会丢所有权。</b>幂等的第二层: 已在场者重进, 角色是既定事实,
+     * 不能被票上的 role 覆盖 —— R15 的生态链验收里它真发生过: 场主先兑分享链接(幂等),
+     * 再想给 Agent 发定向邀请, 平台答 NOT_SESSION_OWNER, 因为第一次兑票把他降成了 MEMBER。
+     * 单元测试只数了行数, 行数没变, 所有权悄悄没了。
+     */
+    @Test
+    void anOwnerRedeemingTheirOwnMemberTicketStaysOwner() {
+        ApplicationSessionRecord session = sessionService.launch(APP_ID, human());
+        ResolvedPrincipal owner = new ResolvedPrincipal(PrincipalType.HUMAN,
+                session.getOwnerPrincipalId(), null, session.getOwnerPrincipalId(),
+                null, UUID.randomUUID().toString(), ResolvedPrincipal.SOURCE_JWT);
+
+        // 场主兑一张 MEMBER 票(分享链接): 已在场的他不该被票上的角色盖掉所有权
+        SessionParticipantRecord after = participantService.join(session.getId(), owner,
+                SessionParticipantRecord.ROLE_MEMBER, true);
+
+        assertEquals(SessionParticipantRecord.ROLE_OWNER, after.getRole(),
+                "已在场的场主重兑 MEMBER 票, 角色不该被票覆盖");
+        assertTrue(after.owner(), "所有权是既定事实, 不随兑票漂移");
+    }
+
+    /**
      * <b>自报 {@code OWNER} 会被降级成 {@code MEMBER}。</b>
      *
      * <p>挡的不是权限 —— 权限来自 profile, 而 profile 是主人能改的; 挡的是"谁说得上话"这件事的
