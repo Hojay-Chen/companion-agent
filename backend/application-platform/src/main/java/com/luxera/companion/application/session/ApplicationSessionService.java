@@ -12,14 +12,18 @@ import com.luxera.companion.application.repository.ApplicationSessionRepository;
 import com.luxera.companion.application.repository.ApplicationVersionRepository;
 import com.luxera.companion.application.repository.SessionParticipantRepository;
 import com.luxera.companion.contracts.application.PrincipalType;
+import com.luxera.companion.contracts.application.SessionRef;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * LAP v2: <b>平台级的应用会话</b> —— 用户无需安装, 打开应用就是开一个会话。
@@ -57,6 +61,16 @@ import java.util.Optional;
 @Slf4j
 @Service
 public class ApplicationSessionService {
+
+    /**
+     * {@link #visibleSessions} 的上限。
+     *
+     * <p>50 是个"比任何一个人的真实使用量大得多、又小到一次查询拿得完"的数。它的存在不是为了
+     * 性能, 是为了让<em>没有上限</em>这件事从一开始就不可能: 会话表的行数由用户行为决定, 而一个
+     * 进程内端口方法返回一个与用户行为同阶的列表, 迟早会有一次把它读进内存的调用发生在
+     * 一个开了几千场会话的应用上。
+     */
+    static final int VISIBLE_SESSION_LIMIT = 50;
 
     private final ApplicationSessionRepository sessions;
     private final SessionParticipantRepository participants;
@@ -387,6 +401,67 @@ public class ApplicationSessionService {
                 .sorted(Comparator.comparing(ApplicationSessionRecord::getLastActiveAt,
                         Comparator.nullsFirst(Comparator.naturalOrder())).reversed())
                 .toList();
+    }
+
+    /**
+     * §59 —— <b>这个 principal 在这个应用里看得见的会话</b>, 最近活跃的在前。
+     *
+     * <p>两部分的并集: 他<em>此刻在场</em>的, 加上任何人<em>都进得去</em>的({@code OPEN} 且还活着)。
+     * 判据、以及"退场过的不在里面"的理由, 都写在 {@code ApplicationRuntimePort.sessionsOf} 上 ——
+     * 这个方法是那句话的实现, 不另立一套。
+     *
+     * <p><b>参与的在前面, 不是因为好看。</b> 调用方拿这份列表做的第一件事是"我该在哪一场里动手",
+     * 而截断(见 {@link #VISIBLE_SESSION_LIMIT})是按位置截的。如果把 {@code OPEN} 的陌生人会话
+     * 排前面, 一个开了六百场公开棋局的平台就会把某人自己的那一场挤出榜单 —— 而那正是他唯一真正
+     * 需要的一行。于是排序键是 ({@code joined} 降序, {@code lastActiveAt} 降序), 截断于是永远
+     * 先切别人。
+     *
+     * <p>为什么要 {@code principal} 可空: 平台内部有些查询不站在任何人身上(例如运维视图)。
+     * 那时 {@code joined} 恒为 false, 结果退化成"这个应用里所有公开开着的会话"—— 那不是错误,
+     * 是这个问题在没有"谁"的时候唯一说得通的答案。
+     */
+    public List<SessionRef> visibleSessions(String applicationId, ResolvedPrincipal principal) {
+        if (applicationId == null || applicationId.isBlank()) {
+            return List.of();
+        }
+        Set<String> mine = principal == null ? Set.of()
+                : participantService.activeMembershipsOf(principal.type(), principal.principalId())
+                        .stream()
+                        .map(SessionParticipantRecord::getSessionId)
+                        .collect(Collectors.toSet());
+
+        List<ApplicationSessionRecord> visible = sessions.findByApplicationId(applicationId).stream()
+                .filter(session -> !session.ended())
+                .filter(session -> mine.contains(session.getId())
+                        || ApplicationSessionRecord.JOIN_OPEN.equals(session.getJoinPolicy()))
+                .sorted(orderByMembershipThenRecency(mine))
+                .limit(VISIBLE_SESSION_LIMIT)
+                .toList();
+
+        List<SessionRef> out = new ArrayList<>(visible.size());
+        for (ApplicationSessionRecord session : visible) {
+            out.add(ref(session, mine.contains(session.getId()), participants.countBySessionIdAndStatus(
+                    session.getId(), SessionParticipantRecord.STATUS_ACTIVE)));
+        }
+        return out;
+    }
+
+    /**
+     * ({@code 我参与的} 在前, {@code lastActiveAt} 倒序)。{@code lastActiveAt} 为空的行排在最后 ——
+     * 它可能是任何时间, 猜一个出来不如承认不知道。
+     */
+    private static Comparator<ApplicationSessionRecord> orderByMembershipThenRecency(Set<String> mine) {
+        return Comparator
+                .comparingInt((ApplicationSessionRecord s) -> mine.contains(s.getId()) ? 0 : 1)
+                .thenComparing(ApplicationSessionRecord::getLastActiveAt,
+                        Comparator.nullsLast(Comparator.<LocalDateTime>reverseOrder()));
+    }
+
+    private static SessionRef ref(ApplicationSessionRecord session, boolean joined, long activeCount) {
+        return new SessionRef(session.getId(), session.getApplicationId(), session.getStatus(),
+                session.getVisibility(), session.getJoinPolicy(), (int) activeCount,
+                session.getMaxParticipants(), joined, session.getOwnerPrincipalType(),
+                session.getOwnerPrincipalId(), session.getConversationId());
     }
 
     /** 这个 principal 参与的全部活跃会话 —— 真人 UI 的"我正在用的应用"用的就是它。 */

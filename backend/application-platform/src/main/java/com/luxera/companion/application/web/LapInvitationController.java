@@ -133,7 +133,8 @@ public class LapInvitationController {
             // 它 accept/reject/ignore 里的 accept 才是真正的"兑票"。
             ApplicationSessionRecord session = sessions.require(sessionId);
             String applicationId = session.getApplicationId();
-            ApplicationEvent event = invitations.invitationEvent(invitation, applicationId, req.targetId());
+            ApplicationEvent event = invitations.invitationEvent(invitation, applicationId,
+                    req.targetId(), holder[0]);
             events.publishPlatform(List.of(event));
         }
 

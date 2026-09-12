@@ -16,12 +16,14 @@ import com.luxera.companion.contracts.application.PermissionLevel;
 import com.luxera.companion.contracts.application.PrincipalType;
 import com.luxera.companion.contracts.application.ResourceView;
 import com.luxera.companion.contracts.application.RiskLevel;
+import com.luxera.companion.contracts.application.SessionRef;
 import com.luxera.companion.contracts.spi.ApplicationRuntimePort;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -47,9 +49,14 @@ public class InMemoryGameApplication implements ApplicationRuntimePort {
     private static final String ACTION_STATE = "game.state";
     private static final String ACTION_MAKE_MOVE = "game.make_move";
 
+    /** 合成会话的容纳上限 —— 与真实平台侧同一个缺省值, 让"满了"这件事在这里也能被走到。 */
+    private static final int MAX_PARTICIPANTS = 8;
+
     private final ObjectMapper mapper;
     private final Map<String, ObjectNode> sessions = new ConcurrentHashMap<>();
     private final List<String> sessionsOpened = new CopyOnWriteArrayList<>();
+    /** sessionId → 在场的人 (principalId)。R13 起这个双胞胎要真的记得谁在场。 */
+    private final Map<String, Set<String>> participants = new ConcurrentHashMap<>();
 
     public InMemoryGameApplication(ObjectMapper mapper) {
         this.mapper = mapper;
@@ -83,12 +90,65 @@ public class InMemoryGameApplication implements ApplicationRuntimePort {
         String who = ctx == null ? "?" : ctx.principalId();
         String id = "mem-session:" + applicationId + ":" + who;
         sessionsOpened.add(id);
+        // R13: 光记一笔不够了 —— SessionResolver 会接着问"我在不在里面", 而一个说"你没在里面"
+        // 的双胞胎会让 enter() 每次都新建一场。所以这里顺手把开它的人记成在场的人。
+        if (who != null) participants.computeIfAbsent(id, k -> ConcurrentHashMap.newKeySet()).add(who);
         return id;
     }
 
     /** 测试可读: 谁在什么时候要求过会话。 */
     public List<String> sessionsOpened() {
         return List.copyOf(sessionsOpened);
+    }
+
+    // ─────────────────────────── 参与 (R13) ───────────────────────────
+    //
+    // 这一组刻意做成"真的记得谁在场": SessionResolver 的四条策略里有两条要读参与者行, 而一个
+    // 一律回空列表的双胞胎会让那两条永远走不到, 于是它们腐烂在这里、测试却全绿。
+
+    @Override
+    public List<SessionRef> sessionsOf(String applicationId, InvocationContext ctx) {
+        String who = ctx == null ? null : ctx.principalId();
+        return sessionsOpened.stream()
+                .filter(id -> id.startsWith("mem-session:" + applicationId + ":"))
+                .distinct()
+                .map(id -> ref(id, who))
+                .toList();
+    }
+
+    @Override
+    public String joinByInvitation(String token, InvocationContext ctx) {
+        // 这个双胞胎没有票 —— 邀请是 application-platform 的事, 而它一行都不认识。
+        // 抛而不是装作成功: 一个"什么票都收"的双胞胎会让"数字人必须兑票才能进场"这条性质
+        // 在测试里消失, 而那正是 R10 的全部意义。
+        throw new IllegalStateException("UNKNOWN_INVITATION: 内存参考应用不发邀请");
+    }
+
+    @Override
+    public void joinSession(String sessionId, InvocationContext ctx) {
+        String who = ctx == null ? null : ctx.principalId();
+        if (sessionId == null || who == null) throw new IllegalArgumentException("sessionId/principalId 缺失");
+        Set<String> inside = participants.computeIfAbsent(sessionId, k -> ConcurrentHashMap.newKeySet());
+        if (inside.contains(who)) return;   // 幂等: 已经在里面就什么都不做
+        if (inside.size() >= MAX_PARTICIPANTS) throw new IllegalStateException("SESSION_FULL: 人满了");
+        inside.add(who);
+    }
+
+    @Override
+    public void leaveSession(String sessionId, InvocationContext ctx) {
+        String who = ctx == null ? null : ctx.principalId();
+        Set<String> inside = participants.get(sessionId);
+        if (inside == null || who == null || !inside.remove(who)) {
+            throw new IllegalStateException("NOT_A_PARTICIPANT: 本来就不在场");
+        }
+    }
+
+    private SessionRef ref(String sessionId, String who) {
+        Set<String> inside = participants.getOrDefault(sessionId, Set.of());
+        // 合成会话一律 OPEN: ensureSession 建出来的那一场没有别人, 也就没有"要不要邀请"的问题
+        return new SessionRef(sessionId, APP_ID, "ACTIVE", "UNLISTED", "OPEN",
+                inside.size(), MAX_PARTICIPANTS, who != null && inside.contains(who),
+                PrincipalType.AGENT.name(), who, null);
     }
 
     @Override

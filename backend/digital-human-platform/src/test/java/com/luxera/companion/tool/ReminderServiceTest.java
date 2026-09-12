@@ -14,6 +14,7 @@ import com.luxera.companion.contracts.application.CapabilityView;
 import com.luxera.companion.contracts.application.InvocationContext;
 import com.luxera.companion.contracts.application.PrincipalType;
 import com.luxera.companion.contracts.application.ResourceView;
+import com.luxera.companion.contracts.application.SessionRef;
 import com.luxera.companion.contracts.spi.ApplicationRuntimePort;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -325,6 +326,32 @@ class ReminderServiceTest {
             // 幂等: 同一个 (应用, 主体) 永远拿到同一个会话 id —— 这正是真实实现的性质,
             // 而为每条提醒编一个新 id 会让"会话解析第 4 档"在这里测不出任何东西。
             return "session-" + applicationId + "-" + (ctx == null ? "?" : ctx.principalId());
+        }
+
+        /**
+         * 提醒收件箱<b>不挂会话</b> —— 见 {@code ResourceView.sessionId} 一直为 null, 以及
+         * 会话解析的第 4 档为什么必须存在。所以这里如实回一个空列表, 而不是编一场出来:
+         * 编出来的话, {@code SessionResolver} 的"参与中"那一条策略在这里就会显得能用,
+         * 而它对这个应用其实毫无意义。
+         */
+        @Override
+        public List<SessionRef> sessionsOf(String applicationId, InvocationContext ctx) {
+            return List.of();
+        }
+
+        @Override
+        public String joinByInvitation(String token, InvocationContext ctx) {
+            throw new UnsupportedOperationException("提醒应用不发邀请");
+        }
+
+        @Override
+        public void joinSession(String sessionId, InvocationContext ctx) {
+            throw new UnsupportedOperationException("提醒应用没有会话模型");
+        }
+
+        @Override
+        public void leaveSession(String sessionId, InvocationContext ctx) {
+            throw new UnsupportedOperationException("提醒应用没有会话模型");
         }
 
         @Override

@@ -270,13 +270,26 @@ public class InvitationService {
      * <p>{@code target} 用 {@code session://invitation/...} 封套: 它既不是资源 URI(没有
      * {@code resource} 行), 也不属于任何 manifest 的资源模板 —— 但 {@code AgentRouteResolver}
      * 按封套解出会话后能继续走"名单上的人在不在这局里"那条老路, 不必为邀请单开一套路由。
+     *
+     * <h2>为什么明文 token 在这封信里</h2>
+     * <p>收件人是一个数字人, 它没有浏览器可以点开 {@code /join/{token}}。要给它的东西因此只能是
+     * <em>链接里的那段 token 本身</em> —— 邀请事件就是它的那条链接, 只是投递方式不同。
+     *
+     * <p><b>这不是给定向邀请开后门。</b> 数字人拿到 token 之后仍然要兑票
+     * ({@code ApplicationRuntimePort.joinByInvitation} → {@link #consume}), 走的与真人点链接
+     * 逐字相同的那一扇门; 上面那段"不在门内开第二条路"的规矩一个字都没松。这一段讲的是
+     * <em>投递</em>, 不是<em>放行</em>。
+     *
+     * <p>因此它也继承了 token 的性质: 只在这里出现, 库里只有哈希。数字人那侧读到它之后
+     * 不写日志、不写账本、不进提示词 —— 一条凭据被记进"记忆"里就不再是凭据了。
      */
     public ApplicationEvent invitationEvent(SessionInvitationRecord invitation,
-                                            String applicationId, String targetId) {
+                                            String applicationId, String targetId, String token) {
         ObjectNode data = objectMapper.createObjectNode();
         data.put("invitationId", invitation.getId());
         data.put("sessionId", invitation.getSessionId());
         data.put("role", invitation.getRole());
+        data.put("token", token);
         // 平台此刻把"这是给谁的"钉死在信封的 data.companionId 上 —— 路由不再查名单,
         // 投递面拿到的已经是"直接给这个数字人"。
         data.put("companionId", targetId);

@@ -6,6 +6,7 @@ import com.luxera.companion.application.audit.ActionAuditRecorder;
 import com.luxera.companion.application.domain.ApplicationSessionRecord;
 import com.luxera.companion.application.domain.SessionParticipantRecord;
 import com.luxera.companion.application.event.LapEventPublisher;
+import com.luxera.companion.application.invitation.InvitationService;
 import com.luxera.companion.application.lifecycle.ApplicationCatalogue;
 import com.luxera.companion.application.manifest.ApplicationManifest;
 import com.luxera.companion.application.manifest.ManifestRegistry;
@@ -29,6 +30,7 @@ import com.luxera.companion.contracts.application.ApplicationView;
 import com.luxera.companion.contracts.application.CapabilityView;
 import com.luxera.companion.contracts.application.InvocationContext;
 import com.luxera.companion.contracts.application.ResourceView;
+import com.luxera.companion.contracts.application.SessionRef;
 import com.luxera.companion.contracts.spi.ApplicationRuntimePort;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -98,6 +100,7 @@ public class ActionGateway implements ApplicationRuntimePort {
     private final LapEventPublisher events;
     private final ActionAuditRecorder audit;
     private final PrincipalResolvers principals;
+    private final InvitationService invitations;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transaction;
 
@@ -115,6 +118,7 @@ public class ActionGateway implements ApplicationRuntimePort {
                          LapEventPublisher events,
                          ActionAuditRecorder audit,
                          PrincipalResolvers principals,
+                         InvitationService invitations,
                          ObjectMapper objectMapper,
                          PlatformTransactionManager transactionManager) {
         this.manifests = manifests;
@@ -131,6 +135,7 @@ public class ActionGateway implements ApplicationRuntimePort {
         this.events = events;
         this.audit = audit;
         this.principals = principals;
+        this.invitations = invitations;
         this.objectMapper = objectMapper;
         this.transaction = new TransactionTemplate(transactionManager);
     }
@@ -233,6 +238,53 @@ public class ActionGateway implements ApplicationRuntimePort {
     public String ensureSession(String applicationId, InvocationContext ctx) {
         ResolvedPrincipal principal = principals.resolveInternal(ctx);
         return sessions.ensureSession(applicationId, principal).getId();
+    }
+
+    // ─────────────────────────── 参与 (LAP v2 R13) ───────────────────────────
+
+    /** @see ApplicationRuntimePort#sessionsOf */
+    @Override
+    public List<SessionRef> sessionsOf(String applicationId, InvocationContext ctx) {
+        ResolvedPrincipal principal;
+        try {
+            principal = principals.resolveInternal(ctx);
+        } catch (PrincipalResolver.PrincipalException e) {
+            // 身份不合法时"看得见的会话"这个问题没有答案 —— 返回空表而不是抛, 与
+            // pendingActions 对未认证调用的处理一致: 它是一条读路径, 而"什么都没有"
+            // 正是"我不知道你是谁"该得到的答复。写路径(下面两个)才抛。
+            log.debug("[ActionGateway] sessionsOf 身份不合法: {}", e.getMessage());
+            return List.of();
+        }
+        return sessions.visibleSessions(applicationId, principal);
+    }
+
+    /**
+     * @see ApplicationRuntimePort#joinByInvitation
+     *
+     * <p>这里只有一行, 而且是刻意的: 认票、判死因、加入、记账四件事全在
+     * {@code InvitationService.consume} 里, 与真人点 {@code /join/{token}} 走的是同一个方法。
+     * 在网关这一层多写一句"如果是数字人就……", 就等于把"Agent 是另一种用户"变回了一句口号。
+     */
+    @Override
+    public String joinByInvitation(String token, InvocationContext ctx) {
+        ResolvedPrincipal principal = principals.resolveInternal(ctx);
+        return invitations.consume(token, principal).getSessionId();
+    }
+
+    /** @see ApplicationRuntimePort#joinSession */
+    @Override
+    public void joinSession(String sessionId, InvocationContext ctx) {
+        ResolvedPrincipal principal = principals.resolveInternal(ctx);
+        // role 传 null: 这是"我自己要进来", 不是"主人请我当管理员"。能拿到什么角色由
+        // normalizeRole 按会话行上的 owner 判定 —— 陌生人自报 OWNER 会被降级成 MEMBER。
+        participants.join(sessionId, principal, null, false);
+    }
+
+    /** @see ApplicationRuntimePort#leaveSession */
+    @Override
+    public void leaveSession(String sessionId, InvocationContext ctx) {
+        ResolvedPrincipal principal = principals.resolveInternal(ctx);
+        participants.leave(sessionId, principal);
     }
 
     /** {@link ApplicationRuntimePort} 的进程内形态: 身份来自 {@link InvocationContext}。 */

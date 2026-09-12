@@ -231,7 +231,7 @@ backend/
 3. **没有"操作"的抽象** —— `/api/v10/games/tictactoe/*` 从请求体里手取 `userId`/`companionId`，
    忽略已认证身份；`Idempotency-Key` 收下就丢。
 
-### 已完成（R1–R12）
+### 已完成（R1–R13）
 
 | 轮 | 内容 | 证据 |
 |---|---|---|
@@ -248,6 +248,7 @@ backend/
 | **R10** | **Participant + Invitation。** `session_invitation` + 邀请状态机（State Pattern）；token 铸造/哈希/校验/消费/收回（**库里只有 SHA-256，明文只在创建响应里出现一次**）；`LapParticipantController`（join / 名单 / 自己走）+ `LapInvitationController`（铸票 / 列表 / 收回 / 公开兑票）；`APPLICATION_INVITATION` 平台事件（由邀请服务发射，绕过 manifest 的 `triggersAgent` 闸门 —— 那道闸门是防**应用**的，不是防平台的）；前端分享链接 | `InviteCreateTest`、`InviteConsumeTest`、`InviteExpireTest`、`InviteRevokeTest`、`SessionJoinTest`、`SessionLeaveTest`；断言 token 明文不进库 |
 | **R11** | **Application Launch + Surface。** manifest 第 8 个 section `ui`（`type` / `entry` / `minClientVersion` / `surfaces[]`）+ 校验器（`UI_TYPE_REQUIRED` / `REMOTE_UI_ENTRY_NOT_ABSOLUTE` / `UI_SURFACE_MODE_CONFLICT` / `DUPLICATE_SURFACE` …）；`Availability` 投影（§4.1 那张表）+ 开会话闸门（不可用 → 409 `STATE_CONFLICT`）；`POST /applications/{id}/sessions` 改成 §16 形状（嵌套 `application` / `participant`，删掉平铺的 `ownerPrincipal*`）；新增 `GET /applications/{id}` 详情（十态 status + 三列布尔 + `ui` 段）；前端**应用市场 / 应用详情 / Session 页 / 分享链接加入页**四页 + `SurfaceHost` 五态全量 + EMBEDDED 登记表 + REMOTE iframe | `ManifestValidatorTest` 43 条（含 `ui` 段全套拒绝用例）、`AvailabilityProjectionTest` **13 条**（§4.1 逐行 + 投影全覆盖 + 闸门串成一条链）、`LapWebSurfaceTest` 新增详情页两条；前端 `SurfaceHost.test.tsx` **15 条**（vitest，读**后端那份真的 manifest**）；`check-lap.sh` 新增断言 18（§16 形状 / 详情三列 / 五条 Surface / 404）；`npm run build` |
 | **R12** | **Chat / Application 深度集成。** 新契约包 `contracts/chat/`（6 个 DTO `ApplicationCard` / `ApplicationLaunchRequest` / `ParticipantView` / `ApplicationSessionView` / `ApplicationLaunchResponse` / `ApplicationInvitation` + `ApplicationCatalogException` + `package-info`）与第 3 个 SPI 端口 **`ApplicationCatalogPort`**（`cards` / `card` / `sessionsOfConversation` / `session` / `launch` / `invite`）；平台侧实现 `ApplicationCatalogAdapter`（把 `SessionException` 翻成跨模块的 `ApplicationCatalogException`，保住 `ActionStatus`）；`ApplicationSessionService.ofConversation()` / `applyLaunchOptions()` + 仓储 `findByConversationId`；chat-platform 加**三个会话上下文端点** `GET/POST /api/companions/{c}/conversations/{v}/applications` 与 `POST …/{sessionId}/share`；**应用卡片就是一条消息**（`messageKind=APPLICATION_CARD` / `APPLICATION_INVITATION`，metadata 带 applicationId/sessionId/name/role/status，走 `ConversationService.addMessage` **不唤醒数字人**）；`application_session.conversation_id` 落库（§85）；前端 `api/chatApplications.ts` + `ApplicationCardBubble` 两张卡片（进入 / 分享到对话 / 复制链接）+ Chat 侧「一起玩点什么」面板 | `ChatApplicationPortTest` **6 条**（行为证明：整条链路跑在一个本仓库从未见过的应用 `com.example.paper-plane` 上；源码证明：扫集成代码里不出现任何一个真实应用 id/动作名）、`ApplicationCardMessageTest` **4 条**（卡片是一条消息 / 同一条时间线 / 令牌明文进消息 / **被拒时绝不留下说假话的卡片**）、`ModuleBoundaryArchitectureTest` 六条仍绿；前端 `ApplicationCardBubble.test.tsx` **9 条**；`check-lap.sh` 新增**断言 19**（16 条：真实适配器跨端口开应用 → 卡片落 `messages` → 分享落消息而明文不进库 → 未知应用 404 `UNKNOWN_APPLICATION`） |
+| **R13** | **Agent Participation —— 数字人成为一种用户。** `ApplicationRuntimePort` 加四个方法（`sessionsOf` / `joinByInvitation` / `joinSession` / `leaveSession`）+ `SessionRef` 记录；DH 侧新增 **`SessionResolver`**（定位四策略：显式 context > 资源行上的 sessionId > 平台说"我在这一场里" > 可发现的开着门的场；`locate` **只读**、`enter` 才进场，`enter` 遇到"点名了一场进不去的"**抛而不是另开一场**）；`CapabilityResolver` / `ApplicationResolver` / `ActionSelector` 从 `AgentApplicationFlow` 拆出；`AgentApplicationFlow` 改成**八段 Pipeline**（READ → LOCATE → CONTEXT → PENDING → ELIGIBLE → DECIDE → EXECUTE → RECORD）+ `PipelineReport`（停在哪一段、为什么、用的是哪条策略）；新增 **`AgentApplicationInvitationHandler`**（accept / reject / **ignore** 三态，兑票走 `joinByInvitation` —— 与真人点开 `/join/{token}` 逐字相同的门）；`RealityEventType` 加 `APPLICATION_INVITATION_ACCEPTED` / `APPLICATION_INVITATION_DECLINED` | `AgentApplicationFlowTest` **21 条一条不改**（R2/R7 留下的保险丝原样通过）、新增 `SessionResolverStrategyTest` **13 条**、`AgentApplicationInvitationTest` **12 条**（含"明文票一个字都不许进账本"与"LLM 不可用 ⇒ 没决定 ⇒ 不记账"）、`AgentApplicationPipelineTest` **9 条**（每段各自的停机理由 + "定位不到会话不是失败"）、`DhApplicationKnowledgeArchitectureTest` 仍绿；DH **275 → 309 测试**；`check-lap.sh` 新增**断言 20**（定向邀请 → 平台事件通道 → 单向门 → 数字人邮箱；含"收件人此刻还不在这一场里"的前置断言，证明邀请不走参与者名单） |
 
 **R9 的关键决定**（删掉 Installation 之后，会话必须总是存在）：
 
@@ -365,6 +366,49 @@ backend/
 10. **没注册过的应用从"可开列表"里消失，但已经开着的那一场还在。** 这是 §4.1 第二列
     （`allowsNewSession`）与第一列（`inMarket`）的区别在聊天侧的样子 —— 平台不替运营惩罚用户，
     用户什么都没有做错。
+
+**R13 的关键决定**（数字人成为一种用户，而不是一种被安装的插件）：
+
+1. **"打听"与"承诺"必须是两个方法，而不是一个带开关的方法。** `SessionResolver` 拆成
+   `locate`（只读，永不 join）与 `enter`（会 join）。这不是洁癖：`locate` 跑在**每一条**事件上，
+   而删掉 installation 之后最容易发生的退化就是"反正要找一个会话，顺手就进了"—— 那样每读一次
+   资源都会往会话表里塞一场。`SessionResolverStrategyTest.locateNeverJoinsEvenWhenTheDoorIsOpen`
+   把这条钉死：门开着也不行。
+2. **点名了一场进不去的会话 → 抛，而不是另开一场。** `enter` 的第 3 步是最难写对的一处。
+   如果 `ensureSession` 在"我进不去我想进的那一场"时够得着，一次失败就会变成一次**静默的复制**：
+   邀请你的人在那场里等着，而你在新的一场里对着空房间，两边都不知道发生了什么。
+   所以 `UnavailableException` 带稳定 reason code（`NEEDS_INVITATION` / `SESSION_NOT_VISIBLE`），
+   并且断言里同时 `verify(port, never()).ensureSession(...)`。
+3. **定位会话是尽力而为的富化，不是闸门。** 八个阶段里 LOCATE 刻意**没有返回值** —— 定位不到
+   就往下走。把它做成闸门会有一个当时看不出来的后果：`reminder://owner/{userId}` 的资源行上
+   从来没有 `sessionId`（R5 起一直是 NULL），那些应用的事件会从此**一个人也唤不醒**，
+   而所有既有断言仍然全绿。`AgentApplicationPipelineTest.withoutASessionThePipelineStillRuns`
+   就是这条的守卫。
+4. **数字人接受邀请走的是与真人**逐字相同**的那一扇门。** 明文 token 在 `APPLICATION_INVITATION`
+   事件的 payload 里 —— 一个数字人没有浏览器可以点开 `/join/{token}`，所以那封信**就是**它的链接。
+   它拿票走 `port.joinByInvitation` → `InvitationService.consume`，与人点链接完全同一条路径；
+   票不灵了才轮到"门还开着"（`joinSession`）。本仓库里没有、也不能有第二条进场路。
+5. **因此明文票在 DH 侧只有一个去处：`joinByInvitation` 的第一个参数。** 不写日志、不写账本、
+   不进提示词、不进异常消息。一条凭据一旦被记进"记忆"里就不再是凭据了 —— 而账本是 append-only
+   且会被回放、被投影、被读进提示词。这条不靠自觉：`AgentApplicationInvitationTest` 里有一条
+   断言逐字检查账本 payload 里没有那 30 个字符。
+6. **三个决定，而不是两个：`accept` / `reject` / `ignore`。** `ignore` 是"**没有做出决定**"——
+   LLM 不可用、是 mock、或者答得不能采信（没有 `accept` 字段）。它什么都不记。这一档的存在理由
+   是把"没决定"与"决定不去"分开：默认"去"会让数字人在服务抖动时到处乱窜，默认"不去"会让它
+   替自己撒一次谎 —— 把一次 LLM 超时写成"这个数字人拒绝过谁"，是账本里最难查的一类假话。
+7. **邀请事件也是 `APPLICATION_EVENT`，也带着 `agentTrigger`，但它不走反应路径。**
+   `ExternalEventType` 只有一个常量，平台事件与普通应用事件在**类型**上是同一个东西，区分它们的
+   只有 payload 里的 `eventType`。所以 `AgentApplicationFlow.onApplicationEvent` 在入口处有一行
+   早退；否则反应路径会把 `session://invitation/...` 当成一个资源去读，而那个东西根本不存在。
+8. **一封没能兑现的邀请信不许改口成"谢绝"。** `accept` 两扇门都没开时：不记 `ACCEPTED`、
+   不重试、**也不退回去记一笔 `DECLINED`**。邀请信没兑现是一个事实，而它不是这个数字人的决定 ——
+   账本里记错这一笔，事后就分不清"他没去"与"他没进得去"。
+9. **邀请事件的收件人由铸造方显式点名，不查参与者名单。** `AgentRouteResolver` 回答的是"这条事件
+   挂着的会话里有哪些 AGENT 参与者"—— 而邀请的收件人正是一个**还没进来**的人（它正是被邀请才有
+   机会进来的），问"他在不在这场里"答案必然是没有。所以 `data.companionId` 在铸票那一刻就盖上，
+   平台直接投给这个人。这不是绕过安全检查：能点名的人只能是会话主人（`InvitationService.mint`
+   的 `requireOwned`），而收不收数字人自己决定。`check-lap.sh` 断言 20 里那条"收件人此刻还不在
+   这一场里"的前置断言，就是这条决定有没有被实现的判据。
 
 **R5 的关键决定**（两个新增参考应用 + DH 提醒只读改造）：
 

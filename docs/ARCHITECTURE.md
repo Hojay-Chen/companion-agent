@@ -153,12 +153,13 @@ chat 与 DH 各自都有叫 `conversation` / `event` / `state` / `memory` 的包
   确定性铸造（如 `game://session/{id}#MOVE-0`），DH 侧的去重才有意义；否则重试会让 Agent
   对同一步行动两次。
 
-DH 侧挂在 `digitalhuman.event.EventRouter` 的 `APPLICATION_EVENT` 上有**两个**消费者，看的是同一条
-事件的两个侧面（`EventRouter.subscribe` 是追加语义，所以两者互不遮蔽）：
+DH 侧挂在 `digitalhuman.event.EventRouter` 的 `APPLICATION_EVENT` 上有**三个**消费者，看的是同一条
+事件的三个侧面（`EventRouter.subscribe` 是追加语义，所以它们互不遮蔽）：
 
 | 消费者 | 它问的问题 |
 |---|---|
-| `runtime.AgentApplicationFlow` | 「我该做点什么」—— 过滤 → 读 Resource → 问能做什么 → 执行并记入现实账本，全程跑在 `PersonActorRegistry.tell(personId, …)` 的 per-person 串行邮箱里；它同时也是**主动方向**的入口（`route()`，见「Agent 的 LLM 契约」）|
+| `runtime.AgentApplicationFlow` | 「我该做点什么」—— 八段流水线（R13 起）→ 读 Resource → 问能做什么 → 执行并记入现实账本，全程跑在 `PersonActorRegistry.tell(personId, …)` 的 per-person 串行邮箱里；它同时也是**主动方向**的入口（`route()`，见「Agent 的 LLM 契约」）。邀请事件在它入口处早退 —— 那不是"应用里发生了什么" |
+| `runtime.application.AgentApplicationInvitationHandler` | 「有人点名找我吗」——（R13 加）只看载荷里 `eventType=APPLICATION_INVITATION` 的那一类，问 LLM 去不去，去就兑票进场。见「数字人怎么参与一场会话」 |
 | `digitalhuman.event.ApplicationNotificationBridge` | 「该不该说给他听」—— 事件载荷里带 `notify` 块就落一条 `companion_notifications`，`type` 原样透传 |
 
 第二条路是 R5 加的，它让「提醒到点」不再需要一个 DH 侧的扫描器：`ReminderDispatchJob` 在应用侧
@@ -359,6 +360,75 @@ DH 的源码里不许出现任何一个具体应用的名字、动作 id 或状�
 
 `scripts/check-lap.sh` 是这一面唯一的端到端守卫：`check.sh` 覆盖的是聊天/数字人链路，
 对应用平台**零覆盖** —— 这就是为什么"测试全绿"在这里什么也保护不了。
+
+### 数字人怎么参与一场会话（R13 起）
+
+删掉 installation 之后，"这个数字人能不能动手"从**应用级**变成了**会话级**的问题：v1 问的是
+"它装了游戏没有"，v2 问的是"它在这一局里吗"。一个数字人可以在 A 局里坐着、在 B 局里完全不存在 ——
+v1 的 `installation` 表达不了这件事。R13 补上的就是这半边。
+
+**反应路径是一个八段流水线**（`AgentApplicationFlow`，R13 从"一个方法"拆成八个阶段）：
+
+| 段 | 它回答的问题 | 失败会怎样 |
+|---|---|---|
+| `READ` | 这个资源是什么？ | 停（`RESOURCE_NOT_FOUND`） |
+| `LOCATE` | 这件事发生在哪一场会话里？ | **不停** —— 见下 |
+| `CONTEXT` | 把这场的 sessionId 钉进 `InvocationContext` | 停不了 |
+| `PENDING` | 现在有什么可做？ | 停（`NOTHING_PENDING`） |
+| `ELIGIBLE` | LLM 可用吗？ | 停（`LLM_UNAVAILABLE`，**绝不降级到启发式**） |
+| `DECIDE` | 做哪一个？入参是什么？ | 停（`NO_DECISION` / `NO_RESPONSE`） |
+| `EXECUTE` | 平台收下了吗？ | 停（`REFUSED:<状态码>`，且**不算做过**） |
+| `RECORD` | 记进现实账本 | —— |
+
+`PipelineReport(stoppedAt, reason, sessionId, strategy, actionId)` 是这条流水线说出来的那句话，
+它存在的理由是"数字人没反应"有很多种，而它们该被分开：资源不存在、无事可做、LLM 不可用、
+模型没点名、平台拒绝 —— 每一种都对应一个不同的修法。
+
+**`LOCATE` 刻意没有返回值。** 定位会话是**尽力而为的富化，不是闸门**。把它做成闸门会有一个
+当时看不出来的后果：`reminder://owner/{userId}` 的资源行上从来没有 `sessionId`（R5 起一直是 NULL），
+那些应用的事件会从此一个人也唤不醒 —— 而所有既有断言仍然全绿。
+
+**定位有四条策略，查询与承诺分成两个方法**（`SessionResolver`）：
+
+```
+显式 context.sessionId  ─┐
+资源行上的 sessionId     ─┼─→ locate(): 只读, 一次都不写
+平台说"我在这一场里"     ─┘
+                          ─→ enter(): 上面三条 + 可发现的开着门的场 + 都没有就开一场
+```
+
+`locate` 跑在**每一条**事件上，它一次都不许 join；`enter` 才谈得上进去。而 `enter` 遇到
+"点名了一场进不去的"（`INVITE_ONLY` 且没被邀请 / 满员 / 平台看不见）会**抛**
+（`NEEDS_INVITATION` / `SESSION_NOT_VISIBLE`）而不是退回 `ensureSession`：否则一次失败会变成一次
+静默的复制 —— 邀请你的人在那场里等着，而你在新的一场里对着空房间。
+
+**数字人进场只有一条路：被邀请。**
+
+```
+POST /api/v1/sessions/{id}/invitations            （只有会话主人）
+   {"targetType":"AGENT","targetId":"<companionId>"}
+        │  铸票: 明文只在响应里出现一次, 库里只有 SHA-256
+        ↓
+InvitationService.invitationEvent()  →  APPLICATION_INVITATION（平台事件）
+        │  LapEventPublisher.publishPlatform() —— 不过 manifest 的 triggersAgent 闸门,
+        │  也不过 AgentRouteResolver 的名单（收件人此刻还不在这一场里）
+        ↓
+DhApplicationEventSink（单向门）  →  EventProcessingChain  →  数字人的邮箱线程
+        ↓
+AgentApplicationInvitationHandler.decide()   ← 问 LLM, 不猜
+        ├─ ACCEPT → port.joinByInvitation(token)   ← 与真人点开 /join/{token} 逐字相同的门
+        │            失败才试 port.joinSession(sessionId)（票死了但门还开着）
+        │            两扇都没开 → 什么都不记（不改口说"谢绝"）
+        ├─ REJECT → 记 APPLICATION_INVITATION_DECLINED
+        └─ IGNORE → 什么都不做, 也什么都不记（LLM 不可用 / mock / 答得不能采信）
+```
+
+**明文 token 在这条链上只有一个去处**：`joinByInvitation` 的第一个参数。不写日志、不写账本、
+不进提示词、不进异常消息 —— 一条凭据一旦被记进"记忆"里就不再是凭据了，而账本是 append-only
+且会被回放、被投影、被读进提示词。
+
+**`EXTERNAL_AGENT`**（R9 加进 `PrincipalType`）是"外部 Agent"的位置：REST / MCP / 内部
+`ApplicationRuntimePort` 三条入口上的 Agent 都是 `Participant`，区别只在谁替它验身份。
 
 ### MCP 适配器（`POST /mcp`，R6 起）
 

@@ -38,6 +38,22 @@ public enum RealityEventType {
     /** 应用内行动(如游戏落子) —— V10 §9.3 */
     APPLICATION_ACTION_EXECUTED,
 
+    /**
+     * 数字人接受了别人的邀请, 进了那一场 (LAP v2 R13)。
+     *
+     * <p>为什么"接受"要单独记一笔: 它是数字人<em>自己做的决定</em>, 而不是某条事件顺下来的后果。
+     * 账本回答的问题是"这个数字人真实经历过什么", 而"他答应过谁"是这个问题里最要紧的那一类。
+     */
+    APPLICATION_INVITATION_ACCEPTED,
+
+    /**
+     * 数字人谢绝了别人的邀请 (LAP v2 R13)。
+     *
+     * <p>谢绝与忽略的分别就是这一笔账: "他说了不"是一个决定, "他没吭声"(LLM 不可用时)不是。
+     * 只把前者写进账本, 才不会让"这个数字人拒绝过谁"被一次服务抖动污染。
+     */
+    APPLICATION_INVITATION_DECLINED,
+
     /** 通用生活事件 */
     LIFE_EVENT
 }

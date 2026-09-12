@@ -23,6 +23,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -264,14 +265,15 @@ class InvitationTest {
         String companionId = "dh-" + UUID.randomUUID();
         events.clear();
 
+        String[] minted = new String[1];
         SessionInvitationRecord row = invitations.mint(session.getId(), alice,
                 SessionParticipantRecord.ROLE_MEMBER, null, 1, "AGENT", companionId,
-                null, null);
+                null, token -> minted[0] = token);
 
         // mint 只铸票; 事件由控制器在铸造之后发射(见 LapInvitationController)。
         // 这里用 spring 里那个真实的 publisher 走一遍 publishPlatform —— 它必须绕过
         // triggersAgent 闸门(平台事件不属于任何 manifest), 且把 companionId 留在 data 上。
-        ApplicationEvent event = invitations.invitationEvent(row, APP_ID, companionId);
+        ApplicationEvent event = invitations.invitationEvent(row, APP_ID, companionId, minted[0]);
         publisher.publishPlatform(List.of(event));
 
         List<ApplicationEvent> received = events.eventsOfType(InvitationService.EVENT_APPLICATION_INVITATION);
@@ -280,6 +282,15 @@ class InvitationTest {
         assertEquals(companionId, receivedEvent.data().path("companionId").asText());
         assertTrue(receivedEvent.data().path("agentTrigger").asBoolean(false));
         assertEquals(session.getId(), receivedEvent.data().path("sessionId").asText());
+
+        // R13: 明文 token 随信寄出 —— 收件人是个数字人, 它没有浏览器可以点开 /join/{token},
+        // 所以"那条链接"对它就是这段 token 本身。它拿到的必须是能兑的那一段: 兑一次试试。
+        assertEquals(minted[0], receivedEvent.data().path("token").asText(),
+                "邀请事件必须带着明文 token —— 否则数字人永远 accept 不了(invite-only 是默认策略)");
+        ResolvedPrincipal agent = new ResolvedPrincipal(PrincipalType.AGENT, companionId, companionId,
+                null, null, UUID.randomUUID().toString(), ResolvedPrincipal.SOURCE_INTERNAL);
+        assertNotNull(invitations.consume(receivedEvent.data().path("token").asText(), agent),
+                "信里的 token 必须真的能兑出一行参与者");
     }
 
     // ─────────────────────────── 夹具 ───────────────────────────

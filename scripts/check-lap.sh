@@ -913,6 +913,160 @@ else
   fi
 fi
 
+# ── 断言 20: 数字人参与 —— 一封定向邀请信能走多远 (R13 / §59–§60) ──
+# 这条断言要证明的是 v2 与 v1 在"数字人怎么进来"上的分别。v1 的答案是**安装**: 数据库里有一行
+# AGENT 的 installation, 于是事件路由找得到它、权限判定认得出它。v2 里没有安装, 数字人进一场
+# 会话只有一条路 —— **被邀请**。
+#
+# 判据分两半, 两半都不能少:
+#
+#   1. **信送到了。** 定向票从铸票那一步开始要跨过四道边界: REST(应用平台) → LapEventPublisher
+#      的平台事件通道 → DhApplicationEventSink(单向门) → 数字人的邮箱 → 邀请处理器。这条链在
+#      "mvn test 全绿"里是看不出来的: 单测把端口换成假的, 它证明不了真的适配器接上了。
+#      这里用日志判据, 与断言 11 同一个理由 —— 而**收货人此刻还不在这一场里**(下面先断言
+#      参与者行是 0), 于是这条同时证明了邀请事件不走 AgentRouteResolver 的名单:
+#      "问他在不在这场里"对一个被邀请的人来说答案永远是没有(§60 / 计划修正 2)。
+#
+#   2. **它自己决定。** 在 mock LLM 下这个决定必须是"没决定"(IGNORE), 账本里**一条都不许有** ——
+#      不是"谢绝"。把一次服务抖动写成"这个数字人拒绝过谁", 是账本里最难查的一类假话; 反过来,
+#      默认一个"去"会让它在 LLM 不可用时到处乱窜。两种默认值都在这里被挡住。真实 LLM 下
+#      (LAP_EXPECT_AGENT_JOIN=1)则断言它真的进了场、账本里留下 ACCEPTED。
+note "断言 20: 定向邀请 → 数字人自己决定去不去 (R13)"
+if [ "$FAIL" != "0" ]; then
+  skip "数字人参与 — 前面的断言已经失败, 这一段的起点不可信"
+else
+  R13_PERSONA='{"name":"小满","description":"一个温柔独立的女生","traits":["温柔"]}'
+  R13_CID=$(curl -s -m 20 -X POST "$BASE/api/companions" \
+    -H "Authorization: Bearer $AUTH" -H 'Content-Type: application/json' \
+    -d "{\"persona\": $R13_PERSONA, \"relationshipType\": \"best_friend\"}" \
+    | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+
+  if [ -z "$R13_CID" ]; then
+    fail "建不出验收用的伴侣 —— 没有收件人就没有邀请"
+  else
+    # 这一局是这一段自己的, 所以不走 open_session(那会把 $SESSION_ID/$URI 换成别人以为还在的
+    # 那一局, 而断言 15 之后还有人要用它们)。
+    CODE=$(http POST "/api/v1/applications/$APP_ID/sessions" '{}')
+    R13_SESSION=$(jq_ "d['sessionId']")
+    [ "$CODE" = "200" ] && [ -n "$R13_SESSION" ] && ok "开了这一段的会话 $R13_SESSION" \
+      || fail "开会话状态码 $CODE"
+
+    # 铸票之前先钉住前提: **收件人还不在这一场里**。这句话是下面那条日志判据的分量所在 ——
+    # 一个已经在场的数字人收到信是理所当然的, 一个不在场的人收到才是路由绕开了名单。
+    R13_SEATED=$(sql "select count(*) from application_session_participant
+                        where session_id='$R13_SESSION' and principal_type='AGENT'")
+    [ "$R13_SEATED" = "0" ] && ok "收件人此刻还不在这一场里 (AGENT 参与者 0 行)" \
+      || fail "还没邀请就已经有 $R13_SEATED 行 AGENT 参与者 —— 下面的判据不成立了"
+
+    # 20a: 铸一张**定向**票 —— targetType/targetId 说的是"被邀请的那一位是谁";
+    # 调用方自己的身份仍然只由 Authorization 决定(§36), 请求体里没有"我是谁"。
+    LINES_BEFORE=$(wc -l < "$LAP_LOG")
+    CODE=$(http POST "/api/v1/sessions/$R13_SESSION/invitations" \
+      "{\"role\":\"MEMBER\",\"maxUses\":1,\"targetType\":\"AGENT\",\"targetId\":\"$R13_CID\"}")
+    [ "$CODE" = "200" ] && ok "定向邀请 200" || fail "状态码 $CODE"
+    R13_TOKEN=$(jq_ "d['token']")
+    R13_INVITATION=$(jq_ "d['invitationId']")
+    [ "$(jq_ "d['targetType']")" = "AGENT" ] && [ "$(jq_ "d['targetId']")" = "$R13_CID" ] \
+      && ok "票上记着收件人是 AGENT:$R13_CID" || fail "响应里的 target 不对"
+    [ "$(jq_ "d['joinUrl']")" = "/join/$R13_TOKEN" ] && [ -n "$R13_TOKEN" ] \
+      && ok "铸造响应里有明文票与分享链接 (只此一次)" || fail "joinUrl 与 token 对不上: $(jq_ "d['joinUrl']")"
+
+    # 20b: 与 R10 同一条不变量 —— 明文只在响应里出现一次, 库里只有哈希。
+    R13_LEN=$(sql "select char_length(token_hash) from session_invitation where id='$R13_INVITATION'")
+    [ "$R13_LEN" = "64" ] && ok "库里存的是 64 位哈希" || fail "token_hash 长度 = '$R13_LEN'"
+    R13_LEAK=$(sql "select count(*) from session_invitation where token_hash='$R13_TOKEN'")
+    [ "$R13_LEAK" = "0" ] && ok "明文票没有进库" || fail "明文票出现在 token_hash 列里"
+
+    # 20c: 信送到了没有 —— 数字人那条链跑在邮箱线程上, 给它最多 15 秒。
+    R13_MODE=""
+    R13_LINE=""
+    for _ in $(seq 1 30); do
+      NEW=$(tail -n +"$((LINES_BEFORE + 1))" "$LAP_LOG")
+      R13_LINE=$(echo "$NEW" | grep -F "[AgentInvitation]" | grep -F "$R13_CID" | head -1 || true)
+      if [ -n "$R13_LINE" ]; then
+        case "$R13_LINE" in
+          *"不作处置"*)      R13_MODE="ignored" ;;
+          *"接受了邀请"*)    R13_MODE="accepted" ;;
+          *"从开着的门"*)    R13_MODE="accepted" ;;
+          *"谢绝了邀请"*)    R13_MODE="declined" ;;
+          *)                 R13_MODE="other" ;;
+        esac
+        break
+      fi
+      sleep 0.5
+    done
+
+    case "$R13_MODE" in
+      ignored)
+        ok "信走完了整条链 (应用平台 → 单向门 → 邮箱 → 邀请处理器); 而 LLM 不可用 ⇒ 它没有做决定" ;;
+      accepted)
+        ok "信走完了整条链, 数字人接受邀请进了场: $R13_LINE" ;;
+      declined)
+        ok "信走完了整条链, 数字人想过之后谢绝了: $R13_LINE" ;;
+      other)
+        ok "信走完了整条链, 处置结果是: $R13_LINE" ;;
+      *)
+        fail "15 秒内没有看到 AgentApplicationInvitationHandler 处置这封邀请 —— 平台事件通道断了?
+        日志: $LAP_LOG (收件人 $R13_CID)" ;;
+    esac
+
+    if [ -n "${LAP_EXPECT_AGENT_JOIN:-}" ] && [ "$R13_MODE" != "accepted" ]; then
+      fail "LAP_EXPECT_AGENT_JOIN=1 但数字人没有进场 —— 服务跑的多半还是 mock LLM"
+    fi
+
+    # 20d: 决定了什么, 就得在数据上兑现什么。三种结果各自要成立的那一条:
+    R13_SEATED=$(sql "select count(*) from application_session_participant
+                       where session_id='$R13_SESSION' and principal_type='AGENT'
+                         and principal_id='$R13_CID'")
+    R13_LEDGER=$(sql "select count(*) from timeline_event
+                       where person_id='$R13_CID'
+                         and event_type in ('APPLICATION_INVITATION_ACCEPTED','APPLICATION_INVITATION_DECLINED')")
+    if [ "$R13_MODE" = "accepted" ]; then
+      [ "${R13_SEATED:-0}" -ge 1 ] && ok "它真的坐在这一场里了 (参与者行已落库)" \
+        || fail "日志说进场了, 参与者表里却没有它"
+      R13_ACC=$(sql "select count(*) from timeline_event where person_id='$R13_CID'
+                       and event_type='APPLICATION_INVITATION_ACCEPTED'")
+      [ "${R13_ACC:-0}" -ge 1 ] && ok "账本里留下了 APPLICATION_INVITATION_ACCEPTED" \
+        || fail "进了场却没有记一笔 —— 事后查不出它是怎么进来的"
+    else
+      [ "${R13_SEATED:-0}" = "0" ] && ok "它没有进场 (参与者 0 行)" \
+        || fail "数字人没答应, 场上却多了一行参与者"
+      # 未兑的票不该被烧掉 —— used_count 是"这张票被用掉几次", 而一次没决定的邀请没有用掉它。
+      R13_USED=$(sql "select used_count from session_invitation where id='$R13_INVITATION'")
+      [ "${R13_USED:-0}" = "0" ] && ok "票还是未使用的 (used_count=0)" \
+        || fail "票被用掉了 $R13_USED 次, 但没人进场 —— 有人在没决定的时候动了票"
+    fi
+
+    # 20e: **这一条是 R13 的核心**: 「没决定」不等于「谢绝」。
+    if [ "$R13_MODE" = "ignored" ]; then
+      [ "${R13_LEDGER:-0}" = "0" ] \
+        && ok "账本里一条都没有 —— 「没做决定」没有被写成「谢绝」" \
+        || fail "LLM 不可用却往账本里写了 $R13_LEDGER 条邀请经历: 一次服务抖动被记成了它的态度"
+    elif [ "$R13_MODE" = "declined" ]; then
+      [ "$(sql "select count(*) from timeline_event where person_id='$R13_CID'
+                  and event_type='APPLICATION_INVITATION_DECLINED'")" = "1" ] \
+        && ok "想过之后说不, 也真的记了一笔 (谢绝是它的决定, 值得记)" \
+        || fail "谢绝了却没有记账"
+    fi
+
+    # 清理: 会话那一半不挂在伴侣下面(§2: Application 与 Digital Human 互不相识), 只能显式删;
+    # 伴侣那一半走 REST(它自己有一整套级联)。
+    curl -s -X DELETE "$BASE/api/companions/$R13_CID" -H "Authorization: Bearer $AUTH" \
+      -o /dev/null 2>/dev/null || true
+    exec_sql "delete from session_permission where participant_id in
+                (select id from application_session_participant where session_id='$R13_SESSION')" \
+      >/dev/null 2>&1 || true
+    exec_sql "delete from application_session_participant where session_id='$R13_SESSION'" \
+      >/dev/null 2>&1 || true
+    exec_sql "delete from session_invitation where session_id='$R13_SESSION'" >/dev/null 2>&1 || true
+    exec_sql "delete from application_session where id='$R13_SESSION'" >/dev/null 2>&1 || true
+    exec_sql "delete from messages where conversation_id in
+                (select id from conversations where companion_id='$R13_CID')" >/dev/null 2>&1 || true
+    exec_sql "delete from conversations where companion_id='$R13_CID'" >/dev/null 2>&1 || true
+    exec_sql "delete from companions where id='$R13_CID'" >/dev/null 2>&1 || true
+  fi
+fi
+
 # ── 断言 15: 共享世界 —— 一行 resource, 两个 principal ──
 # 这是整个 LAP 最想证明的一句话: 真人和数字人不是各玩各的, 他们操作的是同一个东西。
 # 判据不是"两边都返回 200", 而是数据行本身: 一行 resource、一条会话、两个不同的 principal
