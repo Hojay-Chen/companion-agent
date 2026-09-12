@@ -19,8 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * LAP v1 §Session: <b>空闲会话回收器只结束, 从不删除。</b>
  *
- * <p>这条区别不是措辞上的: 一个被结束的会话仍然解释得通 —— 它还记得是谁、装的哪一版、
- * 在哪个安装下开的 —— 而一条被删掉的会话会让它名下所有 {@code action_invocation} 变成
+ * <p>这条区别不是措辞上的: 一个被结束的会话仍然解释得通 —— 它还记得是谁开的、开的哪一版、
+ * 当时有谁在场 —— 而一条被删掉的会话会让它名下所有 {@code action_invocation} 变成
  * 查不到上下文的孤儿。回收的目的是把"还开着"这件事收敛掉, 不是抹掉历史。
  *
  * <p>阈值与 {@code ActionInvocationReaperJob} 差着三个数量级(60 秒 vs 7 天), 因为两件事问的
@@ -42,9 +42,6 @@ class SessionReaperTest {
     ApplicationSessionRepository repository;
 
     @Autowired
-    InstallationService installations;
-
-    @Autowired
     SessionReaperJob job;
 
     @Test
@@ -56,8 +53,8 @@ class SessionReaperTest {
 
         ApplicationSessionRecord ended = repository.findById(session.getId()).orElseThrow();
         assertEquals(ApplicationSessionRecord.STATUS_ENDED, ended.getStatus());
-        assertEquals(session.getPrincipalId(), ended.getPrincipalId(),
-                "结束不是删除: 谁开的、装的哪一版, 都还查得到");
+        assertEquals(session.getOwnerPrincipalId(), ended.getOwnerPrincipalId(),
+                "结束不是删除: 谁开的、开的哪一版, 都还查得到");
         assertTrue(ended.getCreatedAt() != null);
     }
 
@@ -115,8 +112,7 @@ class SessionReaperTest {
         ResolvedPrincipal human = new ResolvedPrincipal(PrincipalType.HUMAN,
                 "user-" + UUID.randomUUID(), null, "user-" + UUID.randomUUID(), null,
                 "corr-" + UUID.randomUUID(), ResolvedPrincipal.SOURCE_JWT);
-        installations.install(APP, human, null);
-        return sessions.open(APP, human);
+        return sessions.launch(APP, human);
     }
 
     /** 把 lastActiveAt 往前拨 —— 等 7 天是测不了的, 而"这行看起来很久没动了"是可以造的。 */

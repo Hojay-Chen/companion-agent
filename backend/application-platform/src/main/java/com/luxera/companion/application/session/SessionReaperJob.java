@@ -6,13 +6,17 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * LAP v1: <b>空闲会话的回收器。</b>
+ * LAP v2: <b>空闲会话的回收器。</b>
  *
  * <p>{@code application_session} 是平台级的, 也就是说<em>没人替平台清理它</em> —— 每个应用都
  * 只管自己的业务表(棋局、提醒), 会话这一行对它们而言是透明的。没有这个任务, 每开一局棋就永久
- * 多一行 ACTIVE 会话; 它们不出现在任何界面上, 只是慢慢把
- * {@code findByApplicationIdAndPrincipalTypeAndPrincipalId} 这类查询拖长, 并且让"这个数字人
- * 现在在玩几盘棋"这种问题永远得不到正确答案。
+ * 多一行 ACTIVE 会话; 它们不出现在任何界面上, 只是慢慢把查询拖长, 并且让"这个数字人现在在玩
+ * 几盘棋"这种问题永远得不到正确答案。
+ *
+ * <p><b>扫的是 {@code ACTIVE} 与 {@code WAITING} 两种</b>(见
+ * {@link ApplicationSessionService#reapIdle}): 一个等了七天还没等到人的会话同样该收掉 ——
+ * "没人来"不是它继续占着的地方的理由。{@code PAUSED} 不在其中: 暂停是一个<em>有人做出的</em>
+ * 决定, 而回收器不该替人撤销决定; 真要收, 有显式的结束会话那条路。
  *
  * <p><b>回收阈值与{@code ActionInvocationReaperJob}不同, 而且必须不同。</b> 那边是 60 秒的
  * "这次调用还活着吗", 这边是"这个人还在这局里吗" —— 用分钟级去关会话, 会让一局下到一半、

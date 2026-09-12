@@ -8,7 +8,7 @@ import {
   type ActionSpec,
   type ApplicationView,
   type CapabilityView,
-  type InstallResponse,
+  type SessionResponse,
   type ResourceView,
 } from '@/api/lap'
 
@@ -31,7 +31,7 @@ export default function Applications() {
   const [application, setApplication] = useState<ApplicationView | null>(null)
   const [actions, setActions] = useState<ActionSpec[]>([])
 
-  const [installation, setInstallation] = useState<InstallResponse | null>(null)
+  const [session, setSession] = useState<SessionResponse | null>(null)
   const [resource, setResource] = useState<ResourceView | null>(null)
 
   const [busy, setBusy] = useState(false)
@@ -49,7 +49,7 @@ export default function Applications() {
   const pickCapability = async (next: CapabilityView) => {
     setCapability(next)
     setApplication(null)
-    setInstallation(null)
+    setSession(null)
     setResource(null)
     setError(null)
     try {
@@ -61,7 +61,7 @@ export default function Applications() {
 
   const pickApplication = async (next: ApplicationView) => {
     setApplication(next)
-    setInstallation(null)
+    setSession(null)
     setResource(null)
     setError(null)
     try {
@@ -71,16 +71,25 @@ export default function Applications() {
     }
   }
 
-  /** 安装会顺带开一个会话 —— 那一段 id 就是后面所有 target 里的 `game://session/{id}`。 */
-  const install = async () => {
+  /**
+   * 打开应用 —— v2 里这个动作产生的唯一东西就是一个会话。
+   *
+   * 没有"安装"这一步可走: 不需要装, 也不存在一个装着它的状态。开出来的会话 id 就是后面所有
+   * target 里的 `game://session/{id}`, 而 `capabilities` 是这一局里我拿到的那份授权 ——
+   * 它属于这一局, 不属于"我"。
+   */
+  const open = async () => {
     if (!application) return
     setBusy(true)
     setError(null)
     setNotice(null)
     try {
-      const result = await lap.install(application.applicationId)
-      setInstallation(result)
-      setNotice(`已安装 ${result.applicationId} v${result.version ?? '?'}, 授权 ${result.capabilities.join(', ')}`)
+      const result = await lap.openSession(application.applicationId)
+      setSession(result)
+      setNotice(
+        `已开启会话 ${result.sessionId.slice(0, 8)}… (${result.status}, ${result.participantCount} 人), ` +
+          `本局授权 ${result.capabilities.join(', ')}`,
+      )
     } catch (e) {
       report(e)
     } finally {
@@ -88,7 +97,7 @@ export default function Applications() {
     }
   }
 
-  const targetUri = installation ? resourceUriOf(installation.sessionId) : null
+  const targetUri = session ? resourceUriOf(session.sessionId) : null
 
   const run = async (spec: ActionSpec, input: unknown, key?: string) => {
     if (!targetUri) return
@@ -212,9 +221,9 @@ export default function Applications() {
               <h2 className="text-sm font-medium text-cocoa-300">
                 {application.name} 的动作
               </h2>
-              {!installation && (
-                <button onClick={install} disabled={busy} className="btn-primary">
-                  安装并开会话
+              {!session && (
+                <button onClick={open} disabled={busy} className="btn-primary">
+                  打开应用
                 </button>
               )}
             </div>
@@ -233,7 +242,7 @@ export default function Applications() {
                   </div>
                   <button
                     className="btn-ghost shrink-0"
-                    disabled={!installation || busy}
+                    disabled={!session || busy}
                     onClick={() => run(spec, {}, spec.permissionLevel === 'READ' ? undefined : newIdempotencyKey())}
                   >
                     <Play size={14} />
@@ -246,7 +255,7 @@ export default function Applications() {
         )}
 
         {/* 资源: 统一读模型的一种画法 */}
-        {installation && (
+        {session && (
           <section className="mt-8">
             <div className="flex items-center gap-3">
               <h2 className="text-sm font-medium text-cocoa-300">资源</h2>

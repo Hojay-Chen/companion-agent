@@ -8,8 +8,10 @@ import com.luxera.companion.application.action.ActionGateway;
 import com.luxera.companion.application.manifest.ApplicationManifest;
 import com.luxera.companion.application.manifest.EventIdMinter;
 import com.luxera.companion.application.manifest.ManifestRegistry;
+import com.luxera.companion.application.domain.SessionParticipantRecord;
 import com.luxera.companion.application.principal.ResolvedPrincipal;
-import com.luxera.companion.application.session.InstallationService;
+import com.luxera.companion.application.session.ApplicationSessionService;
+import com.luxera.companion.application.session.ParticipantService;
 import com.luxera.companion.contracts.application.ActionRequest;
 import com.luxera.companion.contracts.application.ActionResponse;
 import com.luxera.companion.contracts.application.ActionStatus;
@@ -39,12 +41,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <ol>
  *   <li><b>主体型资源。</b>提醒的 URI 是 {@code reminder://owner/{ownerId}}, 里面没有
- *       {@code sessionId}。{@code ActionGateway.resolveSessionId} 会优雅地返回 null, 于是
- *       {@code resource.session_id} 为空 —— <em>没有会话的资源在平台上完全合法</em>。这不是
- *       绕过约定: "下周三提醒我交房租"必须活过任何一个会话, 把它锚在会话上就等于让它随会话消失。</li>
- *   <li><b>IDOR 守卫。</b>URI 里的 {@code ownerId} 是<em>调用方给的</em>。权限判定管的是"你能不能
- *       调 {@code reminder.list}", 它不看 URI 里那一段。少了应用自己的归属检查, 任何一个装了提醒
- *       应用的人都能读别人的收件箱 —— 一个纯粹的越权读。</li>
+ *       {@code sessionId} 段 —— 平台靠"这一行资源属于哪个会话"来解, 而不是靠 URI 里写着一个。
+ *       于是"下周三提醒我交房租"活得过任何一个会话: 会话没了, 平台重新解一个, 资源行跟着换锚,
+ *       提醒本身不受影响(见 {@link #theInboxIsAnchoredOnTheOwnersSession})。</li>
+ *   <li><b>IDOR 守卫。</b>URI 里的 {@code ownerId} 是<em>调用方给的</em>。权限判定管的是"你能
+ *       不能调 {@code reminder.list}", 它不看 URI 里那一段 —— v2 里它连"你在不在这一局"都管了,
+ *       但仍然管不到"这个 URI 里的 ownerId 是不是你"。守卫必须在应用里, 而为了证明它<em>真的</em>
+ *       在应用里, 这几个用例用的是<b>被请进这一局的旁观者</b>: 平台放行, 应用拒绝。</li>
  *   <li><b>应用自有的业务规则。</b>生日提醒"每年最多一条"是<em>数据</em>的规则, 所以判在数据这里;
  *       数字人的生日服务每天被 cron 叫醒一次, 它没有义务自己记住"今年建过了"。</li>
  * </ol>
@@ -69,7 +72,10 @@ class ReminderApplicationTest {
     ActionGateway gateway;
 
     @Autowired
-    InstallationService installationService;
+    ParticipantService participantService;
+
+    @Autowired
+    ApplicationSessionService sessionService;
 
     @Autowired
     RecordingApplicationEventSink events;
@@ -133,14 +139,33 @@ class ReminderApplicationTest {
         assertEquals(0L, inbox.version(), "空收件箱的版本是 0");
     }
 
-    /** 主体型资源: URI 里没有 {@code sessionId} 段, 所以归属锚不在会话上。 */
+    /**
+     * 收件箱<b>不挂在任何会话上</b> —— 而这不是漏了一处, 是这类资源的定义。
+     *
+     * <p>{@code reminder://owner/{ownerId}} 是<em>主体型</em>资源: 它属于这个人, 活得过任何一个
+     * 会话。给它记一个会话锚等于说"这条收件箱属于当时恰好开着的那一局", 而那既不真也不稳 ——
+     * 同一个人在两个会话里各建一条提醒, 收件箱只会有一个, 锚却会有两个候选。
+     *
+     * <p>于是它连 {@code resource} 表里的一行都没有({@code APP_OWNED}, 读的时候由
+     * {@link com.luxera.companion.application.builtin.reminder.ReminderResourceProjector} 现算),
+     * {@code sessionId} 恒为空。这条用例把它钉住, 是为了挡住一种很自然的"顺手修一下": 看到空锚
+     * 就给它补一个。补上之后棋局那套语义会被错误地搬过来, 而真正的答案在别处 ——
+     * 事件路由对这类资源走的是"名单上的人在不在这一个应用的某个活跃会话里"
+     * (见 {@code AgentRouteResolver#byNotifyList})。
+     *
+     * <p>另一半同样重要: <b>资源没有锚, 动作却有会话</b>。网关会按"这个人最近的活动会话"解一个
+     * (没有就新建一个, 见会话解析第 4/5 档), 否则权限判定就没有判据, 每一次提醒调用都会新建一个
+     * 会话。这里把那一半也断言掉, 两条合起来才是这个 URI 形状的完整形状。
+     */
     @Test
-    void theInboxDoesNotBelongToAnySession() {
+    void theInboxIsNotAnchoredOnAnySessionButTheActionStillRunsInOne() {
         Human alice = newHuman();
         create(alice, "交房租", DUE);
 
         assertNull(inbox(alice).sessionId(),
-                "提醒要活过任何一个会话, 所以它不属于某个会话");
+                "主体型资源不属于任何会话 —— 给它补一个锚是把两类资源混为一谈");
+        assertNotNull(sessionOf(alice),
+                "但动它的那次调用跑在一个真实的会话里, 否则权限判定无从谈起");
     }
 
     /** 资源要带上 manifest 里写的 {@code agentHint} —— 数字人靠它知道 state.items 是什么。 */
@@ -157,37 +182,74 @@ class ReminderApplicationTest {
     // ─────────────────────────── IDOR ───────────────────────────
 
     /**
-     * <b>本类最重要的一条。</b>装了应用的人<em>不能</em>读别人的收件箱。
+     * <b>本类最重要的一条。</b>在场的人<em>不能</em>读别人的收件箱。
      *
      * <p>URI 是调用方给的, 所以 {@code ownerId} 这一段完全可能是别人的 id。权限判定在这一层
-     * 帮不上忙 —— 它只看"你能不能调 {@code reminder.list}", 不看 URI。守卫必须在应用里。
+     * 帮不上忙 —— 它只看"你能不能调 {@code reminder.list}", 不看 URI 里那一段。
+     *
+     * <p>v2 让这条断言更锋利了: 这里的 carol 是<b>被请进爱丽丝这一局的旁观者</b>。她通过了平台
+     * 那一关(确实在场, 也确实有读权限), 所以接下来拒绝她的只可能是应用自己的归属检查 ——
+     * 断言失败时没有第二种解释。
      */
     @Test
-    void aPrincipalCannotReadSomeoneElsesInbox() {
+    void anInvitedBystanderCannotReadSomeoneElsesInbox() {
         Human alice = newHuman();
-        Human bob = newHuman();
+        Human carol = newHuman();
         create(alice, "爱丽丝的事", DUE);
-        create(bob, "鲍勃的事", DUE);
+        invite(alice, carol);
 
         ActionResponse peeked = gateway.execute(
-                ActionRequest.of(LIST, uriOf(alice), null), ctx(bob));
+                ActionRequest.of(LIST, uriOf(alice), null), ctx(carol));
 
         assertEquals(ActionStatus.DENIED, peeked.status());
         assertEquals("NOT_RESOURCE_OWNER", peeked.error().code());
     }
 
-    /** 写路径上的同一条守卫: 不能在别人的收件箱里创建提醒。 */
+    /**
+     * <b>外面的人与同席的旁观者, 得到的是同一个拒绝。</b>
+     *
+     * <p>这一条是刻意写下来的, 为了钉住一件事: 棋局那张"平台管你在不在场、应用管这个 URI 是不是
+     * 你的"两层图, <em>不能照搬到主体型资源上</em>。平台看 {@code reminder://owner/alice} 时
+     * 没有任何办法知道这段 URI 是关于爱丽丝的 —— ownerId 是应用层的语义, 平台上连这一行资源都
+     * 不存在(它是投影出来的)。于是鲍勃来读时, 平台只能按"他自己有没有活跃会话"解一个, 而他有。
+     *
+     * <p>所以对这类资源<b>只有一层</b>: 应用自己的归属检查。这不是缺陷, 是"URI 里带的是谁的 id"
+     * 这件事本来就只能由知道那个 id 是什么意思的一方来判。它同时也是一个警告 —— 如果哪天有人
+     * 以为平台还兜着底, 把应用里那行检查删掉, 这条用例会以同样的码红给他看。
+     */
     @Test
-    void aPrincipalCannotCreateInSomeoneElsesInbox() {
+    void anOutsiderGetsTheSameRefusalAsAnInvitedBystander() {
         Human alice = newHuman();
         Human bob = newHuman();
+        Human carol = newHuman();
+        create(alice, "爱丽丝的事", DUE);
+        create(bob, "鲍勃的事", DUE);
+        invite(alice, carol);
+
+        for (Human peeked : List.of(bob, carol)) {
+            ActionResponse response = gateway.execute(
+                    ActionRequest.of(LIST, uriOf(alice), null), ctx(peeked));
+            assertEquals(ActionStatus.DENIED, response.status());
+            assertEquals("NOT_RESOURCE_OWNER", response.error().code(),
+                    "主体型资源的归属只有应用自己判得了: " + peeked.principalId());
+        }
+    }
+
+    /** 写路径上的同一条守卫: 同席的旁观者不能在别人的收件箱里创建提醒。 */
+    @Test
+    void anInvitedBystanderCannotCreateInSomeoneElsesInbox() {
+        Human alice = newHuman();
+        Human carol = newHuman();
+        create(alice, "爱丽丝的事", DUE);
+        invite(alice, carol);
 
         ActionResponse response = gateway.execute(
-                ActionRequest.of(CREATE, uriOf(alice), title("替别人建的")), ctx(bob));
+                ActionRequest.of(CREATE, uriOf(alice), title("替别人建的")), ctx(carol));
 
         assertEquals(ActionStatus.DENIED, response.status());
         assertEquals("NOT_RESOURCE_OWNER", response.error().code());
-        assertEquals(0, inbox(alice).state().path("total").asInt(), "被拒的写不该落盘");
+        assertEquals(1, inbox(alice).state().path("total").asInt(),
+                "被拒的写不该落盘 —— 爱丽丝原来那一条还在, 且只有那一条");
     }
 
     /**
@@ -508,9 +570,31 @@ class ReminderApplicationTest {
     }
 
     private Human newHuman() {
-        Human human = new Human(UUID.randomUUID().toString());
-        installationService.install(APP_ID, human.principal(), null);
-        return human;
+        return new Human(UUID.randomUUID().toString());
+    }
+
+    /**
+     * 把一个人请进 {@code owner} 的会话 —— <b>调用前 {@code owner} 必须已经动过一次</b>
+     * (会话是随第一次动作才有的)。
+     *
+     * <p>会话 id 从<em>平台的记账</em>里取, 不从资源行上取: 收件箱是主体型资源, 它上面没有会话
+     * 锚(见 {@link #theInboxIsNotAnchoredOnAnySessionButTheActionStillRunsInOne})。这也正是
+     * 查会话解析第 4 档的那个方法本身 —— 平台在别处就是这么做会话解析的。
+     *
+     * <p>这个夹具的存在是为了让"应用的守卫"与"平台的守卫"能被分开测: 旁观者通过了平台那一关
+     * (她确实在局里), 于是断言失败的唯一可能就只剩应用自己那一条。
+     */
+    private void invite(Human owner, Human guest) {
+        participantService.join(sessionOf(owner), guest.principal(),
+                SessionParticipantRecord.ROLE_MEMBER, true);
+    }
+
+    /** 这个人此刻在这个应用里的活跃会话 id —— 会话解析第 4 档那个问题的直接答案。 */
+    private String sessionOf(Human who) {
+        return sessionService.findLive(APP_ID, who.principal())
+                .orElseThrow(() -> new AssertionError(
+                        "动过一次之后, 这个人应当已经有一个提醒应用的会话: " + who.principalId()))
+                .getId();
     }
 
     private static String uriOf(Human human) {

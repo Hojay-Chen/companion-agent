@@ -67,14 +67,30 @@ export interface ActionResponse<T = unknown> {
   error?: ActionError | null
 }
 
-export interface InstallResponse {
-  installationId: string
+/**
+ * 打开一个应用的结果 —— 它 <b>就是</b> 一个会话。
+ *
+ * v2 之前这里叫 `InstallResponse`, 装着 `installationId`。安装没了之后这个名字跟着消失:
+ * 界面上"打开"这个动作产生的唯一东西就是一个会话, 而会话 id 就是接下来每一步动作要用的那个。
+ */
+export interface SessionResponse {
   sessionId: string
   applicationId: string
-  version?: string | null
-  principalType: string
-  principalId: string
+  versionId: string
+  ownerPrincipalType: string
+  ownerPrincipalId: string
+  status: string
+  visibility: string
+  joinPolicy: string
+  minParticipants: number
+  maxParticipants: number
+  conversationId?: string | null
+  participantCount: number
   capabilities: string[]
+  createdAt?: string | null
+  startedAt?: string | null
+  endedAt?: string | null
+  lastActiveAt?: string | null
 }
 
 export class LapError extends Error {
@@ -135,12 +151,21 @@ export const lap = {
   actionsOf: (applicationId: string) =>
     send<ActionSpec[]>('GET', `/api/v1/applications/${encodeURIComponent(applicationId)}/actions`),
 
-  install: (applicationId: string, capabilities?: string[]) =>
-    send<InstallResponse>(
+  /**
+   * 打开应用 —— **每次都是一个新的会话**。
+   *
+   * 想续上一局的人该拿旧的 `sessionId` 回来, 而不是指望这里返回同一个: "打开"与"回到刚才那局"
+   * 是两件事, 把它们合并会让"再开一局"永远做不到。
+   */
+  openSession: (applicationId: string, options?: { conversationId?: string }) =>
+    send<SessionResponse>(
       'POST',
-      `/api/v1/applications/${encodeURIComponent(applicationId)}/install`,
-      capabilities ? { capabilities } : {},
+      `/api/v1/applications/${encodeURIComponent(applicationId)}/sessions`,
+      options ?? {},
     ),
+
+  /** 我参与的全部活跃会话 —— "我正在用的应用"那个列表。 */
+  sessions: () => send<SessionResponse[]>('GET', '/api/v1/sessions'),
 
   readResource: (uri: string) =>
     send<ResourceView[]>('GET', `/api/v1/resources?uri=${encodeURIComponent(uri)}`),

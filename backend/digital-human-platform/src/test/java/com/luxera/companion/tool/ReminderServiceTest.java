@@ -42,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  *       不是一个数字人自己发明的地址。</li>
  *   <li><b>写的是那些 action。</b> 建/完成/取消各走 {@code reminder.*}, 身份是
  *       {@code HUMAN(userId)}(提醒的主人是人, 应用会核对 URI 里的 ownerId), 且先
- *       {@code ensureInstalled}。</li>
+ *       {@code ensureSession}(R9 之前是 {@code ensureInstalled})。</li>
  *   <li><b>翻译是双向且只有一处。</b> {@code dueAt ↔ remindAt}、{@code note ↔ content}、
  *       {@code PENDING/DISPATCHED/DONE/CANCELLED ↔ pending/done/cancelled}。前端那一行
  *       {@code r.status === 'done'} 依赖的就是最后这一条。</li>
@@ -126,8 +126,8 @@ class ReminderServiceTest {
         service.create(USER, COMPANION, "user_set", "交房租", "这个月的",
                 LocalDateTime.of(2026, 9, 12, 15, 0));
 
-        assertEquals(List.of(ReminderService.APP_ID), app.installed,
-                "用的前提是装过 —— 但装这件事是幂等的, 每次用之前保证一下");
+        assertEquals(List.of(ReminderService.APP_ID), app.sessionsOpened,
+                "用的前提是这个人在这应用里有一个会话 —— 而开这件事是幂等的, 每次用之前保证一下");
         ActionRequest request = app.requests.get(0);
         assertEquals("reminder.create", request.action());
         assertEquals("reminder://owner/user-1", request.target());
@@ -238,8 +238,8 @@ class ReminderServiceTest {
     }
 
     @Test
-    void anInstallFailureIsReportedAsUnavailableRatherThanSwallowed() {
-        app.installFails = true;
+    void aSessionFailureIsReportedAsUnavailableRatherThanSwallowed() {
+        app.sessionFails = true;
 
         BusinessException e = assertThrows(BusinessException.class,
                 () -> service.create(USER, COMPANION, "user_set", "交房租", null,
@@ -277,13 +277,13 @@ class ReminderServiceTest {
         private static final ObjectMapper MAPPER = new ObjectMapper();
 
         final List<String> reads = new ArrayList<>();
-        final List<String> installed = new ArrayList<>();
+        final List<String> sessionsOpened = new ArrayList<>();
         final List<ActionRequest> requests = new ArrayList<>();
         final List<InvocationContext> contexts = new ArrayList<>();
 
         private final Map<String, ArrayNode> inboxes = new HashMap<>();
         private ActionResponse refusal;
-        private boolean installFails;
+        private boolean sessionFails;
 
         void store(String userId, ObjectNode... items) {
             ArrayNode array = MAPPER.createArrayNode();
@@ -317,11 +317,14 @@ class ReminderServiceTest {
         }
 
         @Override
-        public void ensureInstalled(String applicationId, InvocationContext ctx) {
-            if (installFails) {
+        public String ensureSession(String applicationId, InvocationContext ctx) {
+            if (sessionFails) {
                 throw new IllegalStateException("应用没有已发布版本");
             }
-            installed.add(applicationId);
+            sessionsOpened.add(applicationId);
+            // 幂等: 同一个 (应用, 主体) 永远拿到同一个会话 id —— 这正是真实实现的性质,
+            // 而为每条提醒编一个新 id 会让"会话解析第 4 档"在这里测不出任何东西。
+            return "session-" + applicationId + "-" + (ctx == null ? "?" : ctx.principalId());
         }
 
         @Override

@@ -60,16 +60,23 @@ public interface ApplicationRuntimePort {
     ActionResponse execute(ActionRequest request, InvocationContext ctx);
 
     /**
-     * 保证这个 principal 装了某个应用 —— <b>幂等</b>, 重复调用不会产生第二条安装。
+     * 保证这个 principal 在某个应用里<b>有一个正在进行的会话</b> —— <b>幂等</b>, 返回它的 id。
      *
-     * <p>为什么数字人需要它: 数字人有些功能天然要落到某个应用上(提醒就是第一个), 而"用户装了
-     * 什么"是用户的选择, 不该由数字人在启动时替所有人做一次批量安装, 也不该由部署脚本往数据库里
-     * 塞行。于是改成"用的时候保证一下": 第一次用到时装上, 之后每次都是无操作。
+     * <p>LAP v2 之前这里叫 {@code ensureInstalled}: 那时的模型是"先安装, 才有会话"。v2 把安装
+     * 整个拿掉了 —— 用户无需安装任何东西, 剩下的是"<em>我在这个应用里有一个实例</em>", 那正是
+     * Session。于是同一个位置上的问题从"我允许这个应用为我做事吗"变成了"我在哪里做这件事",
+     * 答案从一个布尔值变成了一个 id。
      *
-     * <p>它只做安装, 不开会话 —— 会话是"这次用它"的上下文, 由调用方在需要时再要一个。
-     * 安装是"我允许这个应用为我做事", 那是一次决定, 不是一次操作。
+     * <p>为什么数字人需要它: 数字人有些功能天然要落到某个应用上(提醒就是第一个), 而"用户开了
+     * 什么会话"是用户的选择, 不该由数字人在启动时替所有人批量创建, 也不该由部署脚本往数据库里
+     * 塞行。于是改成"用的时候保证一下": 第一次用到时建一个并把调用方记为 OWNER, 之后每次都是
+     * 无操作。
      *
+     * <p>它<em>只</em>保证会话存在, 不保证会话里发生了什么 —— 动作仍然要另外走
+     * {@link #execute}。
+     *
+     * @return 该 principal 在这个应用里可用的会话 id; 永不返回 null
      * @throws RuntimeException 应用不存在、没有已发布版本、或调用方身份不合法时由实现抛出
      */
-    void ensureInstalled(String applicationId, InvocationContext ctx);
+    String ensureSession(String applicationId, InvocationContext ctx);
 }

@@ -10,7 +10,7 @@ package com.luxera.companion.application.permission;
  *
  * @param allowed               是否放行(确认态下为 false, 但没有"错误")
  * @param confirmationRequired  需要调用方显式确认后再来一次
- * @param code                  稳定的机器码({@code NOT_INSTALLED}, {@code RISK_TOO_HIGH}, …)
+ * @param code                  稳定的机器码({@code NOT_A_PARTICIPANT}, {@code RISK_TOO_HIGH}, …)
  * @param message               给人看的说明
  */
 public record PermissionDecision(boolean allowed,

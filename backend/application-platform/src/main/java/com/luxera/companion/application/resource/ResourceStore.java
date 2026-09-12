@@ -130,7 +130,36 @@ public class ResourceStore {
                     current.getStateJson(), current.getResourceType(),
                     current.getApplicationId(), current.getSessionId());
         }
+        reanchorIfStale(uri, existing, sessionId);
         return toView(resources.findByUri(uri).orElseThrow());
+    }
+
+    /**
+     * 资源行的会话锚跟着平台解出来的会话走。
+     *
+     * <p>为什么需要这一步: URI 里<em>没有</em> {@code sessionId} 段的资源, 它的会话锚只在写入的
+     * 那一刻被定下来。之后那个人原来的会话被回收器收掉、平台给他解出一个新会话时, 资源行还指着
+     * 那个死掉的 —— 于是资源照常能读写(网关的第 2 档发现锚不可用会重新解一次),
+     * 但 {@code AgentRouteResolver} 会拿着一个空会话去查参与者, <b>一个人也唤不醒, 而且不报错</b>。
+     * 这正是 LAP v2 里最难查的一类失败。
+     *
+     * <p><b>哪一类资源会走到这里。</b> {@code resource.session_id} 从 R5 起就是可空的(见
+     * {@code resourcesWithoutASessionAreAllowed}), 所以"没有会话段的资源"是被允许存在的一类,
+     * 而不是一个应该消失的历史遗留。但要注意<b>提醒收件箱不是这一类的例子</b>:
+     * {@code reminder://owner/{ownerId}} 是 {@code APP_OWNED}, {@code resource} 表里根本没有
+     * 它那一行, 也就没有一个"锚"可挂。目前三个内置应用的 URI 模板全都带会话段
+     * ({@code game://session/{id}} / {@code gomoku://match/{id}}), 所以这条路径今天由测试
+     * ({@code ResourceStoreTest.aResourceWithoutASessionSegmentFollowsTheSessionResolvedLater})
+     * 而<em>不是</em>由某个内置应用来走通 —— 它是给"URI 里没有会话段、却又要落库"的那类应用
+     * 留着的。
+     *
+     * <p>只在不一致时才写: 正常路径上一次 UPDATE 都不多发。
+     */
+    private void reanchorIfStale(String uri, ResourceRecord existing, String sessionId) {
+        if (java.util.Objects.equals(existing.getSessionId(), sessionId)) {
+            return;
+        }
+        resources.reanchor(uri, sessionId);
     }
 
     private ResourceView create(String uri, String resourceType, String stateJson,

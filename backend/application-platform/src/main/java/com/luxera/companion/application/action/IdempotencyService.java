@@ -136,14 +136,23 @@ public class IdempotencyService {
             return Claim.proceed(saved);
         } catch (DataIntegrityViolationException e) {
             // 唯一键把并发的第二个请求挡在了这里 —— 这就是"让索引当锁"。
-            return resolveExisting(idempotencyKey, principal, requestHash);
+            return resolveExisting(idempotencyKey, principal, sessionId, requestHash);
         }
     }
 
-    private Claim resolveExisting(String idempotencyKey, ResolvedPrincipal principal, String requestHash) {
+    /**
+     * 插入撞了唯一键之后, 把<em>那一个</em>行找回来。
+     *
+     * <p>查找的四列必须与唯一键的四列一样 —— 见
+     * {@code ActionInvocationRepository#findByPrincipalTypeAndPrincipalIdAndSessionIdAndIdempotencyKey}。
+     */
+    private Claim resolveExisting(String idempotencyKey,
+                                  ResolvedPrincipal principal,
+                                  String sessionId,
+                                  String requestHash) {
         ActionInvocationRecord existing = invocations
-                .findByPrincipalTypeAndPrincipalIdAndIdempotencyKey(
-                        principal.typeName(), principal.principalId(), idempotencyKey)
+                .findByPrincipalTypeAndPrincipalIdAndSessionIdAndIdempotencyKey(
+                        principal.typeName(), principal.principalId(), sessionId, idempotencyKey)
                 .orElse(null);
         if (existing == null) {
             // 插入失败但查不到 —— 只可能是并发删除之类的非常规情况。保守拒绝, 不冒险执行。
@@ -328,9 +337,4 @@ public class IdempotencyService {
         }
     }
 
-    /** 仅供测试: 取一条调用记录。 */
-    public Optional<ActionInvocationRecord> find(String principalType, String principalId, String key) {
-        return invocations.findByPrincipalTypeAndPrincipalIdAndIdempotencyKey(
-                principalType, principalId, key);
-    }
 }

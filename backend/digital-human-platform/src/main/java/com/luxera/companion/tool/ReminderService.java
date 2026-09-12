@@ -32,10 +32,14 @@ import java.util.UUID;
  * <b>读 {@code reminder://owner/{userId}}</b>、<b>写 {@code reminder.create/complete/cancel}</b>、
  * 以及在两者之间翻译字段名。提醒的存储、去重规则(生日一年一条)、到点扫描, 全在应用里。
  *
- * <h2>为什么要 {@code ensureInstalled}</h2>
- * <p>提醒是数字人的一个功能, 但它落在用户装的应用上。数字人不在启动时替所有人批量安装 ——
- * 那是用户的选择; 也不该由部署脚本往库里塞行。改成"用的时候保证一下": 第一次用到时装上,
- * 之后每次都是无操作({@code InstallationService.install} 天生幂等)。
+ * <h2>为什么要 {@code ensureSession}</h2>
+ * <p>提醒是数字人的一个功能, 但它落在用户<b>打开的那个会话</b>里。数字人不在启动时替所有人批量
+ * 开会话 —— 那是用户的选择; 也不该由部署脚本往库里塞行。改成"用的时候保证一下": 第一次用到时
+ * 开一个并把这个人记为 OWNER, 之后每次都是无操作({@code ensureSession} 天生幂等)。
+ *
+ * <p>LAP v2 之前这里叫 {@code ensureInstalled}, 保证的是"这个人装过提醒应用"。安装没有了之后,
+ * 同一个位置上要保证的东西变成了"这个人在提醒应用里有一个正在进行的实例" —— 那正是 Session。
+ * 调用点只有这一处, 改的也只有这一行。
  *
  * <h2>为什么每次都用一个全新的 correlationId</h2>
  * <p>进程内调用的幂等键是从 {@code correlationId + target} 派生的, 而 {@code target} 对提醒
@@ -155,7 +159,11 @@ public class ReminderService {
      */
     private ActionResponse call(String userId, String action, ObjectNode input, String what) {
         InvocationContext ctx = InvocationContext.human(userId, UUID.randomUUID().toString());
-        ensureInstalled(ctx, what);
+        ensureSession(ctx, what);
+        // 刻意<em>不</em>把会话 id 塞进 ctx: 收件箱是"属于人"的资源, 一旦把某个会话写进它的
+        // resource 行, 那个会话结束时这一行就指向一个已经没了的会话 —— 而收件箱一天之内可能要
+        // 活过好几个会话。网关的会话解析第 4 档("这个人最近的 ACTIVE 会话")给出的正是刚刚
+        // 保证过的那个, 而且它不往资源行上写任何东西。
         ActionResponse response = port.execute(ActionRequest.of(action, inboxOf(userId), input), ctx);
         if (!response.isSuccess()) {
             throw failure(what, response);
@@ -163,11 +171,17 @@ public class ReminderService {
         return response;
     }
 
-    private void ensureInstalled(InvocationContext ctx, String what) {
+    /**
+     * 保证这个人在提醒应用里有一个会话。<b>只为了副作用</b> —— 这里要的不是那个 id(见
+     * {@link #call} 里的注释), 而是"接下来那个动作一定有一个会话可落"。
+     *
+     * <p>建不出来就让调用方知道, 不静默降级: "提醒不工作"必须是能看见的, 而不是翻日志才能定位的。
+     */
+    private void ensureSession(InvocationContext ctx, String what) {
         try {
-            port.ensureInstalled(APP_ID, ctx);
+            port.ensureSession(APP_ID, ctx);
         } catch (Exception e) {
-            log.warn("[提醒] 安装 {} 失败: {}", APP_ID, e.getMessage());
+            log.warn("[提醒] 开启 {} 的会话失败: {}", APP_ID, e.getMessage());
             throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE,
                     what + "失败: 提醒应用暂不可用", "REMINDER_APP_UNAVAILABLE");
         }

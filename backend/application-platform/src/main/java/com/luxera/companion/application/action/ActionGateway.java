@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luxera.companion.application.audit.ActionAuditRecorder;
 import com.luxera.companion.application.domain.ApplicationSessionRecord;
-import com.luxera.companion.application.domain.InstallationRecord;
+import com.luxera.companion.application.domain.SessionParticipantRecord;
 import com.luxera.companion.application.event.LapEventPublisher;
 import com.luxera.companion.application.lifecycle.ApplicationCatalogue;
 import com.luxera.companion.application.manifest.ApplicationManifest;
@@ -14,11 +14,11 @@ import com.luxera.companion.application.permission.PermissionEvaluator;
 import com.luxera.companion.application.principal.PrincipalResolver;
 import com.luxera.companion.application.principal.PrincipalResolvers;
 import com.luxera.companion.application.principal.ResolvedPrincipal;
-import com.luxera.companion.application.repository.InstallationRepository;
 import com.luxera.companion.application.resource.ResourceStore;
 import com.luxera.companion.application.resource.StateConflictException;
 import com.luxera.companion.application.session.ApplicationSessionService;
-import com.luxera.companion.application.session.InstallationService;
+import com.luxera.companion.application.session.ApplicationSessionStateMachine;
+import com.luxera.companion.application.session.ParticipantService;
 import com.luxera.companion.application.session.SessionException;
 import com.luxera.companion.contracts.application.ActionError;
 import com.luxera.companion.contracts.application.ActionRequest;
@@ -41,30 +41,44 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * LAP v1: <b>真人、Agent、MCP 客户端共用的唯一入口。</b>
+ * <b>真人、Agent、MCP 客户端共用的唯一入口。</b>
  *
  * <p>这个类里没有"如果调用方是 Agent 就……"的任何一个分支。差异全部落在
- * {@link ResolvedPrincipal} 上, 而它只影响两件事: 权限判定用谁的安装与授权、
+ * {@link ResolvedPrincipal} 上, 而它只影响两件事: 权限判定用谁的参与者行与授权、
  * 幂等键的作用域是谁。除此之外, 一条路径。
  *
- * <p>一次执行经过七道, 顺序是刻意的:
+ * <p>一次执行经过八道, 顺序是刻意的:
  *
  * <pre>
  *   1. 动作解析     (actionId, target) → 哪个应用的哪个动作; 多个候选且 target 消歧不出唯一 → 拒绝
  *   2. handler 存在 启动时已校验过, 这里是纵深防御
- *   3. 会话解析     显式 &gt; 已存在资源行 &gt; URI 模板里的 sessionId 段
- *   4. 归属校验     会话必须属于这个应用、这个 principal(四条不变量)
- *   5. 权限         Principal × Installation grant × Capability × Action × Risk
- *   6. 幂等         WRITE/EXECUTE 才要 key; READ 从不记录
- *   7. 执行         handler + 资源写入 + 终态回填, 同一个事务
+ *   3. 会话解析     五档, 见 {@link #resolveSession} —— <b>永不返回 null</b>
+ *   4. 归属校验     会话必须属于这个应用, 且通过三条不变量
+ *   5. 权限         Participant × Session permission × Capability × Action × Risk
+ *   6. 状态         这个会话现在接不接受这个级别的动作
+ *   7. 幂等         WRITE/EXECUTE 才要 key; READ 从不记录
+ *   8. 执行         handler + 资源写入 + 终态回填, 同一个事务
  * </pre>
  *
- * <p><b>第 7 步"同一个事务"是整套崩溃恢复推理的地基。</b>业务写入与 {@code action_invocation}
+ * <p><b>第 3 步从 v1 的"三选一、可能为 null"变成"五档、必有结果"。</b> 这是删掉 installation
+ * 之后整条链上最需要想清楚的一处: v1 里"没有会话"是合法的({@code resolveSessionId} 返回
+ * {@code null}, 权限层用 installation 兜住), v2 里没有任何东西可以兜底了 —— 参与者行挂在
+ * 会话上, 没有会话就没有参与者, 没有参与者连"你是谁"都答不出来。于是改成: <em>要么解析出一个
+ * 已有会话, 要么造一个</em>。第 4/5 档就是为了让这件事对提醒收件箱那种<em>URI 里根本没有
+ * sessionId</em> 的资源也成立 —— 少了它们, 每一次提醒调用都会新建一个会话, 而那是静默的
+ * 资源泄漏, 不是报错。
+ *
+ * <p><b>第 8 步"同一个事务"是整套崩溃恢复推理的地基。</b>业务写入与 {@code action_invocation}
  * 的终态一起提交, 于是"还停在 IN_PROGRESS"就等价于"业务没发生" —— 重试安全, 回收器也能有把握
  * 地下结论。拆成两个事务的话, 这句话立刻不成立。
  *
- * <p>第 5 步在第 6 步之前: 无权的请求不该占用一个幂等键。先占键再判权限的话, 一个被拒的请求
- * 会留下一条终态记录, 之后真正有权的调用带着同一个 key 来会被"重放"成拒绝。
+ * <p>第 5、6 步都在第 7 步之前, 理由是同一个: 走不到执行的请求不该占用一个幂等键。先占键再判
+ * 权限的话, 一个被拒的请求会留下一条终态记录, 之后真正有权的调用带着同一个 key 来会被"重放"成
+ * 拒绝 —— 一个正确的调用拿到一个属于别人的失败。
+ *
+ * <p><b>第 5 步为什么在第 6 步前面。</b> 两者拒绝的码不同({@code NOT_A_PARTICIPANT} vs
+ * {@code SESSION_NOT_ACTIVE})、要调用方做的事也不同(去找人邀请自己 vs 等一会儿)。一个根本
+ * 不在场的人, 该听到的是前者 —— 告诉他"会话现在不接受写"等于请他去重试一件他永远做不成的事。
  */
 @Slf4j
 @Service
@@ -79,8 +93,8 @@ public class ActionGateway implements ApplicationRuntimePort {
     private final PermissionEvaluator permissions;
     private final IdempotencyService idempotency;
     private final ApplicationSessionService sessions;
-    private final InstallationService installationService;
-    private final InstallationRepository installations;
+    private final ApplicationSessionStateMachine sessionStates;
+    private final ParticipantService participants;
     private final LapEventPublisher events;
     private final ActionAuditRecorder audit;
     private final PrincipalResolvers principals;
@@ -96,8 +110,8 @@ public class ActionGateway implements ApplicationRuntimePort {
                          PermissionEvaluator permissions,
                          IdempotencyService idempotency,
                          ApplicationSessionService sessions,
-                         InstallationService installationService,
-                         InstallationRepository installations,
+                         ApplicationSessionStateMachine sessionStates,
+                         ParticipantService participants,
                          LapEventPublisher events,
                          ActionAuditRecorder audit,
                          PrincipalResolvers principals,
@@ -112,8 +126,8 @@ public class ActionGateway implements ApplicationRuntimePort {
         this.permissions = permissions;
         this.idempotency = idempotency;
         this.sessions = sessions;
-        this.installationService = installationService;
-        this.installations = installations;
+        this.sessionStates = sessionStates;
+        this.participants = participants;
         this.events = events;
         this.audit = audit;
         this.principals = principals;
@@ -169,13 +183,22 @@ public class ActionGateway implements ApplicationRuntimePort {
         if (manifest == null) {
             return List.of();
         }
-        // 没装这个应用的 principal 不该"想做点什么" —— 空列表, 不是错误。
-        Optional<InstallationRecord> installation = installations
-                .findByApplicationIdAndPrincipalTypeAndPrincipalId(
-                        manifest.applicationId(),
-                        ctx.principalType() == null ? null : ctx.principalType().name(),
-                        ctx.principalId());
-        if (installation.isEmpty() || !installation.get().active()) {
+        ResolvedPrincipal principal;
+        try {
+            principal = principals.resolveInternal(ctx);
+        } catch (PrincipalResolver.PrincipalException e) {
+            return List.of();
+        }
+        // 只查不建: 这是一条读路径, "这个人还没开过会话"不该在这里顺手落一行。
+        String sessionId = explicitSessionId(resourceUri, manifest, principal);
+        if (sessionId == null) {
+            sessionId = sessions.findLive(manifest.applicationId(), principal)
+                    .map(ApplicationSessionRecord::getId).orElse(null);
+        }
+        // 不在场的人不该"想做点什么" —— 空列表, 不是错误。
+        if (sessionId == null
+                || participants.find(sessionId, principal.type(), principal.principalId())
+                        .filter(SessionParticipantRecord::active).isEmpty()) {
             return List.of();
         }
         PendingActionProvider provider = pendingActions
@@ -198,15 +221,18 @@ public class ActionGateway implements ApplicationRuntimePort {
     // ═══════════════════════════ 执行 ═══════════════════════════
 
     /**
-     * 进程内的"保证装过" —— 幂等, 走的是和 HTTP 安装<em>同一段</em>代码。
+     * 进程内的"保证有一个会话" —— 幂等, 走的是和 HTTP 开启会话<em>同一段</em>代码。
      *
-     * <p>刻意不做成"没装就静默跳过": 装不上(应用没发布版本 / 身份不合法)应当让调用方知道,
+     * <p>刻意不做成"建不出来就静默跳过": 建不出来(应用没发布版本 / 身份不合法)应当让调用方知道,
      * 它才好决定是降级还是报错。静默跳过会让"提醒功能不工作"变成一个需要翻日志才能定位的现象。
+     *
+     * <p>返回 id 而不是 void, 因为"在哪个会话里"就是调用方接下来要的东西 —— v1 那个 void 版本
+     * 逼着每个调用方自己再去查一遍"我刚才到底装到哪儿了", 而它没有那个信息。
      */
     @Override
-    public void ensureInstalled(String applicationId, InvocationContext ctx) {
+    public String ensureSession(String applicationId, InvocationContext ctx) {
         ResolvedPrincipal principal = principals.resolveInternal(ctx);
-        installationService.install(applicationId, principal, null);
+        return sessions.ensureSession(applicationId, principal).getId();
     }
 
     /** {@link ApplicationRuntimePort} 的进程内形态: 身份来自 {@link InvocationContext}。 */
@@ -266,16 +292,18 @@ public class ActionGateway implements ApplicationRuntimePort {
                     "动作没有处理器: " + resolution.handlerKey()));
         }
 
-        String sessionId;
+        ApplicationSessionRecord session;
         try {
-            sessionId = resolveSessionId(request.target(), resolution.manifest(), principal);
+            session = resolveSession(request.target(), resolution.manifest(), principal);
         } catch (SessionException e) {
             return ActionExecution.fresh(reject(request.action(), principal, request.target(),
                     e.status(), e.code(), e.getMessage()));
         }
+        String sessionId = session.getId();
 
         PermissionDecision decision = permissions.evaluate(
-                resolution.manifest(), resolution.spec(), principal.type(), principal.principalId());
+                resolution.manifest(), resolution.spec(), sessionId,
+                principal.type(), principal.principalId());
         ActionAuditRecorder.AuditEntry entry = auditEntry(request, resolution, principal)
                 .withPermission(decision.auditLabel());
         if (!decision.allowed()) {
@@ -288,6 +316,13 @@ public class ActionGateway implements ApplicationRuntimePort {
             }
             return ActionExecution.fresh(ActionResponse.failure(
                     ActionStatus.DENIED, decision.code(), decision.message()));
+        }
+
+        try {
+            sessionStates.requireAllows(session, resolution.spec().permission());
+        } catch (SessionException e) {
+            audit.record(entry.withExecution(e.status().name(), e.getMessage()));
+            return ActionExecution.fresh(ActionResponse.failure(e.status(), e.code(), e.getMessage()));
         }
 
         boolean needsKey = resolution.spec().requiresIdempotencyKey();
@@ -318,7 +353,7 @@ public class ActionGateway implements ApplicationRuntimePort {
         ActionResponse response = runInTransaction(request, resolution, principal, sessionId, handler, claim);
         audit.record(entry.withExecution(response.status().name(),
                 response.error() == null ? null : response.error().message()));
-        if (sessionId != null && response.isSuccess()) {
+        if (response.isSuccess()) {
             try {
                 sessions.touch(sessionId);
             } catch (Exception e) {
@@ -386,30 +421,90 @@ public class ActionGateway implements ApplicationRuntimePort {
     // ═══════════════════════════ 内部 ═══════════════════════════
 
     /**
-     * 会话解析, 三选一, 顺序即优先级:
-     * <ol>
-     *   <li>调用方显式给的 {@code sessionId}(DH 从事件载荷里拿到的就是它);</li>
-     *   <li>目标资源行上的 {@code session_id}(除了"创建"之外的所有动作都走这条);</li>
-     *   <li>目标 URI 里 {@code {sessionId}} 那一段(创建类动作唯一的来源)。</li>
-     * </ol>
+     * 会话解析 —— <b>五档, 顺序即优先级, 且永不返回 null。</b>
+     *
+     * <pre>
+     *   1. 调用方显式给的 sessionId        (DH 从事件载荷里拿到的就是它)
+     *   2. 目标资源行上的 session_id        (除了"创建"之外的所有动作都走这条)
+     *   3. 目标 URI 里 {sessionId} 那一段   (创建类动作唯一的来源)
+     *   4. ★ 该 principal 在这个应用下最近的 ACTIVE 会话 ★
+     *   5. 都没有 → 现开一个(调用方记为 OWNER)
+     * </pre>
+     *
+     * <p><b>前 3 档与 v1 一字不差; 第 4、5 档是新的, 也是删掉 installation 之后唯一会"静默失效"
+     * 的地方。</b> {@code reminder://owner/{userId}} 的模板里没有 {@code {sessionId}} 段
+     * (从 R5 起 {@code resource.session_id} 一直是 NULL), 前 3 档全都匹配不上。少了第 4 档,
+     * 数字人的每一次提醒调用都会掉到第 5 档 —— {@code application_session} 会被闲聊级的调用
+     * 灌满, 而且每一句提醒都落在一个谁也不认识的会话里; 少了第 5 档, "打开应用即用"就不成立,
+     * 第一次用提醒会得到一个"会话不存在"。
+     *
+     * <p><b>为什么第 4 档要卡 {@code ACTIVE}。</b> 因为第 4 档的产物直接就是下一个动作的落脚点。
+     * 一个 WAITING 或 PAUSED 的会话被选中, 动作接下来必然被第 6 步拒掉 —— 那不是"解析失败",
+     * 那是把一个必然失败的会话当成答案交出去。宁可掉到第 5 档新开一个, 也不要交出一个用不了的。
+     *
+     * <p>选了"最近的"而不是"最早的"或"任意的": 同一个人可能在同一个应用里开着好几个会话
+     * (自娱一局、等人一局), 没有显式上下文时, 最近动过的那个最接近他脑子里的"我正在用的那个"。
+     *
+     * <p><b>前两档被区别对待, 判据是"这是谁的断言"。</b>第 1、3 档是调用方<em>断言</em>了一个
+     * 会话("在这局里落子"), 断言落空就该得到错误 —— 悄悄换一局给他才是真正会出事的行为。
+     * 第 2 档是<em>平台的记账</em>(资源行上的 {@code session_id}), 用户从没说过"我要用 7 天前
+     * 那个会话"。记账过时了(会话被回收器收掉)就重新解一次; 不这样做的话, 像提醒收件箱这种
+     * URI 里没有 {@code sessionId} 段的资源会在闲置一周后<em>永久</em>报 {@code SESSION_ENDED},
+     * 而用户完全不知道自己做错了什么。
+     *
+     * @throws SessionException 第 1、3 档被断言但那个会话不可用(不存在/已结束/不属于这个应用),
+     *         或第 5 档建不出来(应用未发布)
      */
-    private String resolveSessionId(String target, ApplicationManifest manifest, ResolvedPrincipal principal) {
-        String candidate = null;
-        if (StringUtils.hasText(principal.sessionId())) {
-            candidate = principal.sessionId();
-        } else {
-            ResourceView existing = resources.find(target).orElse(null);
-            if (existing != null && StringUtils.hasText(existing.sessionId())) {
-                candidate = existing.sessionId();
-            } else {
-                candidate = resolver.sessionIdIn(manifest, target).orElse(null);
+    private ApplicationSessionRecord resolveSession(String target,
+                                                    ApplicationManifest manifest,
+                                                    ResolvedPrincipal principal) {
+        String declared = declaredSessionId(target, manifest, principal);
+        if (declared != null) {
+            return sessions.requireUsable(declared, manifest.applicationId());
+        }
+        String anchored = anchoredSessionId(target);
+        if (anchored != null) {
+            Optional<ApplicationSessionRecord> usable =
+                    sessions.findUsable(anchored, manifest.applicationId());
+            if (usable.isPresent()) {
+                return usable.get();
             }
+            // 记账过时了 —— 不是错误, 是"该重新解一次"。下一次写入会把资源行重新挂到新会话上
+            // (见 ResourceStore.reanchorIfStale), 于是事件路由也跟着回到能找得到人的那个会话。
+            log.debug("[ActionGateway] 资源 {} 记的会话 {} 已不可用, 重新解析", target, anchored);
         }
-        if (candidate == null) {
-            return null;
+        return sessions.findLive(manifest.applicationId(), principal)
+                .map(live -> sessions.requireUsable(live.getId(), manifest.applicationId()))
+                .orElseGet(() -> sessions.ensureSession(manifest.applicationId(), principal));
+    }
+
+    /**
+     * 会话解析的前 3 档 —— 只看调用方和 URI 说了什么, <b>不查库里的"最近会话"</b>。
+     *
+     * <p>单独抽出来是因为 {@link #pendingActions} 需要这 3 档却<em>不能</em>要第 4、5 档:
+     * 它是一条读路径, "这个人还没开过会话"不该在这里顺手建一个。
+     *
+     * @return 候选 sessionId, 或者 null 表示"URI 和调用方都没说"
+     */
+    private String explicitSessionId(String target, ApplicationManifest manifest,
+                                     ResolvedPrincipal principal) {
+        String declared = declaredSessionId(target, manifest, principal);
+        return declared != null ? declared : anchoredSessionId(target);
+    }
+
+    /** 第 1、3 档: 调用方或 URI <em>指定</em>了会话 —— 这是断言, 落空即错误。 */
+    private String declaredSessionId(String target, ApplicationManifest manifest,
+                                     ResolvedPrincipal principal) {
+        if (StringUtils.hasText(principal.sessionId())) {
+            return principal.sessionId();
         }
-        ApplicationSessionRecord session = sessions.requireUsable(candidate, manifest.applicationId());
-        return session.getId();
+        return resolver.sessionIdIn(manifest, target).orElse(null);
+    }
+
+    /** 第 2 档: 资源行上记着的会话 —— 这是平台的记账, 过时了就该重新解。 */
+    private String anchoredSessionId(String target) {
+        ResourceView existing = resources.find(target).orElse(null);
+        return existing != null && StringUtils.hasText(existing.sessionId()) ? existing.sessionId() : null;
     }
 
     private ActionResponse toResponse(ActionOutcome outcome,

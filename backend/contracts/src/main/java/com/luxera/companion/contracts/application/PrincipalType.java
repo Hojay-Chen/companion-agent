@@ -15,8 +15,19 @@ package com.luxera.companion.contracts.application;
 public enum PrincipalType {
     /** A person using a client. */
     HUMAN,
-    /** A digital human / autonomous agent. */
+    /** A digital human hosted by this companion platform. */
     AGENT,
+    /**
+     * LAP v2 — an agent that lives <em>outside</em> this platform and reaches the gateway over
+     * MCP or the remote-application protocol.
+     *
+     * <p>It is a separate value rather than a flavour of {@link #AGENT} because the two differ in
+     * exactly one place that matters: {@link #AGENT} is a principal this platform hosts, so the
+     * platform can resolve its {@code companionId} internally; an external agent is only ever a
+     * name plus a signature. Everything else — participation, permissions, the gateway — is
+     * identical, which is why it is a {@code PrincipalType} and not a parallel API.
+     */
+    EXTERNAL_AGENT,
     /** The platform itself (schedulers, maintenance jobs). */
     SYSTEM,
     /** Another application acting on its own behalf. */

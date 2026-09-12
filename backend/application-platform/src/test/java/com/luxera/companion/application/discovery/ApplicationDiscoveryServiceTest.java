@@ -7,7 +7,6 @@ import com.luxera.companion.application.action.ActionGateway;
 import com.luxera.companion.application.domain.ApplicationSessionRecord;
 import com.luxera.companion.application.principal.ResolvedPrincipal;
 import com.luxera.companion.application.session.ApplicationSessionService;
-import com.luxera.companion.application.session.InstallationService;
 import com.luxera.companion.contracts.application.ActionRequest;
 import com.luxera.companion.contracts.application.ActionResponse;
 import com.luxera.companion.contracts.application.ActionSpec;
@@ -61,9 +60,6 @@ class ApplicationDiscoveryServiceTest {
 
     @Autowired
     ActionGateway gateway;
-
-    @Autowired
-    InstallationService installationService;
 
     @Autowired
     ApplicationSessionService sessionService;
@@ -128,8 +124,7 @@ class ApplicationDiscoveryServiceTest {
      */
     @Test
     void theTargetUriDecidesWhichGameGetsTheMove() {
-        Human alice = newHuman(TICTACTOE);
-        installationService.install(GOMOKU, alice.principal(), null);
+        Human alice = newHuman();
 
         Roll ticTacToe = newGame(TICTACTOE, alice);
         Roll gomoku = newGame(GOMOKU, alice);
@@ -169,8 +164,7 @@ class ApplicationDiscoveryServiceTest {
      */
     @Test
     void theTwoGamesKeepTheirOwnBoards() {
-        Human alice = newHuman(TICTACTOE);
-        installationService.install(GOMOKU, alice.principal(), null);
+        Human alice = newHuman();
 
         Roll ticTacToe = newGame(TICTACTOE, alice);
         Roll gomoku = newGame(GOMOKU, alice);
@@ -200,8 +194,7 @@ class ApplicationDiscoveryServiceTest {
      */
     @Test
     void theSamePositionNumberMeansDifferentThingsInTheTwoGames() {
-        Human alice = newHuman(TICTACTOE);
-        installationService.install(GOMOKU, alice.principal(), null);
+        Human alice = newHuman();
 
         Roll ticTacToe = newGame(TICTACTOE, alice);
         Roll gomoku = newGame(GOMOKU, alice);
@@ -215,7 +208,7 @@ class ApplicationDiscoveryServiceTest {
     /** 五子棋的位置范围是 0..224 —— 边界值由应用自己守, 平台不替它判断。 */
     @Test
     void eachGameGuardsItsOwnBoundaries() {
-        Human alice = newHuman(GOMOKU);
+        Human alice = newHuman();
         Roll gomoku = newGame(GOMOKU, alice);
 
         for (int bad : new int[]{-1, 225, 1000}) {
@@ -237,14 +230,18 @@ class ApplicationDiscoveryServiceTest {
     private record Roll(Human human, String uri, ActionResponse create) {
     }
 
-    private Human newHuman(String applicationId) {
-        Human human = new Human(UUID.randomUUID().toString());
-        installationService.install(applicationId, human.principal(), null);
-        return human;
+    /**
+     * 一个全新的人。v1 这里要"给他装上某个应用", v2 不需要 —— 装这件事没有对应物了。
+     *
+     * <p>他成为参与者的时刻是 {@link #newGame} 里开一局的时候(开局的人就是 OWNER)。于是"同一个人
+     * 在两个应用里各开一局"这件事在 v2 里自然成立, 不需要先给他两个 installation。
+     */
+    private Human newHuman() {
+        return new Human(UUID.randomUUID().toString());
     }
 
     private Roll newGame(String applicationId, Human human) {
-        ApplicationSessionRecord session = sessionService.open(applicationId, human.principal());
+        ApplicationSessionRecord session = sessionService.launch(applicationId, human.principal());
         String uri = uriFor(applicationId, session.getId());
         ActionResponse create = gateway.execute(ActionRequest.of(CREATE, uri, null), ctx(human));
         return new Roll(human, uri, create);

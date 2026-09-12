@@ -70,7 +70,7 @@ class ActionResponseJsonTest {
     @Test
     void failure_response_keeps_its_code() throws Exception {
         ActionResponse original = ActionResponse.failure(
-                ActionStatus.DENIED, "NOT_INSTALLED", "该 principal 未安装此应用");
+                ActionStatus.DENIED, "NOT_A_PARTICIPANT", "该 principal 不在这个会话里");
 
         ActionResponse back = mapper.readValue(mapper.writeValueAsString(original), ActionResponse.class);
 
@@ -78,8 +78,8 @@ class ActionResponseJsonTest {
         assertNull(back.result());
         assertNull(back.resource());
         assertTrue(back.events().isEmpty());
-        assertEquals("NOT_INSTALLED", back.error().code());
-        assertEquals("该 principal 未安装此应用", back.error().message());
+        assertEquals("NOT_A_PARTICIPANT", back.error().code());
+        assertEquals("该 principal 不在这个会话里", back.error().message());
     }
 
     @Test

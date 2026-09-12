@@ -49,7 +49,7 @@ public class InMemoryGameApplication implements ApplicationRuntimePort {
 
     private final ObjectMapper mapper;
     private final Map<String, ObjectNode> sessions = new ConcurrentHashMap<>();
-    private final List<String> installed = new CopyOnWriteArrayList<>();
+    private final List<String> sessionsOpened = new CopyOnWriteArrayList<>();
 
     public InMemoryGameApplication(ObjectMapper mapper) {
         this.mapper = mapper;
@@ -75,17 +75,20 @@ public class InMemoryGameApplication implements ApplicationRuntimePort {
     }
 
     /**
-     * 内存参考应用没有安装表可写 —— 它对"装过没有"这件事没有意见, 所以只记一笔调用痕迹。
+     * 内存参考应用没有会话表可写 —— 它对"开过没有"这件事没有意见, 所以只记一笔调用痕迹。
      * {@code AgentApplicationFlowTest} 之外的用例不会碰到它。
      */
     @Override
-    public void ensureInstalled(String applicationId, InvocationContext ctx) {
-        installed.add(applicationId + ":" + (ctx == null ? "?" : ctx.principalId()));
+    public String ensureSession(String applicationId, InvocationContext ctx) {
+        String who = ctx == null ? "?" : ctx.principalId();
+        String id = "mem-session:" + applicationId + ":" + who;
+        sessionsOpened.add(id);
+        return id;
     }
 
-    /** 测试可读: 谁在什么时候要求过安装。 */
-    public List<String> installed() {
-        return List.copyOf(installed);
+    /** 测试可读: 谁在什么时候要求过会话。 */
+    public List<String> sessionsOpened() {
+        return List.copyOf(sessionsOpened);
     }
 
     @Override

@@ -2,11 +2,11 @@ package com.luxera.companion.application.session;
 
 import com.luxera.companion.application.domain.ApplicationSessionRecord;
 import com.luxera.companion.application.domain.ApplicationVersionRecord;
-import com.luxera.companion.application.domain.InstallationRecord;
+import com.luxera.companion.application.domain.SessionParticipantRecord;
 import com.luxera.companion.application.principal.ResolvedPrincipal;
 import com.luxera.companion.application.repository.ApplicationSessionRepository;
 import com.luxera.companion.application.repository.ApplicationVersionRepository;
-import com.luxera.companion.application.repository.InstallationRepository;
+import com.luxera.companion.application.repository.SessionParticipantRepository;
 import com.luxera.companion.contracts.application.PrincipalType;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,15 +22,23 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 归属链 {@code Application → Installation → ApplicationSession → Resource} 的四条不变量,
- * <b>每条一个反例</b>。
+ * 会话的三条归属不变量, <b>每条一个反例</b>。
+ *
+ * <p>v1 有四条, 全部绕着安装转(会话的应用 = 安装的应用, 会话的 principal = 安装的 principal)。
+ * 安装没了, 那四条里只有版本那条原样留下, 另外两条换成了参与者视角的说法:
+ *
+ * <pre>
+ *   1. 会话的 versionId 属于该 applicationId, 且该版本行存在
+ *   2. 会话行上记的 owner 真的在参与者表里有一行         (取代 v1 的反例 3 与 4)
+ *   3. 会话的 ACTIVE 参与者数不超过它自己的 maxParticipants  (v1 结构上不可能出现的问题)
+ * </pre>
  *
  * <p>反例是绕过 Domain Service 直接改库造出来的, 因为不变量防的正是"数据已经写歪了"这件事:
- * 校验如果在创建路径上就够用, 那它就不需要在 <em>每次使用时</em> 再跑一遍。这里模拟的是
- * "当初漏查了一次"之后会发生什么 —— 每一条都必须被拦住, 而不是一路通行到跨应用引用资源。
+ * 校验如果在创建路径上就够用, 那它就不需要在 <em>每次使用时</em> 再跑一遍。
  *
- * <p>第 4 条(会话的 principal 必须等于安装的 principal)是四条里最要紧的: 没有它, Agent 的
- * 会话可以被真人拿去用, 于是"Agent 的操作"变成"真人的操作", 权限与审计同时失效。
+ * <p>第 2 条只要求"有一行", <b>不要求那一行是 ACTIVE</b> —— 所以这里既有它的反例(owner 从来不是
+ * 参与者), 也有它的<em>容忍例</em>({@link #anOwnerWhoLeftDoesNotBreakTheSession}): 开局的人
+ * 中途退出是常态, 把"owner 已退出"判成数据损坏, 会让一局别人还在下的棋凭空变成坏数据。
  */
 @ActiveProfiles("test")
 @SpringBootTest
@@ -43,13 +51,13 @@ class ApplicationSessionOwnershipTest {
     ApplicationSessionService sessionService;
 
     @Autowired
-    InstallationService installationService;
+    ParticipantService participantService;
 
     @Autowired
     ApplicationSessionRepository sessions;
 
     @Autowired
-    InstallationRepository installations;
+    SessionParticipantRepository participants;
 
     @Autowired
     ApplicationVersionRepository versions;
@@ -57,52 +65,45 @@ class ApplicationSessionOwnershipTest {
     // ─────────────────────────── 开头: 正常路径 ───────────────────────────
 
     @Test
-    void aFreshlyOpenedSessionSatisfiesAllFourInvariants() {
-        String principalId = principalId();
-        installationService.install(APP_ID, human(principalId), null);
-
-        ApplicationSessionRecord session = sessionService.open(APP_ID, human(principalId));
+    void aFreshlyOpenedSessionSatisfiesAllThreeInvariants() {
+        ApplicationSessionRecord session = sessionService.launch(APP_ID, human(principalId()));
 
         assertEquals(APP_ID, session.getApplicationId());
         assertNotNull(session.getVersionId());
-        assertNotNull(session.getInstallationId());
-        assertEquals(PrincipalType.HUMAN.name(), session.getPrincipalType());
-        assertEquals(principalId, session.getPrincipalId());
+        assertNotNull(session.getOwnerPrincipalType());
+        assertEquals(PrincipalType.HUMAN.name(), session.getOwnerPrincipalType());
         assertTrue(session.active());
         sessionService.verifyIntegrity(session);   // 不抛即通过
     }
 
-    /** 数字人的会话同时记住 companionId 与 userId —— 事件路由要用它们找人。 */
+    /**
+     * 数字人的会话仍然同时记住 {@code companionId} 与 {@code userId} —— 事件路由要靠它们找人。
+     *
+     * <p>这两个字段从会话行搬到了<b>参与者行</b>上。搬得有道理: 一局里可能有多个 Agent, 谁是谁
+     * 只有参与者行说得清, 而会话行只有一个格子。{@code AgentRouteResolver} 就是照这个改的。
+     */
     @Test
-    void anAgentSessionKeepsBothTheCompanionAndTheUser() {
+    void anAgentParticipantKeepsBothTheCompanionAndTheUser() {
         String companionId = "dh-" + UUID.randomUUID();
         String userId = "user-" + UUID.randomUUID();
         ResolvedPrincipal agent = new ResolvedPrincipal(PrincipalType.AGENT, companionId, companionId,
                 userId, null, UUID.randomUUID().toString(), ResolvedPrincipal.SOURCE_INTERNAL);
-        installationService.install(APP_ID, agent, null);
 
-        ApplicationSessionRecord session = sessionService.open(APP_ID, agent);
+        ApplicationSessionRecord session = sessionService.launch(APP_ID, agent);
+        SessionParticipantRecord me = participantService
+                .find(session.getId(), PrincipalType.AGENT, companionId)
+                .orElseThrow(() -> new AssertionError("Agent 应当是参与者"));
 
-        assertEquals(companionId, session.getCompanionId());
-        assertEquals(userId, session.getUserId());
-        assertEquals(PrincipalType.AGENT.name(), session.getPrincipalType());
-    }
-
-    /** 没有安装就没有会话 —— 归属链的第二环不能跳过。 */
-    @Test
-    void openingASessionWithoutAnInstallationIsRefused() {
-        SessionException e = assertThrows(SessionException.class,
-                () -> sessionService.open(APP_ID, human(principalId())));
-        assertEquals("NOT_INSTALLED", e.code());
+        assertEquals(companionId, me.getCompanionId());
+        assertEquals(userId, me.getUserId());
+        assertEquals(PrincipalType.AGENT.name(), me.getPrincipalType());
     }
 
     // ─────────────────────────── 反例 1: 应用不一致 ───────────────────────────
 
     @Test
     void aSessionOfAnotherApplicationIsRefused() {
-        String principalId = principalId();
-        installationService.install(APP_ID, human(principalId), null);
-        ApplicationSessionRecord session = sessionService.open(APP_ID, human(principalId));
+        ApplicationSessionRecord session = sessionService.launch(APP_ID, human(principalId()));
 
         SessionException e = assertThrows(SessionException.class,
                 () -> sessionService.requireUsable(session.getId(), OTHER_APP));
@@ -114,12 +115,9 @@ class ApplicationSessionOwnershipTest {
 
     @Test
     void aSessionPointingAtAnotherApplicationsVersionIsRefused() {
-        String principalId = principalId();
-        installationService.install(APP_ID, human(principalId), null);
-        ApplicationSessionRecord session = sessionService.open(APP_ID, human(principalId));
+        ApplicationSessionRecord session = sessionService.launch(APP_ID, human(principalId()));
 
-        ApplicationVersionRecord foreign = versionOf(OTHER_APP);
-        session.setVersionId(foreign.getId());
+        session.setVersionId(versionOf(OTHER_APP).getId());
         sessions.saveAndFlush(session);
 
         SessionException e = assertThrows(SessionException.class,
@@ -129,9 +127,7 @@ class ApplicationSessionOwnershipTest {
 
     @Test
     void aSessionPointingAtAMissingVersionIsRefused() {
-        String principalId = principalId();
-        installationService.install(APP_ID, human(principalId), null);
-        ApplicationSessionRecord session = sessionService.open(APP_ID, human(principalId));
+        ApplicationSessionRecord session = sessionService.launch(APP_ID, human(principalId()));
 
         session.setVersionId(UUID.randomUUID().toString());
         sessions.saveAndFlush(session);
@@ -140,76 +136,86 @@ class ApplicationSessionOwnershipTest {
                 assertThrows(SessionException.class, () -> sessionService.verifyIntegrity(session)).code());
     }
 
-    // ─────────────────────────── 反例 3: 安装属于另一个应用 ───────────────────────────
-
-    @Test
-    void aSessionPointingAtAnotherApplicationsInstallationIsRefused() {
-        String principalId = principalId();
-        installationService.install(APP_ID, human(principalId), null);
-        ApplicationSessionRecord session = sessionService.open(APP_ID, human(principalId));
-
-        InstallationRecord foreign = new InstallationRecord();
-        foreign.setApplicationId(OTHER_APP);
-        foreign.setApplicationVersionId(versionOf(OTHER_APP).getId());
-        foreign.setPrincipalType(session.getPrincipalType());
-        foreign.setPrincipalId(session.getPrincipalId());
-        foreign.setStatus(InstallationRecord.STATUS_ACTIVE);
-
-        session.setInstallationId(installations.saveAndFlush(foreign).getId());
-        sessions.saveAndFlush(session);
-
-        SessionException e = assertThrows(SessionException.class,
-                () -> sessionService.verifyIntegrity(session));
-        assertEquals("SESSION_INSTALLATION_MISMATCH", e.code());
-    }
-
-    @Test
-    void aSessionPointingAtAMissingInstallationIsRefused() {
-        String principalId = principalId();
-        installationService.install(APP_ID, human(principalId), null);
-        ApplicationSessionRecord session = sessionService.open(APP_ID, human(principalId));
-
-        session.setInstallationId(UUID.randomUUID().toString());
-        sessions.saveAndFlush(session);
-
-        assertEquals("SESSION_INSTALLATION_MISMATCH",
-                assertThrows(SessionException.class, () -> sessionService.verifyIntegrity(session)).code());
-    }
-
-    // ─────────────────────────── 反例 4: principal 不一致 ───────────────────────────
+    // ─────────────────────────── 反例 3: owner 不是参与者 ───────────────────────────
 
     /**
-     * 会话被换上了另一个 principal —— 这正是"Agent 的会话被真人拿去用"的形状。
-     * 注意这里安装本身是自洽的, 不一致只存在于会话与安装之间。
+     * 会话行上记的开局人换成了另一个人 —— 这正是 v1 "反例 4" 在 v2 的形状。
+     *
+     * <p>v1 拦的是"会话的 principal ≠ 安装的 principal"(Agent 的会话被真人拿去用)。v2 没有安装
+     * 可以对账了, 于是判据变成"这个人在不在参与者表里"。换掉 owner 而不同时补一行参与者, 会话就
+     * 变成了一条<em>没人认领</em>的记录: 主人不在了, 但会话还在跑, 谁也不知道该听谁的。
      */
     @Test
-    void aSessionWhosePrincipalDiffersFromItsInstallationIsRefused() {
-        String alice = principalId();
+    void aSessionWhoseOwnerIsNotAParticipantIsRefused() {
         String bob = principalId();
-        installationService.install(APP_ID, human(alice), null);
-        installationService.install(APP_ID, human(bob), null);
-        ApplicationSessionRecord session = sessionService.open(APP_ID, human(alice));
+        ApplicationSessionRecord session = sessionService.launch(APP_ID, human(principalId()));
 
-        session.setPrincipalId(bob);
+        session.setOwnerPrincipalId(bob);
         sessions.saveAndFlush(session);
 
         SessionException e = assertThrows(SessionException.class,
                 () -> sessionService.verifyIntegrity(session));
-        assertEquals("SESSION_PRINCIPAL_MISMATCH", e.code());
+        assertEquals("SESSION_OWNER_MISMATCH", e.code());
     }
 
-    /** 类型换了也算不一致: 同一个 id 在 HUMAN 与 AGENT 名下是两个人格。 */
+    /** 类型换了也算不是同一个人: 同一个 id 在 HUMAN 与 AGENT 名下是两个人格。 */
     @Test
-    void aSessionWhosePrincipalTypeDiffersFromItsInstallationIsRefused() {
-        String principalId = principalId();
-        installationService.install(APP_ID, human(principalId), null);
-        ApplicationSessionRecord session = sessionService.open(APP_ID, human(principalId));
+    void aSessionWhoseOwnerTypeChangedIsRefused() {
+        ApplicationSessionRecord session = sessionService.launch(APP_ID, human(principalId()));
 
-        session.setPrincipalType(PrincipalType.AGENT.name());
+        session.setOwnerPrincipalType(PrincipalType.AGENT.name());
         sessions.saveAndFlush(session);
 
-        assertEquals("SESSION_PRINCIPAL_MISMATCH",
+        assertEquals("SESSION_OWNER_MISMATCH",
                 assertThrows(SessionException.class, () -> sessionService.verifyIntegrity(session)).code());
+    }
+
+    /**
+     * 第 2 条的<b>容忍例</b>: 开局的人退出了, 会话仍然自洽。
+     *
+     * <p>这一条与上面两条反例是一对。{@code ParticipantService.syncStatus} 刻意不因为"人走光了"
+     * 就把会话判成 {@code ENDED}, 这里则确保 {@code verifyIntegrity} 不会因为 owner 那一行不是
+     * ACTIVE 就报数据损坏。两处任缺一处, 结果都是: 一个人退出, 一局别人还在下的棋直接坏掉。
+     */
+    @Test
+    void anOwnerWhoLeftDoesNotBreakTheSession() {
+        String ownerId = principalId();
+        ApplicationSessionRecord session = sessionService.launch(APP_ID, human(ownerId));
+
+        participantService.leave(session.getId(), human(ownerId));
+
+        assertEquals(SessionParticipantRecord.STATUS_LEFT,
+                participantService.find(session.getId(), PrincipalType.HUMAN, ownerId).orElseThrow().getStatus());
+        assertTrue(sessions.findById(session.getId()).orElseThrow().active(),
+                "人走了不等于会话结束了 —— 收会话有显式的 DELETE 与回收器");
+        sessionService.verifyIntegrity(sessions.findById(session.getId()).orElseThrow());   // 不抛即通过
+    }
+
+    // ─────────────────────────── 反例 4: 人太多 ───────────────────────────
+
+    /**
+     * v1 结构上不可能有的问题: 一局里挤进来的人超过它自己声明的上限。
+     *
+     * <p>正常路径上 {@code join} 会先数人头再放行, 所以这条要绕过 join 直接写一行参与者出来 ——
+     * 模拟的正是"两条加入请求同时通过了计数检查"(那是 TOCTOU, 计数与插入不在同一个原子步骤里)。
+     * 使用期校验必须兜住它, 否则上限就只是一句建议。
+     */
+    @Test
+    void aSessionWithMoreActiveParticipantsThanItsCapIsRefused() {
+        ApplicationSessionRecord session = sessionService.launch(
+                APP_ID, human(principalId()), null, null, 1);
+
+        SessionParticipantRecord gatecrasher = new SessionParticipantRecord();
+        gatecrasher.setSessionId(session.getId());
+        gatecrasher.setPrincipalType(PrincipalType.HUMAN.name());
+        gatecrasher.setPrincipalId(principalId());
+        gatecrasher.setRole(SessionParticipantRecord.ROLE_MEMBER);
+        gatecrasher.setStatus(SessionParticipantRecord.STATUS_ACTIVE);
+        participants.saveAndFlush(gatecrasher);
+
+        SessionException e = assertThrows(SessionException.class,
+                () -> sessionService.verifyIntegrity(session));
+        assertEquals("SESSION_CAPACITY_EXCEEDED", e.code());
     }
 
     // ─────────────────────────── 使用期校验 ───────────────────────────
@@ -224,9 +230,7 @@ class ApplicationSessionOwnershipTest {
     /** 结束时清得掉, 结束之后用不了。 */
     @Test
     void anEndedSessionIsRefused() {
-        String principalId = principalId();
-        installationService.install(APP_ID, human(principalId), null);
-        ApplicationSessionRecord session = sessionService.open(APP_ID, human(principalId));
+        ApplicationSessionRecord session = sessionService.launch(APP_ID, human(principalId()));
 
         sessionService.end(session.getId());
 
@@ -234,16 +238,15 @@ class ApplicationSessionOwnershipTest {
                 assertThrows(SessionException.class,
                         () -> sessionService.requireUsable(session.getId(), APP_ID)).code());
         assertFalse(sessions.findById(session.getId()).orElseThrow().active(), "状态要真的落库");
-        assertEquals(1, sessionService.ofInstallation(session.getInstallationId()).size(),
+        assertEquals(1, sessionService.ofApplication(APP_ID).stream()
+                        .filter(s -> s.getId().equals(session.getId())).count(),
                 "结束的会话仍然查得到 —— 审计要看得见它存在过");
     }
 
     /** 传 null 表示"不校验应用" —— 调用方只在已经知道是哪个应用时才做这道额外检查。 */
     @Test
     void requireUsableToleratesANullApplicationId() {
-        String principalId = principalId();
-        installationService.install(APP_ID, human(principalId), null);
-        ApplicationSessionRecord session = sessionService.open(APP_ID, human(principalId));
+        ApplicationSessionRecord session = sessionService.launch(APP_ID, human(principalId()));
 
         assertEquals(session.getId(), sessionService.requireUsable(session.getId(), null).getId());
     }

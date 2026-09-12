@@ -12,7 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>旧表的 {@code permission_decision} 与 {@code execution_status} 用同一个参数赋值, 于是
  * "权限为什么被拒"这个审计最该回答的问题永远查不到。这里两者分开, 且都是真的:
- * 一次被拒的动作会写下 {@code DENY / NOT_INSTALLED}, 而不是一行没有信息的噪音。
+ * 一次被拒的动作会写下 {@code DENY / NOT_A_PARTICIPANT}, 而不是一行没有信息的噪音。
  *
  * <p><b>为什么一律 {@code REQUIRES_NEW}。</b>审计的职责是记录"发生过什么", 包括那些业务上
  * 失败、回滚、甚至根本没通过权限的尝试。挂在业务事务里的话, 恰恰是最需要留下的那些行会随着

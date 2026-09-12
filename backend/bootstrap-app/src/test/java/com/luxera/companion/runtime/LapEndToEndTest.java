@@ -3,8 +3,8 @@ package com.luxera.companion.runtime;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luxera.companion.application.principal.ResolvedPrincipal;
-import com.luxera.companion.application.session.ApplicationSessionService;
-import com.luxera.companion.application.session.InstallationService;
+import com.luxera.companion.application.domain.SessionParticipantRecord;
+import com.luxera.companion.application.session.ParticipantService;
 import com.luxera.companion.auth.User;
 import com.luxera.companion.auth.UserRepository;
 import com.luxera.companion.config.JwtUtil;
@@ -49,11 +49,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * {@code TicTacToeApplication.pendingActions} 说"轮到 O 了" → LLM 选点 →
  * {@code game.make_move} 回到同一个应用 → 同一行 {@code resource} 变了。
  *
- * <p><b>数字人不经 JWT 安装应用, 这里也不假装它走。</b> {@code JwtAuthenticationFilter} 要求
+ * <p><b>数字人不经 JWT 加入会话, 这里也不假装它走。</b> {@code JwtAuthenticationFilter} 要求
  * 令牌主体在 {@code user} 表里有行, 而数字人不是 user —— 这不是测试的将就, 是系统的实际形状:
  * Agent 的入口是进程内({@code ApplicationRuntimePort})与 MCP(R6, 服务密钥), JWT 那条路是真人
  * 的。所以测试里真人那一段走 MockMvc 全栈(过滤器、控制器、网关一个不少), 数字人那一段用
- * 进程内的 {@link InstallationService} —— 正是它真实的样子。
+ * 进程内的 {@link ParticipantService} 加入同一局 —— 正是它真实的样子。
  *
  * <p>把 LLM 换成固定回"落子到 4 号位"的 stub(而不是 mock provider), 是为了让链路真的跑到底 ——
  * mock provider 下流程会按设计不行动, 那样这条测试就什么也证明不了。R7 之后动作选择的契约里
@@ -80,10 +80,7 @@ class LapEndToEndTest {
     UserRepository userRepository;
 
     @Autowired
-    InstallationService installationService;
-
-    @Autowired
-    ApplicationSessionService sessionService;
+    ParticipantService participantService;
 
     @Autowired
     RealityEventRepository realityEventRepository;
@@ -107,21 +104,22 @@ class LapEndToEndTest {
         String companionId = UUID.randomUUID().toString();
         String humanToken = humanToken(userId);
 
-        // ── 1. 真人装应用: 真 HTTP, 过滤器 + 控制器 + 网关全在链上 ──
-        MvcResult installed = mockMvc.perform(post("/api/v1/applications/" + APP_ID + "/install")
+        // ── 1. 真人打开应用: 真 HTTP, 过滤器 + 控制器 + 网关全在链上 ──
+        MvcResult opened = mockMvc.perform(post("/api/v1/applications/" + APP_ID + "/sessions")
                         .header("Authorization", "Bearer " + humanToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"capabilities\":[\"game.play\"]}"))
+                        .content("{}"))
                 .andExpect(status().isOk())
                 .andReturn();
-        String sessionId = json(installed).path("sessionId").asText();
-        assertFalse(sessionId.isBlank(), "安装应顺带开出一个会话");
+        String sessionId = json(opened).path("sessionId").asText();
+        assertFalse(sessionId.isBlank(), "打开应用就该开出一个会话");
 
-        // ── 2. 数字人装同一个应用: 进程内, 见类注释 ──
+        // ── 2. 数字人加入这一局: 进程内, 见类注释 ──
+        //   v1 这里是"给它装一次"+ 顺手开它自己的会话; v2 里对手要坐在<em>同一局</em>里 ——
+        //   这正是"多个 principal 共用一个 Resource"成立的前提。
         ResolvedPrincipal agent = new ResolvedPrincipal(PrincipalType.AGENT, companionId, companionId,
                 userId, null, UUID.randomUUID().toString(), ResolvedPrincipal.SOURCE_INTERNAL);
-        installationService.install(APP_ID, agent, null);
-        sessionService.open(APP_ID, agent);
+        participantService.join(sessionId, agent, SessionParticipantRecord.ROLE_MEMBER, true);
 
         String gameUri = GAME_URI_PREFIX + sessionId;
 

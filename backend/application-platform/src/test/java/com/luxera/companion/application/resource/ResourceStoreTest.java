@@ -216,6 +216,40 @@ class ResourceStoreTest {
         assertTrue(store.byApplication(APP_ID).stream().anyMatch(v -> v.uri().equals(uri)));
     }
 
+    /**
+     * <b>资源行的会话锚跟着平台解出来的会话走。</b>
+     *
+     * <p>这是 {@code ResourceStore.reanchorIfStale} 的那条路径, 也是它唯一说得清的存在理由:
+     * URI 里<em>没有</em> {@code sessionId} 段时, 资源的会话锚只能靠写入那一刻解出来的会话定下来。
+     * 那个会话后来被回收器收掉、平台给他解出新的一个时, 锚必须跟着走 —— 否则资源照常能读写
+     * ({@code ActionGateway} 的第 2 档发现锚不可用会重新解一次), 但
+     * {@code AgentRouteResolver} 会拿着一个空会话去查参与者, <b>一个人也唤不醒, 而且不报错</b>。
+     *
+     * <p>注意这条用例造的是一个"没有会话段、但确实落库"的资源 —— 它不是提醒收件箱: 提醒是
+     * {@code APP_OWNED}, {@code resource} 表里根本没有它那一行(见
+     * {@link #appOwnedResourcesComeFromTheProjectorNotTheTable})。这个区别要紧, 因为把两者混为
+     * 一谈会让人以为提醒的锚也该跟着走, 然后去修一个不存在的东西。
+     */
+    @Test
+    void aResourceWithoutASessionSegmentFollowsTheSessionResolvedLater() {
+        String uri = "collection://" + UUID.randomUUID();
+        String firstSession = UUID.randomUUID().toString();
+        String nextSession = UUID.randomUUID().toString();
+
+        ResourceView created = inTransaction(() ->
+                store.scoped(APP_ID, firstSession).write(uri, "collection.items", state("a"), null));
+        assertEquals(firstSession, created.sessionId());
+
+        ResourceView moved = inTransaction(() ->
+                store.scoped(APP_ID, nextSession).write(uri, "collection.items", state("b"), null));
+
+        assertEquals(nextSession, moved.sessionId(), "锚跟着这次解出来的会话走");
+        assertEquals(nextSession, store.find(uri).orElseThrow().sessionId(), "而且是真写进了库里");
+        assertEquals(2L, moved.version(), "重挂锚不该顺手把版本推进一次以上");
+        assertTrue(store.bySession(nextSession).stream().anyMatch(v -> v.uri().equals(uri)));
+        assertTrue(store.bySession(firstSession).isEmpty(), "旧锚上不该还留着它");
+    }
+
     @Test
     void bySessionAndByApplicationListWhatWasWritten() {
         String uri = uri();

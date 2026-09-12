@@ -60,6 +60,14 @@ class IdempotencyStoreTest {
     private static final String APP_ID = "com.luxera.tictactoe";
     private static final String MAKE_MOVE = "game.make_move";
 
+    /**
+     * 本类里所有调用的会话。用一个常量而不是每条用例各编一个: 这些用例要测的是"同一个 key 在
+     * <em>同一个会话</em>里的行为", 会话说变就变的话, 它们会各自退化成"两个不相干的 key"。
+     * 需要验证"换个会话就是另一回事"的那一条单独写, 见
+     * {@link #theSameKeyUnderAnotherSessionIsIndependent}。
+     */
+    private static final String SESSION = "session-under-test";
+
     @Autowired
     IdempotencyService idempotency;
 
@@ -96,7 +104,7 @@ class IdempotencyStoreTest {
                 pool.submit(() -> {
                     try {
                         start.await();
-                        claims.add(idempotency.claim(key, human(principalId), resolution(), null, hash));
+                        claims.add(idempotency.claim(key, human(principalId), resolution(), SESSION, hash));
                     } catch (Exception ignored) {
                         // 认领本身抛异常也是"没抢到"的一种, 不算成功执行
                     }
@@ -128,14 +136,14 @@ class IdempotencyStoreTest {
         String key = "key-" + UUID.randomUUID();
         String hash = hash(0);
 
-        IdempotencyService.Claim first = idempotency.claim(key, human(principalId), resolution(), null, hash);
+        IdempotencyService.Claim first = idempotency.claim(key, human(principalId), resolution(), SESSION, hash);
         assertTrue(first.shouldExecute());
 
         ActionResponse original = ActionResponse.success(
                 objectMapper.createObjectNode().put("move", "accepted"), null);
         completeInTransaction(first.record().getId(), original);
 
-        IdempotencyService.Claim second = idempotency.claim(key, human(principalId), resolution(), null, hash);
+        IdempotencyService.Claim second = idempotency.claim(key, human(principalId), resolution(), SESSION, hash);
 
         assertFalse(second.shouldExecute(), "已终态的 key 不该再执行一次");
         assertNull(second.conflict());
@@ -151,9 +159,9 @@ class IdempotencyStoreTest {
         String principalId = principalId();
         String key = "key-" + UUID.randomUUID();
 
-        idempotency.claim(key, human(principalId), resolution(), null, hash(0));
+        idempotency.claim(key, human(principalId), resolution(), SESSION, hash(0));
 
-        IdempotencyService.Claim reused = idempotency.claim(key, human(principalId), resolution(), null, hash(8));
+        IdempotencyService.Claim reused = idempotency.claim(key, human(principalId), resolution(), SESSION, hash(8));
 
         assertNull(reused.replay(), "载荷不同绝不能重放");
         assertNotNull(reused.conflict());
@@ -168,9 +176,36 @@ class IdempotencyStoreTest {
         String alice = principalId();
         String bob = principalId();
 
-        assertTrue(idempotency.claim(key, human(alice), resolution(), null, hash(0)).shouldExecute());
-        assertTrue(idempotency.claim(key, human(bob), resolution(), null, hash(0)).shouldExecute(),
+        assertTrue(idempotency.claim(key, human(alice), resolution(), SESSION, hash(0)).shouldExecute());
+        assertTrue(idempotency.claim(key, human(bob), resolution(), SESSION, hash(0)).shouldExecute(),
                 "作用域里带 principal, 所以同一个 key 对另一个人是新的");
+    }
+
+    /**
+     * LAP v2 (方案 §49): 同一个人、同一个 key, <b>换一个会话就是另一回事</b>。
+     *
+     * <p>作用域里加 {@code session_id} 换来的是这个。少了它, 一个客户端在两局棋里用同一个
+     * 自增序号当 key, 第二局的第一步会被当成第一局那一步的重放 —— 拿到的是一盘<em>别人的</em>
+     * 棋的响应, 而且不报错。
+     *
+     * <p>这一条同时守着那条更隐蔽的性质: 唯一键里带一个<em>可空</em>列就等于没带它
+     * (PostgreSQL 的唯一索引对 NULL 互不相等)。所以这里造的必须是两个真实、非空的会话 id ——
+     * 如果哪天有人把它改成 {@code null}, 这条用例会变成"两次独立执行"而<em>通过</em>,
+     * 于是它保护不了任何东西。真正把这条钉死在库层面的是实体上的 {@code nullable = false}。
+     */
+    @Test
+    void theSameKeyUnderAnotherSessionIsIndependent() {
+        String principalId = principalId();
+        String key = "key-" + UUID.randomUUID();
+        // 不戴前缀: session_id 是 varchar(36), 因为真实的会话 id 就是一个 UUID。
+        // 写成 "session-" + UUID 会变成 44 个字符 —— 那不是"另一局", 那是一行插不进去。
+        String thisGame = UUID.randomUUID().toString();
+        String nextGame = UUID.randomUUID().toString();
+
+        assertTrue(idempotency.claim(key, human(principalId), resolution(), thisGame, hash(0)).shouldExecute());
+        assertTrue(idempotency.claim(key, human(principalId), resolution(), nextGame, hash(0)).shouldExecute(),
+                "作用域里带 session, 所以同一个 key 在另一局里是新的");
+        assertEquals(2, rowsWith(principalId, key).size(), "两局各留下自己的一行");
     }
 
     // ─────────────────────────── 崩溃恢复 ① ───────────────────────────
@@ -181,9 +216,9 @@ class IdempotencyStoreTest {
         String key = "key-" + UUID.randomUUID();
         String hash = hash(0);
 
-        assertTrue(idempotency.claim(key, human(principalId), resolution(), null, hash).shouldExecute());
+        assertTrue(idempotency.claim(key, human(principalId), resolution(), SESSION, hash).shouldExecute());
 
-        IdempotencyService.Claim retry = idempotency.claim(key, human(principalId), resolution(), null, hash);
+        IdempotencyService.Claim retry = idempotency.claim(key, human(principalId), resolution(), SESSION, hash);
 
         assertFalse(retry.shouldExecute(), "还在超时窗口内, 不能抢占");
         assertEquals(ActionStatus.IDEMPOTENCY_IN_PROGRESS, retry.conflict().status());
@@ -198,11 +233,11 @@ class IdempotencyStoreTest {
         String key = "key-" + UUID.randomUUID();
         String hash = hash(0);
 
-        IdempotencyService.Claim first = idempotency.claim(key, human(principalId), resolution(), null, hash);
+        IdempotencyService.Claim first = idempotency.claim(key, human(principalId), resolution(), SESSION, hash);
         assertTrue(first.shouldExecute());
         backdate(principalId, key, idempotency.invocationTimeout().plusMinutes(4));
 
-        IdempotencyService.Claim retry = idempotency.claim(key, human(principalId), resolution(), null, hash);
+        IdempotencyService.Claim retry = idempotency.claim(key, human(principalId), resolution(), SESSION, hash);
 
         assertTrue(retry.shouldExecute(), "超时后应当允许抢占并重新执行");
         assertEquals(first.record().getId(), retry.record().getId(), "抢占的是同一行, 不是新建一行");
@@ -223,7 +258,7 @@ class IdempotencyStoreTest {
         String key = "key-" + UUID.randomUUID();
         String hash = hash(0);
 
-        idempotency.claim(key, human(principalId), resolution(), null, hash);
+        idempotency.claim(key, human(principalId), resolution(), SESSION, hash);
         backdate(principalId, key, idempotency.invocationTimeout().plusMinutes(4));
 
         CountDownLatch start = new CountDownLatch(1);
@@ -235,7 +270,7 @@ class IdempotencyStoreTest {
                 pool.submit(() -> {
                     try {
                         start.await();
-                        claims.add(idempotency.claim(key, human(principalId), resolution(), null, hash));
+                        claims.add(idempotency.claim(key, human(principalId), resolution(), SESSION, hash));
                     } catch (Exception ignored) {
                         // 抢不到也是一种结果
                     }
@@ -263,7 +298,7 @@ class IdempotencyStoreTest {
     void reaperExpiresAbandonedInvocationsInsteadOfDeletingThem() {
         String principalId = principalId();
         String key = "key-" + UUID.randomUUID();
-        idempotency.claim(key, human(principalId), resolution(), null, hash(0));
+        idempotency.claim(key, human(principalId), resolution(), SESSION, hash(0));
         backdate(principalId, key, idempotency.reapAfter().plusMinutes(5));
 
         int reaped = idempotency.reapStale();
@@ -276,7 +311,7 @@ class IdempotencyStoreTest {
         assertNotNull(sealed.getResponseJson(), "要留下可重放的答复, 不能只有一个状态字段");
 
         // 封过之后再重试: 拿到的是 EXPIRED 的答复, 而不是又执行一次
-        IdempotencyService.Claim retry = idempotency.claim(key, human(principalId), resolution(), null, hash(0));
+        IdempotencyService.Claim retry = idempotency.claim(key, human(principalId), resolution(), SESSION, hash(0));
         assertFalse(retry.shouldExecute(), "EXPIRED 是终态, 不该复活");
         assertEquals(ActionStatus.EXPIRED, retry.replay().status());
     }
@@ -285,7 +320,7 @@ class IdempotencyStoreTest {
     void reaperLeavesFreshInProgressAlone() {
         String principalId = principalId();
         String key = "key-" + UUID.randomUUID();
-        idempotency.claim(key, human(principalId), resolution(), null, hash(0));
+        idempotency.claim(key, human(principalId), resolution(), SESSION, hash(0));
 
         idempotency.reapStale();
 
@@ -320,10 +355,16 @@ class IdempotencyStoreTest {
         invocations.saveAndFlush(row);
     }
 
+    /**
+     * 这个 principal 在这个 key 上的那一行。
+     *
+     * <p>刻意用"筛全部"而不是仓储上那个按键查找的派生方法: 那个方法要求"只有一行", 而本类里
+     * 恰好有一条用例就是要造出同一个 key 的两行(两个会话各一行)。写得窄一点, 那条用例才测得了。
+     */
     private ActionInvocationRecord row(String principalId, String key) {
-        return invocations
-                .findByPrincipalTypeAndPrincipalIdAndIdempotencyKey(PrincipalType.HUMAN.name(), principalId, key)
-                .orElseThrow(() -> new AssertionError("调用行应当存在: " + key));
+        List<ActionInvocationRecord> rows = rowsWith(principalId, key);
+        assertEquals(1, rows.size(), "这个 key 在这个 principal 下应当只有一行: " + key);
+        return rows.get(0);
     }
 
     private List<ActionInvocationRecord> rowsWith(String principalId, String key) {

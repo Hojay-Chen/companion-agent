@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# LAP v1 应用平台 — 端到端验收。
+# LAP v2 应用生态 — 端到端验收。
 #
 # 为什么必须有这个脚本:
 #   scripts/check.sh 覆盖的是聊天/数字人链路, 对应用平台「零覆盖」——
 #   这就是为什么「mvn test 全绿」在应用平台上什么也保护不了。
-#   本脚本是 ActionGateway / Manifest / Resource / 幂等 / 归属链唯一的端到端守卫。
+#   本脚本是 ActionGateway / Manifest / Resource / 幂等 / 会话与参与者唯一的端到端守卫。
+#
+# v1 → v2 改掉了这个脚本里最要紧的那几条断言, 因为它们守的东西换了:
+#   「装了没有」→「在不在这一局里」; NOT_INSTALLED → NOT_A_PARTICIPANT;
+#   INSTALLATION_INACTIVE → PARTICIPANT_INACTIVE; 安装入口 → 打开即开会话。
+# 断言 1 里那几条"反向断言"(v1 的表/列必须<em>不在</em>)是这次重构唯一不可逆的一步的守卫。
 #
 # 断言编号沿用实施计划, 未到轮次的先跳过并打印原因(R5 起陆续打开, R8 全部打开)。
 #
@@ -29,8 +34,12 @@ ok()   { echo "    ✓ $*"; }
 fail() { echo "    ✗ $*"; FAIL=1; }
 skip() { echo "    ○ 跳过 ($*)"; SKIPPED=$((SKIPPED + 1)); }
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 PSQL="psql -h 127.0.0.1 -U admin -d companion -tAc"
 table_exists() { PGPASSWORD=shared-secret $PSQL "select 1 from information_schema.tables where table_name='$1'" | grep -q 1; }
+col_exists() { PGPASSWORD=shared-secret $PSQL "select 1 from information_schema.columns where table_name='$1' and column_name='$2'" | grep -q 1; }
+col_nullable() { PGPASSWORD=shared-secret $PSQL "select is_nullable from information_schema.columns where table_name='$1' and column_name='$2'" | tr -d ' '; }
 sql() { PGPASSWORD=shared-secret $PSQL "$1" | tr -d ' '; }
 exec_sql() { PGPASSWORD=shared-secret $PSQL "$1" >/dev/null; }
 
@@ -53,15 +62,49 @@ body() { cat "$TMP/body"; }
 jq_() { body | $PY -c "import sys,json;d=json.load(sys.stdin);print($1)" 2>/dev/null || echo ""; }
 
 echo ""
-echo "══════════ LAP v1 应用平台验收 ══════════"
+echo "══════════ LAP v2 应用生态验收 ══════════"
 
 # ── 断言 1: 表结构 ──
 note "断言 1: LAP 表结构"
 for t in developer application application_version capability application_capability \
-         installation permission_grant application_session resource subscription \
-         action_invocation application_action_log lap_outbox; do
+         application_session application_session_participant session_permission resource \
+         subscription action_invocation application_action_log lap_outbox; do
   table_exists "$t" && ok "$t 表存在" || fail "缺 $t 表"
 done
+
+# v2 的两张被删掉的表 —— 与上面那条方向相反, 断言的是"它们不在"。
+# 为什么值得单列: 删表是这次重构里唯一不可逆的动作, 而一张还留着的 installation 表
+# **不会让任何东西报错** —— 它只会让下一个读到它的人以为安装还是一个概念。
+for t in installation permission_grant; do
+  table_exists "$t" && fail "v2 已删除的表 $t 还在 — 跑 scripts/lap-v2-reset.sh --apply" \
+                     || ok "v1 的 $t 表已删除"
+done
+
+# 形状变了的表更要紧: ddl-auto=update 只加不删, 漏跑重建脚本的话旧列原样留着、新列一个都没有,
+# 而失败会以运行期的 NOT NULL 插入错误出现 —— 排查成本远高于在这里红一下。
+for c in installation_id principal_type principal_id companion_id user_id; do
+  col_exists application_session "$c" && fail "application_session.$c 是 v1 的列, 该没了" \
+                                      || ok "application_session.$c 已删除"
+done
+for c in owner_principal_type owner_principal_id visibility join_policy \
+         min_participants max_participants; do
+  col_exists application_session "$c" && ok "application_session.$c 存在" \
+                                      || fail "缺 application_session.$c"
+done
+
+# 幂等作用域里那一列必须 NOT NULL。可空的话唯一键就形同虚设 —— PostgreSQL 的唯一索引对 NULL
+# 不设防, 一列可空等于这个键随时可能退化成"不约束"(这一条是被一次真实的退化逼出来的:
+# 库里曾留下 20 行 session_id 为 NULL 的调用记录, 而唯一约束一声不吭)。
+NULLABLE=$(col_nullable action_invocation session_id)
+[ "$NULLABLE" = "NO" ] && ok "action_invocation.session_id NOT NULL" \
+  || fail "action_invocation.session_id 当前是 '$NULLABLE' — 唯一键会退化成不约束"
+
+# 而 resource.session_id 反过来, 必须保持可空: 主体型资源(读的时候由投影器现算的那一类)
+# 不属于任何会话, 这正是会话解析第 4/5 档存在的理由。
+NULLABLE=$(col_nullable resource session_id)
+[ "$NULLABLE" = "YES" ] && ok "resource.session_id 仍可空 (主体型资源不挂会话)" \
+  || fail "resource.session_id 变成了 NOT NULL — 主体型资源将无处安放"
+
 # 旧表这一半在 R8 打开 —— 到此为止 /api/v10 与 reminders 的读路径已全部下线, 表本身该由
 # scripts/lap-drop-legacy.sh 清掉。留着它不会报错, 只会让下一个读到这张表的人以为它还是事实。
 for t in dh_application dh_game_session dh_application_action_log reminders; do
@@ -70,6 +113,10 @@ for t in dh_application dh_game_session dh_application_action_log reminders; do
 done
 
 # ── 登录 ──
+# 位置在断言 1b 之前, 而不是像别处那样"先查库再登录": 1b 里那一次 POST /install 必须带着身份。
+# Spring Security 对**未认证的 POST** 在路由之前就回 403, 于是不带令牌的探针无论端点存不存在
+# 都得到 403 —— 那样这条断言就退化成"403 就是没装入口", 而不是"404 才是没有这个路由"。
+# 带上令牌之后它才是真判据: 端点还在的话会走到 handler 并回 200, 只有真的不存在才 404。
 note "登录取令牌"
 CHECK_USER="${CHECK_USER:-haojie.chen.njau@gmail.com}"
 CHECK_PASS="${CHECK_PASS:-20040719chj}"
@@ -83,6 +130,103 @@ if [ -z "$AUTH" ]; then
   exit 1
 fi
 ok "登录成功"
+
+# ── 断言 1b: v2 的入口不变量 (原则 1 / 决定 2) ──
+# 这两条守的是"整次重构只是改了个名字"与"真的换了模型"之间的差别, 所以它们查的不是行为,
+# 而是**入口与词汇**: 一个还活着的安装入口, 一段还留着老错误码的代码。
+note "断言 1b: 没有安装入口, 也没有 NOT_INSTALLED"
+CODE=$(http POST "/api/v1/applications/$APP_ID/install" '{}')
+[ "$CODE" = "404" ] && ok "POST /install → 404 (原则 1: Application 不需要安装)" \
+                    || fail "安装入口还在 (状态码 $CODE)"
+
+# 全库找人: 老权限模型的错误码必须一个都不剩。留下一个永远发不出来的码, 只会让下一个读到它的
+# 人以为安装还在 —— 断言"它发不出来"是测不出来的(缺了才是它该有的样子), 只能直接查源码。
+# 只扫 Java 源码: 本脚本自己会提到这个名字, 文档也会, 而它们都不是"还能发出来的代码"。
+#
+# 这条抓到过一次真的: ParticipantService 的 javadoc 里还写着 INSTALLATION_INACTIVE, 而那段
+# 注释同时还在说"WAITING 是进不去的状态" —— 那是修 syncStatus 之前的事实。一个词被抓出来,
+# 牵出的是整段与代码相反的说明。注释不参与编译, 所以只有这种直接查字的断言拦得住它。
+# 结尾那个 `|| true` 不是装饰: 脚本开着 `set -o pipefail`, 而这条 grep **一个都不匹配时退出码
+# 是 1** —— 于是"老错误码已经清干净了"这件好事会把整个脚本在第 3 条断言上终止, 后面一条都不跑。
+# 判据本来就是匹配**数**, 不是匹配成败, 所以这里要把退出码和计数分开。
+STALE=$(grep -rn "NOT_INSTALLED\|INSTALLATION_INACTIVE" "$ROOT/backend" --include='*.java' 2>/dev/null | wc -l || true)
+[ "$STALE" = "0" ] && ok "Java 源码里没有 NOT_INSTALLED / INSTALLATION_INACTIVE" \
+                   || fail "还有 $STALE 处引用老权限模型的错误码: $(grep -rln 'NOT_INSTALLED\|INSTALLATION_INACTIVE' "$ROOT/backend" --include='*.java' | head -3 | tr '\n' ' ')"
+
+# ── MCP 客户端(AGENT 身份) ──
+# 定义在这个位置而不是断言 14 那里: 断言 9b 也要用它 —— "另一个 principal"在 HTTP 面上拿不到
+# JWT(那一面只认真人), 而 MCP 恰好提供了一个真实存在的第二条入口。这不是为了省事: 拿它来演
+# 外来者, 顺带把原则 6/10 证明了 —— REST 与 MCP 进的是同一个网关, 于是"不在场"这条拒绝在
+# 两条传输上是同一个码, 而不是两套各自为政的判定。
+#
+# LAP_MCP_SERVICE_KEY 不是可选的礼貌参数: 服务端那把密钥留空 = MCP 完全关闭(每个请求 403),
+# 而一个关闭的 MCP 与一个工作的 MCP 在"没有断言"这件事上长得一模一样 —— 所以下面遇到
+# 需要 MCP 的断言时是**报错**而不是跳过。
+MCP_KEY="${LAP_MCP_SERVICE_KEY:-}"
+MCP_AGENT="check-lap-agent-$(stamp)"
+
+# MCP 请求助手: 与 http() 同形, 但带头(而且不是 Authorization —— MCP 没有 JWT)。
+mcp() {
+  local payload="$1" key="${2:-}"
+  local args=(-s -m 20 -o "$TMP/body" -D "$TMP/hdr" -w '%{http_code}' -X POST "$BASE/mcp"
+    -H 'Content-Type: application/json'
+    -H "X-Mcp-Principal: AGENT:$MCP_AGENT"
+    -H "X-Mcp-Service-Key: $MCP_KEY"
+    -d "$payload")
+  if [ -n "$key" ]; then args+=(-H "Idempotency-Key: $key"); fi
+  curl "${args[@]}" || echo "000"
+}
+
+# 给某个 AGENT 在某个会话里铺一个参与者行 + 一份授权(照抄同会话里真人那一份)。
+#
+# v2 里"这个 Agent 能不能被唤醒 / 能不能动手"的答案就在这两张表里 —— 而且是**按会话算的**:
+# v1 问的是"这个 Agent 装了游戏没有"(应用级), v2 问的是"它在这一局里吗"(会话级)。
+# 变化不只是形容词: 一个 Agent 可以在 A 局里坐着、在 B 局里完全不存在, 而 v1 的 installation
+# 表达不了这件事。
+#
+# 为什么必须从数据造: AGENT 在 HTTP 面上拿不到 JWT(那一面只认真人), 而邀请链路的 REST 面
+# 要到 R10 才有。与 v1 时代造 installation 行同一个套路, 只是造的东西换了。
+# 第三个参数是"照抄谁": 传了就把那个人的授权复制一份。
+seat_agent() {
+  local session_id="$1" agent_id="$2" from_principal="${3:-}"
+  # 传 URI 是最容易犯的错: 它们在这一段里长得几乎一样, 而失败的样子是一句
+  # "value too long for type character varying(36)" —— 那句话说不出"你传错了哪一个变量"。
+  # session_id 列宽 36 正好是 UUID 的长度, 而 game://session/<uuid> 是 50。
+  case "$session_id" in
+    *"://"*) fail "seat_agent 第 1 个参数应当是会话 id, 收到的是 URI: $session_id"; return ;;
+  esac
+  exec_sql "insert into application_session_participant
+              (id, session_id, principal_type, principal_id, role, status, permission_profile, joined_at, companion_id, user_id)
+            values (gen_random_uuid()::text, '$session_id', 'AGENT', '$agent_id', 'MEMBER', 'ACTIVE', 'MEMBER',
+                    now(), '$agent_id', '$agent_id')"
+  if [ -n "$from_principal" ]; then
+    exec_sql "insert into session_permission
+                (id, participant_id, capability_id, action_id, permission_level, risk_ceiling, created_at)
+              select gen_random_uuid()::text,
+                     (select id from application_session_participant
+                       where session_id='$session_id'
+                         and principal_type='AGENT' and principal_id='$agent_id'),
+                     g.capability_id, g.action_id, g.permission_level, g.risk_ceiling, now()
+              from session_permission g
+              where g.participant_id = (select id from application_session_participant
+                                         where session_id='$session_id'
+                                           and principal_type='HUMAN' and principal_id='$from_principal')"
+  fi
+}
+
+# 把一个 Agent 从场上完全撤走 —— 脚本要能重复跑。
+# 顺序不能反: 授权挂在参与者行上, 参与者行还被 action_invocation 引用着。
+unseat_agent() {
+  local agent_id="$1"
+  exec_sql "delete from session_permission where participant_id in
+              (select id from application_session_participant
+                where principal_type='AGENT' and principal_id='$agent_id')" || true
+  exec_sql "delete from action_invocation
+            where principal_type='AGENT' and principal_id='$agent_id'" || true
+  exec_sql "delete from application_session_participant
+            where principal_type='AGENT' and principal_id='$agent_id'" || true
+}
+mcp_cleanup() { unseat_agent "$MCP_AGENT"; }
 
 # ── 断言 2: 能力目录 ──
 note "断言 2: GET /api/v1/capabilities"
@@ -116,24 +260,31 @@ DECLARED=$(jq_ "','.join(sorted(a['actionId'] for a in d))")
   && ok "动作集合与 manifest 一致: $DECLARED" || fail "动作集合不符: '$DECLARED'"
 body | grep -q '"agentHint"' && ok "agentHint 随发现一并返回" || fail "发现结果里没有 agentHint"
 
-# ── 安装 + 开会话 ──
-# 安装是对同一个 principal 幂等的, 每次都会顺带开一个新会话 —— 后面所有动作的 target 里的
-# 那一段 id 都来自这里, 所以每次重装都要重新取一次。
-INSTALL_ID=""; SESSION_ID=""; URI=""; PRINCIPAL_ID=""
-install() {
-  local payload="$1" code
-  code=$(http POST "/api/v1/applications/$APP_ID/install" "$payload")
-  if [ "$code" != "200" ]; then fail "安装状态码 $code"; return; fi
-  INSTALL_ID=$(jq_ "d['installationId']")
+# ── 打开应用 = 开一个会话 ──
+# v2 里"打开"产生的唯一东西就是一个会话, 而会话 id 就是后面每个动作 target 里那一段。
+#
+# 与 v1 的安装有一处必须说清的不同: **它不幂等**。v1 的 install 对同一个 principal 返回同一个
+# installation(顺带开新会话), 所以脚本可以"重装一次拿个干净起点"; v2 没有安装这个概念,
+# 每次调用都是新的一局。这恰恰是重构想要的 —— 想续上一局的人该拿旧的 sessionId 回来,
+# 而不是指望"打开"这个动作返回同一个东西。
+#
+# $CAPABILITIES 是**这一局里我这个参与者**的授权摘要(不是应用声明的全部能力): 它由 join 时的
+# role → permission_profile 展开而来, 断言 9a 正是把它清空之后看动作会不会被拒。
+SESSION_ID=""; URI=""; PRINCIPAL_ID=""; CAPABILITIES=""
+open_session() {
+  local code
+  code=$(http POST "/api/v1/applications/$APP_ID/sessions" '{}')
+  if [ "$code" != "200" ]; then fail "打开应用状态码 $code"; return; fi
   SESSION_ID=$(jq_ "d['sessionId']")
-  PRINCIPAL_ID=$(jq_ "d['principalId']")
+  PRINCIPAL_ID=$(jq_ "d['ownerPrincipalId']")
+  CAPABILITIES=$(jq_ "','.join(sorted(d['capabilities']))")
   URI="game://session/$SESSION_ID"
-  ok "已安装 ($payload) → session=$SESSION_ID"
+  ok "已打开 → session=$SESSION_ID (owner=$PRINCIPAL_ID, 授权: $CAPABILITIES)"
 }
 
-note "安装应用并开会话 (动作的 target 从这里来)"
-install '{}'
-[ -n "$SESSION_ID" ] && ok "target = $URI" || fail "安装响应里没有 sessionId"
+note "打开应用开一局 (动作的 target 从这里来)"
+open_session
+[ -n "$SESSION_ID" ] && ok "target = $URI" || fail "开会话响应里没有 sessionId"
 
 # ── 断言 5: 幂等重放 ──
 note "断言 5: 同 Idempotency-Key 两次 → 同响应 + Idempotent-Replay + 只有一行 invocation"
@@ -192,57 +343,79 @@ REREAD=$(jq_ "d[0]['state']['board'][4]")
 [ "$REREAD" = "X" ] && ok "再读一次仍是 X" \
   || fail "重读得到 '$REREAD' —— READ 被幂等层重放成了开局时的空棋盘"
 
-# ── 断言 9: 权限 ──
-note "断言 9: 授权与安装失效"
-# 9a 未授权: HTTP 上没有"只装不授"的入口(省略 capabilities 即全授), 只能把授权行摘掉。
-#    这一条正是权限模型第二维(installation 有了还得有 grant)的端到端证明。
-exec_sql "delete from permission_grant where installation_id='$INSTALL_ID'"
+# ── 断言 9: 权限 —— 三段拒绝, 一段一条判据 ──
+#
+# v1 这三段问的是"装了没有"; v2 问的都是"在不在这一局里", 而"在"这个字被拆成两种情形,
+# 所以还是三条 —— 但它们测的东西换了:
+#
+#   9a 在场但没有这个授权  → NOT_AUTHORIZED           (第二维: 参与者行有了, session_permission 没有)
+#   9b 根本不在这一局里    → NOT_A_PARTICIPANT        (第一维, 取代 NOT_INSTALLED)
+#   9c 曾经在场, 已经退场  → PARTICIPANT_INACTIVE     (取代 INSTALLATION_INACTIVE)
+#
+# 为什么 9b 值得单独占一条, 而不是被 9a "顺带覆盖": 两者的拒绝点相隔好几步代码。一个只测 9a 的
+# 脚本在"参与者检查整个被删掉"时照样全绿(那时 9a 仍然会因为没授权而 403), 而 agent 会因此在
+# 任何一局棋里都动得了手。这两条必须各自红。
+note "断言 9a: 摘掉 session_permission → 403 NOT_AUTHORIZED"
+# 摘掉这一份授权而不是删参与者: HTTP 上没有"只进这一局但不授权"的入口(join 会把 role 展开成
+# 完整授权), 所以这个中间状态只能从数据造 —— 与 v1 时代摘 permission_grant 同一个套路。
+exec_sql "delete from session_permission where participant_id =
+          (select id from application_session_participant
+            where session_id='$SESSION_ID' and principal_type='HUMAN' and principal_id='$PRINCIPAL_ID')"
 CODE=$(http POST /api/v1/actions:execute \
   "{\"action\":\"game.make_move\",\"target\":\"$URI\",\"input\":{\"position\":0}}" \
   "check-lap-na-$(stamp)")
 [ "$CODE" = "403" ] && ok "未授权 → 403" || fail "未授权状态码 $CODE"
 GOT=$(jq_ "d['error']['code']")
 [ "$GOT" = "NOT_AUTHORIZED" ] && ok "code=NOT_AUTHORIZED" || fail "code=$GOT"
-install '{}'   # 重装即补齐授权, 顺便换一个干净的会话
 
-# 9b 未安装: 这个 principal 装了游戏、没装提醒 —— 从 R5 起它有一个自然的 target
-#    (提醒是"主体型资源", URI 里没有 {sessionId}, 所以不需要先开会话就能构造)。
-#    判据是 NOT_INSTALLED 而不是 NOT_AUTHORIZED: 这两行对应的是权限模型的第一维, 缺了就得先去装。
-#
-#    但"没装过"这个状态在 HTTP 面上够不到: 装过一次就永远留着一条 UNINSTALLED 的安装行, 那走的是
-#    9c 的 INSTALLATION_INACTIVE。更要紧的是 check.sh 会经数字人的提醒链路把提醒应用装给同一个人,
-#    所以这里先把痕迹清掉 —— 与 9a 摘授权同一个套路: 没有入口的中间状态, 只能从数据造。
-#    (断言 10 会重新装上, 世界随后复原。)
-exec_sql "delete from application_session where application_id='com.luxera.reminder'"
-exec_sql "delete from installation where application_id='com.luxera.reminder'"
-RURI="reminder://owner/$PRINCIPAL_ID"
-CODE=$(http POST /api/v1/actions:execute \
-  "{\"action\":\"reminder.create\",\"target\":\"$RURI\",\"input\":{\"title\":\"不该建出来\",\"dueAt\":\"2026-09-12T15:00\"}}" \
-  "check-lap-ni-$(stamp)")
-[ "$CODE" = "403" ] && ok "未安装提醒应用 → 403" || fail "未安装状态码 $CODE"
-GOT=$(jq_ "d['error']['code']")
-[ "$GOT" = "NOT_INSTALLED" ] && ok "code=NOT_INSTALLED" || fail "code=$GOT"
+# 重开一局: 新会话把授权补齐(join 时按 role 展开), 后面的断言要的是一个干净起点。
+open_session
 
-# 9c 安装失效: 卸掉再调动作。注意码是 INSTALLATION_INACTIVE 而不是 NOT_INSTALLED ——
-#    安装行还在, 只是不再 ACTIVE; 这两个状态对调用方的含义不同(一个该去重装, 一个该去装)。
-CODE=$(http DELETE "/api/v1/applications/$APP_ID/install")
-[ "$CODE" = "204" ] && ok "卸载 204" || fail "卸载状态码 $CODE"
+note "断言 9b: 不在这一局里的 AGENT → 403 NOT_A_PARTICIPANT"
+# 这一段同时是原则 6/10 的端到端证明: 拒绝来自**同一个网关**。MCP 客户端没有 JWT, 它走的是
+# /mcp 那条传输, 而它得到的是与 REST 面逐字相同的错误码 —— 两条入口后面不是两套判定。
+if [ -z "$MCP_KEY" ]; then
+  fail "LAP_MCP_SERVICE_KEY 未提供 —— 断言 9b 无法验证第二条传输上的同一个网关"
+else
+  # 这个 AGENT 在这一局里没有任何行(断言 14 才给它铺座位), 而且它挑的是一个真人开出来的会话。
+  unseat_agent "$MCP_AGENT"
+  CODE=$(mcp "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"tictactoe.game_make_move\",\"arguments\":{\"target\":\"$URI\",\"position\":3}}}" \
+    "check-lap-np-$(stamp)")
+  [ "$CODE" = "200" ] && ok "MCP 请求本身 200 (失败装在 result 里, 不是 HTTP 码)" \
+                      || fail "MCP 状态码 $CODE"
+  ISERR=$(jq_ "d['result']['isError']")
+  GOT=$(jq_ "d['result']['structuredContent']['error']['code']")
+  if [ "$ISERR" = "True" ] && [ "$GOT" = "NOT_A_PARTICIPANT" ]; then
+    ok "code=NOT_A_PARTICIPANT (MCP 与 REST 进的是同一个网关)"
+  else
+    fail "不在场却没被拒: isError=$ISERR code=$GOT"
+  fi
+fi
+
+note "断言 9c: 退场之后 → 403 PARTICIPANT_INACTIVE"
+# 注意码是 PARTICIPANT_INACTIVE 而不是 NOT_A_PARTICIPANT —— 参与者那一行还在(状态 LEFT),
+# 这两个状态对调用方的含义不同(一个该被重新邀请进来, 一个该走加入流程)。
+CODE=$(http DELETE "/api/v1/sessions/$SESSION_ID/participants/me")
+[ "$CODE" = "204" ] && ok "退场 204" || fail "退场状态码 $CODE"
 CODE=$(http POST /api/v1/actions:execute \
   "{\"action\":\"game.make_move\",\"target\":\"$URI\",\"input\":{\"position\":0}}" \
   "check-lap-ui-$(stamp)")
-[ "$CODE" = "403" ] && ok "安装失效 → 403" || fail "安装失效状态码 $CODE"
+[ "$CODE" = "403" ] && ok "退场后 → 403" || fail "退场后状态码 $CODE"
 GOT=$(jq_ "d['error']['code']")
-[ "$GOT" = "INSTALLATION_INACTIVE" ] && ok "code=INSTALLATION_INACTIVE" || fail "code=$GOT"
-install '{}'   # 复原, 让后面的断言有干净的起点
+[ "$GOT" = "PARTICIPANT_INACTIVE" ] && ok "code=PARTICIPANT_INACTIVE" || fail "code=$GOT"
+open_session   # 复原, 让后面的断言有干净的起点
 
-# ── 断言 10: 跨能力域 —— 装与不装之间那一步 ──
-# 计划里 9b 与 10 描述的是<em>同一次拒绝</em>(只装了游戏时调 reminder.create)。上面 9b 已经把
-# 那次拒绝钉住了, 这里改成它的正面对照: 补上安装之后, 同一个 principal 走<em>同一个</em>
-# execute 端点把提醒建出来, 并且从同一个资源读路径读回来。
-# 少了这一条, 9b 的 403 也可能只是因为整条提醒链路根本是死的。
-note "断言 10: 装上提醒应用后, 同一个 execute 端点把提醒建出来并读回收件箱"
-CODE=$(http POST "/api/v1/applications/com.luxera.reminder/install" '{}')
-[ "$CODE" = "200" ] && ok "安装提醒应用 200" || fail "安装状态码 $CODE"
+# ── 断言 10: 跨能力域 —— 一个没有 {sessionId} 段的 target 也能落地 ──
+# 这条断言的**重点已经不是"装了没有"**(那件事没有了), 而是会话解析的第 4/5 档:
+# reminder://owner/{userId} 的 URI 里没有会话段, 前 3 档一个都匹配不上, 于是平台必须
+# 用"这个 principal 在提醒应用下最近的活跃会话"兜底, 没有就给他开一个。
+#
+# 为什么这是 v2 最容易静默退化的地方: 少了第 4/5 档, 这次调用会以 UNKNOWN_SESSION 失败 ——
+# 而它失败的样子与"提醒功能坏了"长得一模一样。所以这里断言的不只是 200, 还有**机器自己
+# 开了/找到了一个会话**(下面那句 SQL)。
+note "断言 10: 同一个 execute 端点把提醒建出来并读回收件箱 (会话由平台自己解出来)"
+RURI="reminder://owner/$PRINCIPAL_ID"
+BEFORE_SESSIONS=$(sql "select count(*) from application_session where application_id='com.luxera.reminder'")
 
 CODE=$(http POST /api/v1/actions:execute \
   "{\"action\":\"reminder.create\",\"target\":\"$RURI\",\"input\":{\"type\":\"user_set\",\"title\":\"验收提醒\",\"dueAt\":\"2026-09-12T15:00\"}}" \
@@ -259,8 +432,25 @@ FOUND=$(jq_ "sum(1 for i in d[0]['state']['items'] if i['id']=='$RID')")
 [ "$FOUND" = "1" ] && ok "刚建的提醒出现在同一个 URI 读出来的 items 里" \
   || fail "收件箱里找不到 $RID"
 
-# 收尾: 把提醒应用卸掉, 让后面(以及重跑)的世界回到"只装了游戏"的干净状态。
-http DELETE "/api/v1/applications/com.luxera.reminder/install" >/dev/null
+# 会话解析第 4/5 档真的动过: 提醒应用下的会话没变多(第 4 档命中已有会话)或正好多一个(第 5 档
+# 现开一个)。两种都算对 —— 判据是"它没有掉到第 5 档的循环里", 也就是**每次调用都新建一个**。
+AFTER_SESSIONS=$(sql "select count(*) from application_session where application_id='com.luxera.reminder'")
+DELTA=$((AFTER_SESSIONS - BEFORE_SESSIONS))
+if [ "$DELTA" -le 1 ]; then
+  ok "提醒会话数 $BEFORE_SESSIONS → $AFTER_SESSIONS (没有每次调用都新建)"
+else
+  fail "提醒会话数涨了 $DELTA 个 —— 会话解析掉进了'每次新建'那一档"
+fi
+
+# 收尾: 清掉这次(以及重跑累计)为**这个 principal** 开的提醒会话, 让世界回到"他在提醒应用里
+# 没有实例"的状态。与 v1 时代的卸载是同一个位置上的动作, 只是现在没有安装可卸 —— 会话就是
+# 全部的关系。只清他自己开的: 数字人的提醒会话是 check.sh 那一条链路建的, 断言碰它就会把
+# 别的脚本的状态搅乱(这条注释是被一次"顺手全删"写的)。
+MINE="select id from application_session
+       where application_id='com.luxera.reminder'
+         and owner_principal_id='$PRINCIPAL_ID'"
+exec_sql "delete from application_session_participant where session_id in ($MINE)"
+exec_sql "delete from application_session where id in ($MINE)"
 
 # ── 断言 11: 数字人链路 ──
 # 这条断言的判据随服务的 LLM 而不同, 但**两种模式下都断言**:
@@ -276,13 +466,7 @@ DH_CREATE_KEY="check-lap-dh-create-$(stamp)"
 DH_MOVE_KEY="check-lap-dh-move-$(stamp)"
 DH_MODE=""
 
-dh_cleanup() {
-  exec_sql "delete from permission_grant where installation_id in
-            (select id from installation where principal_type='AGENT' and principal_id='$DH_AGENT')" || true
-  exec_sql "delete from action_invocation where principal_type='AGENT' and principal_id='$DH_AGENT'" || true
-  exec_sql "delete from application_session where principal_type='AGENT' and principal_id='$DH_AGENT'" || true
-  exec_sql "delete from installation where principal_type='AGENT' and principal_id='$DH_AGENT'" || true
-}
+dh_cleanup() { unseat_agent "$DH_AGENT"; }
 trap 'dh_cleanup; rm -rf "$TMP"' EXIT
 
 note "断言 11: 真人走一步 → 数字人的应手 (R7)"
@@ -291,21 +475,25 @@ if [ ! -f "$LAP_LOG" ]; then
   fail "找不到服务日志 $LAP_LOG —— 没有它就无法区分'数字人故意不动手'与'事件根本没送到'。
         用 LAP_LOG=<服务 stdout 重定向到的文件> 再跑。"
 else
-  # 数字人得先"装了"这个应用, 平台才认得出它是数字人: AgentRouteResolver 查的就是 installation
-  # 表。与断言 14 同一个理由 —— AGENT 在 HTTP 面上装不了应用, 只能从数据造。
-  exec_sql "insert into installation (id, application_id, application_version_id, principal_type,
-                                     principal_id, status, created_at)
-            select gen_random_uuid()::text, application_id, application_version_id, 'AGENT',
-                   '$DH_AGENT', 'ACTIVE', now()
-            from installation
-            where application_id='$APP_ID' and principal_type='HUMAN' and principal_id='$PRINCIPAL_ID'
-            limit 1"
-
   # 新开一局: 对手座位上坐着这位数字人 —— 应用因此会把"轮到你了"写进事件的 notifyPrincipalIds。
-  # 这一步同时验证了那个分工: 应用只说"还有谁", 谁是数字人由平台查安装表决定。
+  # 这一步同时验证了那个分工: 应用只说"还有谁", 谁是数字人由平台查**参与者**决定。
   PREV_URI="$URI"
-  install '{}'
+  open_session
   DH_URI="$URI"
+
+  # 数字人得先**在这一局里**, 平台才认得出它是数字人 —— AgentRouteResolver 查的就是
+  # application_session_participant, 而这是**会话级**的(v1 查的是应用级的 installation)。
+  # 与断言 14 同一个理由: AGENT 在 HTTP 面上拿不到 JWT, 只能从数据造。
+  #
+  # 顺序要紧: 铺座位必须在**这一局的会话存在之后**。铺在上一局里的话, 事件所属会话查不到它,
+  # 于是日志里那句"数字人不行动"永远不出现, 而失败信息只会说"15 秒内没看到 AgentApplicationFlow
+  # 处理这条事件" —— 看起来像事件链路断了, 实际是座位铺错了局。
+  #
+  # 第三个参数是真人 principal: seat_agent 把真人那份 session_permission 复制一份给数字人
+  # (launch 只对 owner 展开 grant, 没经 join 的 SQL 插入不会自动产生授权)。
+  # 第一个参数是**会话 id** 而不是 $DH_URI —— 这两个变量在这里只差一个前缀, 传错会得到一句
+  # 与"会话 id 传错了"毫无关系的 SQL 报错, 所以 seat_agent 自己也拦了一道。
+  seat_agent "$SESSION_ID" "$DH_AGENT" "$PRINCIPAL_ID"
   if [ "$DH_URI" = "$PREV_URI" ]; then
     fail "重新安装没有开出新会话 ($DH_URI) —— 这一局会带着前面几手棋, 断言 11 不成立"
   fi
@@ -359,8 +547,8 @@ else
   fi
 
   # 复原: 断言 11 把 $URI 换成了数字人那一局, 而后面(附加/14)假设 $URI 是一盘没下过的棋。
-  # 再装一次拿一个新会话还给它们 —— 这一局留给断言 15 用。
-  install '{}'
+  # 再开一局拿一个新会话还给它们 —— 这一局留给断言 15 用。
+  open_session
 fi
 
 # ── 断言 12: 现实账本 ──
@@ -394,45 +582,15 @@ GOT=$(jq_ "d['error']['code']")
 # 两条前提, 缺一条这一段就什么也测不到:
 #   1. **服务必须带 LAP_MCP_SERVICE_KEY 启动**(见 McpPrincipalResolver: 密钥留空 = MCP 完全关闭,
 #      不是"无鉴权")。脚本自己没有这个密钥就没法鉴权, 那是配置缺失, 报错而不是跳过。
-#   2. AGENT 装不了 REST 那一面(那个面只认 JWT, MCP 客户端没有 JWT), 所以安装行只能从数据造 ——
-#      与断言 9a/9b 同一套路: HTTP 面上够不到的状态, 只能从数据造。
-MCP_KEY="${LAP_MCP_SERVICE_KEY:-}"
-MCP_AGENT="check-lap-agent-$(stamp)"
-MCP_SQL_AGENT_INSTALL="application_id='$APP_ID' and principal_type='AGENT' and principal_id='$MCP_AGENT'"
-
-# MCP 请求助手: 与 http() 同形, 但带头(而且不是 Authorization —— MCP 没有 JWT)。
-mcp() {
-  local payload="$1" key="${2:-}"
-  local args=(-s -m 20 -o "$TMP/body" -D "$TMP/hdr" -w '%{http_code}' -X POST "$BASE/mcp"
-    -H 'Content-Type: application/json'
-    -H "X-Mcp-Principal: AGENT:$MCP_AGENT"
-    -H "X-Mcp-Service-Key: $MCP_KEY"
-    -d "$payload")
-  if [ -n "$key" ]; then args+=(-H "Idempotency-Key: $key"); fi
-  curl "${args[@]}" || echo "000"
-}
-mcp_cleanup() {
-  exec_sql "delete from permission_grant where installation_id in (select id from installation where $MCP_SQL_AGENT_INSTALL)"
-  exec_sql "delete from application_session where $MCP_SQL_AGENT_INSTALL"
-  exec_sql "delete from installation where $MCP_SQL_AGENT_INSTALL"
-}
-
+#   2. v2 里 AGENT 要动手, 得**在那盘棋里**(一张 application_session_participant 行 + 一份
+#      session_permission), 而不是"装了那个应用"。HTTP 面上够不到这个状态(AGENT 拿不到 JWT),
+#      所以只能从数据造 —— 与断言 9b/11 同一套路。
 note "断言 14: POST /mcp —— tools/list 给目录, tools/call 改的是真人读的同一个 resource"
 if [ -z "$MCP_KEY" ]; then
   fail "LAP_MCP_SERVICE_KEY 未提供 —— 脚本无法以 AGENT 身份调用 MCP, 断言 14 无法进行"
 else
   # 先清后建, 让脚本可以重复跑
   mcp_cleanup
-  exec_sql "insert into installation (id, application_id, application_version_id, principal_type, principal_id, status, created_at) \
-            select gen_random_uuid()::text, application_id, application_version_id, 'AGENT', '$MCP_AGENT', 'ACTIVE', now() \
-            from installation where application_id='$APP_ID' and principal_type='HUMAN' and principal_id='$PRINCIPAL_ID' limit 1"
-  exec_sql "insert into permission_grant (id, installation_id, capability_id, action_id, permission_level, risk_ceiling, created_at) \
-            select gen_random_uuid()::text, t.id, g.capability_id, g.action_id, g.permission_level, g.risk_ceiling, now() \
-            from installation t, permission_grant g \
-            where $MCP_SQL_AGENT_INSTALL \
-              and g.installation_id=(select id from installation where application_id='$APP_ID' and principal_type='HUMAN' and principal_id='$PRINCIPAL_ID' limit 1)"
-  GRANTS=$(sql "select count(*) from installation t join permission_grant g on g.installation_id=t.id where t.principal_id='$MCP_AGENT'")
-  [ "${GRANTS:-0}" -ge 1 ] && ok "AGENT 安装 + $GRANTS 条授权 (SQL 造)" || fail "AGENT 授权没造出来"
 
   CODE=$(mcp '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}')
   [ "$CODE" = "200" ] && ok "initialize 200" || fail "initialize 状态码 $CODE"
@@ -451,13 +609,21 @@ else
     || fail "工具描述里没有 target 形态 —— 客户端无从知道该填什么"
   ok "共 $(jq_ "len(d['result']['tools'])") 个工具"
 
-  # 真人开一局、落一子(X)
+  # 真人开一局、落一子(X) —— 这盘棋的 sessionId 就是 MCP 客户端待会儿要进的会话
   CODE=$(http POST /api/v1/actions:execute \
     "{\"action\":\"game.create\",\"target\":\"$URI\",\"input\":{}}" "check-lap-mcp-c-$(stamp)")
   [ "$CODE" = "200" ] && ok "真人 game.create 200" || fail "真人 create 状态码 $CODE"
   CODE=$(http POST /api/v1/actions:execute \
     "{\"action\":\"game.make_move\",\"target\":\"$URI\",\"input\":{\"position\":0}}" "check-lap-mcp-h-$(stamp)")
   [ "$CODE" = "200" ] && ok "真人落子 0 200" || fail "真人落子状态码 $CODE"
+
+  # 把 MCP 客户端作为 O 拉进这一局 —— 复制真人那份授权。注意它进的是**这一局**(session_id=$SESSION_ID),
+  # 不是"这个应用": 这正是 v2 与 v1 最直观的差别, 一个 Agent 可以在 A 局里、在 B 局外。
+  seat_agent "$SESSION_ID" "$MCP_AGENT" "$PRINCIPAL_ID"
+  GRANTS=$(sql "select count(*) from session_permission sp
+                 join application_session_participant p on p.id=sp.participant_id
+                 where p.principal_type='AGENT' and p.principal_id='$MCP_AGENT'")
+  [ "${GRANTS:-0}" -ge 1 ] && ok "AGENT 进了这一局 + $GRANTS 条授权 (SQL 造)" || fail "AGENT 授权没造出来"
 
   SESSIONS_BEFORE=$(sql "select count(*) from application_session")
 
@@ -481,7 +647,8 @@ else
     fail "两边不是同一盘棋: board[0]='$B0' board[4]='$B4'"
   fi
 
-  # MCP Session ≠ ApplicationSession —— R6 最要紧的那条不变量
+  # MCP Session ≠ ApplicationSession —— 最要紧的那条不变量: MCP 协议会话只是传输层的信封,
+  # 不该在归属链上留下任何一行。真人开的那一局是唯一新增的会话, 之后不应再涨。
   SESSIONS_AFTER=$(sql "select count(*) from application_session")
   [ "$SESSIONS_AFTER" = "$SESSIONS_BEFORE" ] && ok "整条 MCP 链路没有创建 ApplicationSession" \
     || fail "application_session 从 $SESSIONS_BEFORE 涨到 $SESSIONS_AFTER —— MCP 会话污染了归属链"
@@ -559,14 +726,14 @@ note "断言 17: INBOX 订阅落进 lap_outbox 并被 relay 投出"
 if [ "$FAIL" != "0" ]; then
   skip "outbox 投递 — 前面的断言已经失败, 这一局的起点不可信"
 else
-  # 开一盘<em>全新</em>的棋: 前面几段都在同一局上落过子, 复用那个 URI 会让"这两手有没有真的
+  # 开一盘全新的棋: 前面几段都在同一局上落过子, 复用那个 URI 会让"这两手有没有真的
   # 产生事件"取决于前面跑成什么样。事件 id 里带 moves 计数, 所以两手之间不会互相去重。
   #
   # 新会话而不是自己编一个新 URI —— target 里那一段是**真的会话 id**, 网关会拿它去查会话,
   # 编一个 `game://session/outbox-<时间戳>` 得到的是 404 UNKNOWN_SESSION, 而那一手连同它
   # 本该发出的 game.move 事件根本不会发生(这行注释是照着一次真实的失败写的: 断言当时报的是
   # "lap_outbox 里没有这个订阅的行", 看起来像投递坏了, 实际是压根没有事件可投)。
-  install '{}'
+  open_session
   SUB_URI="$URI"
   CODE=$(http POST /api/v1/actions:execute \
     "{\"action\":\"game.create\",\"target\":\"$SUB_URI\",\"input\":{}}" \

@@ -12,8 +12,17 @@ import java.util.Optional;
 
 public interface ActionInvocationRepository extends JpaRepository<ActionInvocationRecord, String> {
 
-    Optional<ActionInvocationRecord> findByPrincipalTypeAndPrincipalIdAndIdempotencyKey(
-            String principalType, String principalId, String idempotencyKey);
+    /**
+     * 幂等键的查找 —— <b>作用域必须与唯一键逐字一致</b>。
+     *
+     * <p>少了 {@code sessionId} 的版本是 v1 的, 它在这里是一个陷阱: 唯一索引已经是
+     * (principal, <em>session</em>, key) 了, 而查找还是三列的话, "同一个人在另一局里用同一个
+     * 序号"会被这个查询捞到上一局那一行, 于是插入本来成功, 却回一个
+     * {@code IDEMPOTENCY_IN_PROGRESS} —— 一次静默的、只在换局时出现的假重放。
+     * 查找的作用域与索引的作用域是同一条规矩, 分成两处写就迟早会漂。
+     */
+    Optional<ActionInvocationRecord> findByPrincipalTypeAndPrincipalIdAndSessionIdAndIdempotencyKey(
+            String principalType, String principalId, String sessionId, String idempotencyKey);
 
     /**
      * 崩溃遗留的抢占: <b>CAS 到行上, 不是先读后改。</b>

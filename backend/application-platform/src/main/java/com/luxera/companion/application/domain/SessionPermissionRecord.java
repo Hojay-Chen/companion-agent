@@ -12,27 +12,32 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * LAP v1: 一次安装换来的授权。权限 = <b>Principal × Installation grant × Capability ×
- * Action × Risk</b>, 这张表是其中的 grant 一维。
+ * LAP v2: 一条参与者在<b>这一个会话里</b>的授权 —— {@code permission_grant} 的继任者。
  *
- * <p>表名是 {@code permission_grant} 而不是方案原文的 {@code grant}: 后者是 PostgreSQL
- * 保留字, {@code create table grant (...)} 直接语法错误 —— 照着写会在第一次建表时炸掉。
+ * <p>与 v1 那张表的唯一区别是本列: 外键从 {@code installation_id} 换成了
+ * {@code participant_id}。这个替换就是整个权限模型搬迁的全部内容 ——
+ * "装了什么"变成"在这场里担任什么", 授权的作用域随之从"这个应用"收窄到"这一局"。
+ * 收窄是有意的: 在一局棋里授予的写权限不该自动延续到下一局。
  *
  * <p>{@code capability_id} 与 {@code action_id} 至少一个非空: 授权可以是"这个能力都能用",
  * 也可以是"只准用这一个动作"。两个都空意味着一条什么都不允许的授权, 那是数据错误。
+ *
+ * <p><b>这张表是"角色 → 默认 profile"展开的结果, 不是调用方逐条写进来的。</b>
+ * 加入会话时 {@code ParticipantService} 按 profile 铺一批行下来; 想让某个人多一条或少一条,
+ * 在那之后改这一张表即可 —— 与 v1 的 {@code grantMissing} 一样, 展开是"只补不覆盖"。
  */
 @Entity
-@Table(name = "permission_grant")
+@Table(name = "session_permission")
 @Getter
 @Setter
-public class PermissionGrantRecord {
+public class SessionPermissionRecord {
 
     @Id
     @Column(length = 36)
     private String id;
 
-    @Column(name = "installation_id", nullable = false, length = 36)
-    private String installationId;
+    @Column(name = "participant_id", nullable = false, length = 36)
+    private String participantId;
 
     @Column(name = "capability_id", length = 64)
     private String capabilityId;

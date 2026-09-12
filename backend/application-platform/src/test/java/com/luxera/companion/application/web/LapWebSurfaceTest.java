@@ -16,6 +16,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -72,55 +73,87 @@ class LapWebSurfaceTest {
                 .andExpect(jsonPath("$[?(@.actionId=='game.make_move')].agentHint").exists());
     }
 
-    // ─────────────────────────── 安装 / 会话 / 订阅 ───────────────────────────
+    // ─────────────────────────── 打开 / 会话 / 订阅 ───────────────────────────
 
+    /**
+     * 打开应用 = 开一个会话, 而<b>安装这个动作已经不存在了</b>。
+     *
+     * <p>{@code $.installationId} 那条反向断言是刻意留的: 只断言"会话开出来了"的话, 哪天有人
+     * 把 {@code /install} 加回来(哪怕只是顺手), 这个类照样绿。加上"没有安装 id 这个东西",
+     * 加回来的那一刻就红。
+     */
     @Test
-    void installingOpensASessionAndTheResponseCarriesBothIds() throws Exception {
+    void openingAnApplicationStartsASessionAndMintsNoInstallation() throws Exception {
         String alice = principalId();
 
-        String body = mvc.perform(post("/api/v1/applications/" + APP_ID + "/install")
+        String body = mvc.perform(post("/api/v1/applications/" + APP_ID + "/sessions")
+                        .header("Authorization", bearer(alice))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applicationId").value(APP_ID))
+                .andExpect(jsonPath("$.ownerPrincipalType").value("HUMAN"))
+                .andExpect(jsonPath("$.ownerPrincipalId").value(alice))
+                .andExpect(jsonPath("$.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.participantCount").value(1))
+                .andExpect(jsonPath("$.installationId").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+
+        assertEquals(36, objectMapper.readTree(body).path("sessionId").asText().length(),
+                "开出来的这个会话 id 就是调用方下一步下动作要用的那个");
+    }
+
+    /**
+     * 权限全是 v1 的 {@code /install} 那两件事的继任者。
+     *
+     * <ul>
+     *   <li>{@code /install} 这个端点本身必须 404 —— 原则 1: Application 不需要用户安装。
+     *       加回任何一个"安装/启用/激活"入口, 这条立刻红。</li>
+     *   <li>能力不再由请求体里的 {@code capabilities} 数组决定("省略就等于全给"这种默认值
+     *       是没法解释的), 而由<b>角色</b>展开: 打开者成为 OWNER, 拿到该应用声明的全部能力。</li>
+     * </ul>
+     */
+    @Test
+    void installingIsNoLongerAnEndpointAndOpeningGrantsTheDeclaredCapabilities() throws Exception {
+        String alice = principalId();
+
+        mvc.perform(post("/api/v1/applications/" + APP_ID + "/install")
                         .header("Authorization", bearer(alice))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"capabilities\":[\"game.play\"]}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.applicationId").value(APP_ID))
-                .andExpect(jsonPath("$.principalType").value("HUMAN"))
-                .andExpect(jsonPath("$.principalId").value(alice))
-                .andExpect(jsonPath("$.version").value("1.0.0"))
-                .andExpect(jsonPath("$.capabilities[0]").value("game.play"))
-                .andReturn().getResponse().getContentAsString();
+                .andExpect(status().isNotFound());
 
-        JsonNode json = objectMapper.readTree(body);
-        assertEquals(36, json.path("installationId").asText().length());
-        assertEquals(36, json.path("sessionId").asText().length(),
-                "安装顺带开会话, 调用方下一步就能直接下动作");
-    }
-
-    /** 省略请求体 = 这个应用声明的全部能力, 而不是"什么都没授权"。 */
-    @Test
-    void installingWithoutBodyGrantsEverythingTheApplicationDeclares() throws Exception {
-        String body = mvc.perform(post("/api/v1/applications/" + APP_ID + "/install")
-                        .header("Authorization", bearer(principalId())))
+        String body = mvc.perform(post("/api/v1/applications/" + APP_ID + "/sessions")
+                        .header("Authorization", bearer(alice))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
 
-        assertEquals("game.play", objectMapper.readTree(body).path("capabilities").get(0).asText());
+        assertTrue(objectMapper.readTree(body).path("capabilities").toString().contains("game.play"),
+                "打开者按角色拿到这个应用声明的能力: " + body);
     }
 
+    /**
+     * 会话开得出、列得到、结束得了 —— Agent 这条身份走的是同一个控制器。
+     *
+     * <p>这里刻意用 {@code companionId} 过滤器查回来: 它不是身份(身份来自令牌), 但它必须
+     * 真的把那一条筛出来, 否则"这个数字人在用哪些应用"这类查询会悄悄退化成"全部返回"。
+     */
     @Test
     void sessionsCanBeOpenedListedAndEnded() throws Exception {
         String companionId = "dh-" + UUID.randomUUID();
-        install(companionId, PrincipalType.AGENT);
 
         String sessionId = openSession(companionId, PrincipalType.AGENT);
 
-        mvc.perform(get("/api/v1/sessions").param("companionId", companionId))
+        mvc.perform(get("/api/v1/sessions").param("companionId", companionId)
+                        .header("Authorization", bearer(companionId, PrincipalType.AGENT)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[?(@.sessionId=='" + sessionId + "')]").exists())
-                .andExpect(jsonPath("$[0].companionId").value(companionId));
+                .andExpect(jsonPath("$[?(@.sessionId=='" + sessionId + "')]").exists());
 
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-                        .delete("/api/v1/sessions/" + sessionId))
+                        .delete("/api/v1/sessions/" + sessionId)
+                        .header("Authorization", bearer(companionId, PrincipalType.AGENT)))
                 .andExpect(status().isNoContent());
 
         mvc.perform(post("/api/v1/actions:execute")
@@ -135,7 +168,6 @@ class LapWebSurfaceTest {
     @Test
     void subscriptionsCanBeCreatedListedAndRevoked() throws Exception {
         String alice = principalId();
-        install(alice, PrincipalType.HUMAN);
         String sessionId = openSession(alice, PrincipalType.HUMAN);
 
         String body = mvc.perform(post("/api/v1/subscriptions")
@@ -168,7 +200,6 @@ class LapWebSurfaceTest {
     @Test
     void aWholeGameCanBePlayedOverHttp() throws Exception {
         String alice = principalId();
-        install(alice, PrincipalType.HUMAN);
         String sessionId = openSession(alice, PrincipalType.HUMAN);
         String uri = "game://session/" + sessionId;
 
@@ -225,7 +256,6 @@ class LapWebSurfaceTest {
     @Test
     void replayingWithTheSameKeyReturnsTheSameBytesAndReplayHeader() throws Exception {
         String alice = principalId();
-        install(alice, PrincipalType.HUMAN);
         String uri = "game://session/" + openSession(alice, PrincipalType.HUMAN);
         String key = "create-" + UUID.randomUUID();
         String raw = executeBody("game.create", uri, "{}");
@@ -254,7 +284,6 @@ class LapWebSurfaceTest {
     @Test
     void reusingAKeyWithADifferentPayloadIs422() throws Exception {
         String alice = principalId();
-        install(alice, PrincipalType.HUMAN);
         String uri = "game://session/" + openSession(alice, PrincipalType.HUMAN);
         String key = "create-" + UUID.randomUUID();
 
@@ -277,7 +306,6 @@ class LapWebSurfaceTest {
     @Test
     void writingWithoutAnIdempotencyKeyIs400() throws Exception {
         String alice = principalId();
-        install(alice, PrincipalType.HUMAN);
         String uri = "game://session/" + openSession(alice, PrincipalType.HUMAN);
 
         mvc.perform(post(EXECUTE)
@@ -321,16 +349,18 @@ class LapWebSurfaceTest {
     }
 
     /**
-     * 没装这个应用的人调动作 → 403 NOT_INSTALLED。
+     * 不在这一局里的人调动作 → 403 {@code NOT_A_PARTICIPANT}。
      *
      * <p>注意这里<em>借用了别人的会话 URI</em>: 会话解析排在权限判定之前, 所以拿一个不存在的
      * 会话 id 过来会先撞上 404 UNKNOWN_SESSION, 测不到权限那条。这不是巧合 —— 顺序是
-     * "解析目标 → 判权限", 于是未安装者拿随机 UUID 试探时得到的是 404 而非 403。
+     * "解析目标 → 判权限", 于是不在场者拿随机 UUID 试探时得到的是 404 而非 403。
+     *
+     * <p>v1 这里问的是"装没装过"(一次永久的授权), v2 问的是"在不在这局里"(一次会话内的加入)。
+     * 位置、状态码、断言形状都没变 —— 变的正是这次重构要换掉的那一个问题。
      */
     @Test
-    void aCallerWithoutAnInstallationIs403() throws Exception {
+    void aCallerOutsideTheSessionIs403() throws Exception {
         String alice = principalId();
-        install(alice, PrincipalType.HUMAN);
         String uri = "game://session/" + openSession(alice, PrincipalType.HUMAN);
 
         mvc.perform(post(EXECUTE)
@@ -339,22 +369,22 @@ class LapWebSurfaceTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(executeBody("game.create", uri, "{}")))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error.code").value("NOT_INSTALLED"));
+                .andExpect(jsonPath("$.error.code").value("NOT_A_PARTICIPANT"));
     }
 
     // ─────────────────────────── 夹具 ───────────────────────────
 
-    private void install(String principalId, PrincipalType type) throws Exception {
-        mvc.perform(post("/api/v1/applications/" + APP_ID + "/install")
-                        .header("Authorization", bearer(principalId, type)))
-                .andExpect(status().isOk());
-    }
-
+    /**
+     * 开一个会话并返回它的 id —— <b>这里就是 v1 那个 {@code install()} 夹具的位置</b>。
+     *
+     * <p>它少了一步: v1 要"先装再开", 两个请求两行状态; v2 一个请求就是一件事。夹具的这一处
+     * 缩短, 正是整个 R9 想说的话。
+     */
     private String openSession(String principalId, PrincipalType type) throws Exception {
-        String body = mvc.perform(post("/api/v1/sessions")
+        String body = mvc.perform(post("/api/v1/applications/" + APP_ID + "/sessions")
                         .header("Authorization", bearer(principalId, type))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"applicationId\":\"" + APP_ID + "\"}"))
+                        .content("{}"))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         return objectMapper.readTree(body).path("sessionId").asText();

@@ -10,8 +10,9 @@ import com.luxera.companion.application.repository.ApplicationRepository;
 import com.luxera.companion.application.manifest.RuntimeType;
 import com.luxera.companion.application.principal.ResolvedPrincipal;
 import com.luxera.companion.application.repository.ApplicationSessionRepository;
+import com.luxera.companion.application.domain.SessionParticipantRecord;
 import com.luxera.companion.application.session.ApplicationSessionService;
-import com.luxera.companion.application.session.InstallationService;
+import com.luxera.companion.application.session.ParticipantService;
 import com.luxera.companion.contracts.application.AttentionPolicy;
 import com.luxera.companion.contracts.application.PermissionLevel;
 import com.luxera.companion.contracts.application.PrincipalType;
@@ -46,9 +47,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>最要紧的一条断言是<b>"没有创建 ApplicationSession"</b>。MCP 有自己的会话概念, 它和
  * {@code ApplicationSession} 长得像、名字像, 而客户端的每一次握手都确实"开了一个会话" ——
  * 所以把它们接起来是极自然的下一步, 也正是必须挡住的下一步: {@code application_session} 是
- * 归属链 {@code Application → Installation → ApplicationSession → Resource} 的一环, 每一个
- * MCP 客户端的握手都往里塞一行, 那行就既不属于任何安装、也不指向任何资源。这个类用
- * {@code sessions.count()} 的前后对比把这条钉住。
+ * 归属链 {@code Application → ApplicationSession → Resource} 的一环, 每一个 MCP 客户端的握手
+ * 都往里塞一行, 那行就既不属于任何人、也不指向任何资源。这个类用 {@code sessions.count()} 的
+ * 前后对比把这条钉住。
  *
  * <p>其次要紧的是"下游走的是同一个网关": 断言不写成"tools/call 返回了 200", 而是写成
  * <b>"真人从 REST 读同一个 URI, 看到的是 MCP 客户端刚写下的那一手"</b>。前者在适配器自己伪造
@@ -82,7 +83,7 @@ class McpProtocolTest {
     ApplicationRepository applications;
 
     @Autowired
-    InstallationService installations;
+    ParticipantService participantService;
 
     @Autowired
     ApplicationSessionService sessionService;
@@ -329,7 +330,7 @@ class McpProtocolTest {
 
         // Agent 是新来的, 坐下就是 O —— 正好轮到它走
         String agent = "agent-" + UUID.randomUUID();
-        installForAgent(agent);
+        joinForAgent(agent, uri);
 
         mcpWithKey(agent, callBody(1, "tictactoe.game_make_move",
                 "{\"target\":\"" + uri + "\",\"position\":4}"), "mcp-" + UUID.randomUUID())
@@ -350,7 +351,7 @@ class McpProtocolTest {
     @Test
     void replayingOverMcpIsFlaggedTheSameWayRestDoes() throws Exception {
         String agent = "agent-" + UUID.randomUUID();
-        String uri = installForAgentAndOpenGame(agent);
+        String uri = openGameAsAgent(agent);
         String key = "mcp-replay-" + UUID.randomUUID();
         String create = callBody(1, "tictactoe.game_create", "{\"target\":\"" + uri + "\"}");
 
@@ -380,7 +381,7 @@ class McpProtocolTest {
     @Test
     void aFullMcpRoundTripCreatesNoApplicationSessions() throws Exception {
         String agent = "agent-" + UUID.randomUUID();
-        String uri = installForAgentAndOpenGame(agent);
+        String uri = openGameAsAgent(agent);
 
         long before = sessions.count();
         int protocolBefore = protocolSessions.size();
@@ -409,7 +410,7 @@ class McpProtocolTest {
     @Test
     void aWriteWithoutAnIdempotencyKeyIsReportedAsAToolErrorNotAProtocolError() throws Exception {
         String agent = "agent-" + UUID.randomUUID();
-        String uri = installForAgentAndOpenGame(agent);
+        String uri = openGameAsAgent(agent);
 
         mcp(agent, callBody(1, "tictactoe.game_create", "{\"target\":\"" + uri + "\"}"))
                 .andExpect(status().isOk())
@@ -424,7 +425,7 @@ class McpProtocolTest {
     @Test
     void theIdempotencyKeyMayTravelInsideTheArguments() throws Exception {
         String agent = "agent-" + UUID.randomUUID();
-        String uri = installForAgentAndOpenGame(agent);
+        String uri = openGameAsAgent(agent);
 
         mcp(agent, callBody(1, "tictactoe.game_create",
                 "{\"target\":\"" + uri + "\",\"_idempotencyKey\":\"arg-" + UUID.randomUUID() + "\"}"))
@@ -435,12 +436,12 @@ class McpProtocolTest {
     /**
      * READ 动作不要键 —— 而且读到的必须是<b>真人刚下的那盘棋</b>, 不是别的什么。
      *
-     * <p>Agent 也得先装过这个应用: 发现不是授权(见 {@code toolsListExposesTheActionCatalogue}),
-     * 但读取是。这两个断言放在一起, 才说明"能看见"与"能动"之间隔着的是安装与授权, 而不是
-     * 目录里有没有。
+     * <p>Agent 也得先<em>在这一局里</em>: 发现不是参与(见 {@code toolsListExposesTheActionCatalogue}),
+     * 但读取是。这两个断言放在一起, 才说明"能看见"与"能动"之间隔着的是会话中的参与者身份,
+     * 而不是目录里有没有。
      */
     @Test
-    void readToolsNeedNoKeyButStillNeedAnInstallation() throws Exception {
+    void readToolsNeedNoKeyButStillNeedToBeInTheSession() throws Exception {
         String human = "human-" + UUID.randomUUID();
         String uri = openGameAsHuman(human);
         humanMove(human, uri, 0);
@@ -451,9 +452,9 @@ class McpProtocolTest {
         mcp(agent, read)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.result.isError").value(true))
-                .andExpect(jsonPath("$.result.structuredContent.error.code").value("NOT_INSTALLED"));
+                .andExpect(jsonPath("$.result.structuredContent.error.code").value("NOT_A_PARTICIPANT"));
 
-        installForAgent(agent);
+        joinForAgent(agent, uri);
 
         mcp(agent, read)
                 .andExpect(status().isOk())
@@ -500,13 +501,15 @@ class McpProtocolTest {
         return mvc.perform(request);
     }
 
-    /** 真人那一侧: REST 安装(顺带开会话) + 开一局, 返回棋盘的资源 URI。 */
+    /** 真人那一侧: REST 开一个会话 + 开一局, 返回棋盘的资源 URI。 */
     private String openGameAsHuman(String userId) throws Exception {
-        String installBody = mvc.perform(post("/api/v1/applications/" + APP_ID + "/install")
-                        .header("Authorization", bearer(userId)))
+        String launchBody = mvc.perform(post("/api/v1/applications/" + APP_ID + "/sessions")
+                        .header("Authorization", bearer(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        String uri = "game://session/" + objectMapper.readTree(installBody).path("sessionId").asText();
+        String uri = "game://session/" + objectMapper.readTree(launchBody).path("sessionId").asText();
 
         mvc.perform(post("/api/v1/actions:execute")
                         .header("Authorization", bearer(userId))
@@ -535,18 +538,32 @@ class McpProtocolTest {
     }
 
     /**
-     * AGENT 装不了 REST 那一面 —— 那个面只认 JWT, 而 MCP 客户端没有 JWT。所以这里直接调
-     * {@code InstallationService}。这与 {@code check-lap.sh} 用 SQL 造出同一个状态是同一件事:
-     * HTTP 面上够不到的状态, 只能从服务层造。
+     * AGENT 开不了 REST 那一面 —— 那个面只认 JWT, 而 MCP 客户端没有 JWT。所以这里直接调
+     * {@code ApplicationSessionService}。这与 {@code check-lap.sh} 用 SQL 造出同一个状态是同一
+     * 件事: HTTP 面上够不到的状态, 只能从服务层造。
+     *
+     * <p>v2 里 Agent <em>可以</em>自己开局 —— 它就是普通参与者(原则 4), 没有"Agent 专用"的路。
+     * 于是这个夹具与真人那条路走的是同一个方法, 只是调用方不同。
      */
-    private String installForAgentAndOpenGame(String agentId) {
+    private String openGameAsAgent(String agentId) {
         ResolvedPrincipal principal = agentPrincipal(agentId);
-        installations.install(APP_ID, principal, null);
-        return "game://session/" + sessionService.open(APP_ID, principal).getId();
+        return "game://session/" + sessionService.launch(APP_ID, principal).getId();
     }
 
-    private void installForAgent(String agentId) {
-        installations.install(APP_ID, agentPrincipal(agentId), null);
+    /**
+     * 把一个 Agent 加进这一局。<b>这就是 v2 取代"装一次"的那件事</b>: v1 里它是一次永久的
+     * 安装(viaInvitation 无从谈起), v2 里它是一次会话内的加入 —— 会话没了, 关系也就没了。
+     *
+     * <p>{@code viaInvitation=true} 因为会话默认 {@code INVITE_ONLY}: 被邀请进来正是 Agent 的
+     * 处境, 而能替别人加入的路只有邀请这一条。
+     */
+    private void joinForAgent(String agentId, String uri) {
+        participantService.join(sessionIdOf(uri), agentPrincipal(agentId),
+                SessionParticipantRecord.ROLE_MEMBER, true);
+    }
+
+    private static String sessionIdOf(String uri) {
+        return uri.substring(uri.lastIndexOf('/') + 1);
     }
 
     private static ResolvedPrincipal agentPrincipal(String agentId) {
