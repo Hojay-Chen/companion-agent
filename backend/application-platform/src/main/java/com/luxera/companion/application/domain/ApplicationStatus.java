@@ -46,17 +46,13 @@ public enum ApplicationStatus {
         return this == PUBLISHED;
     }
 
-    private static final Set<ApplicationStatus> LEGAL_SUCCESSORS = Set.of(
-            DRAFT, DEVELOPING, TESTING, SUBMITTED, REVIEWING, REJECTED,
-            APPROVED, PUBLISHED, SUSPENDED, DEPRECATED);
-
     /**
      * 合法迁移: 只能往前走一步, 或从 PUBLISHED 挂起/废弃。
-     * R8 的 {@code ApplicationLifecycleService} 用它拒绝跳步 —— 但表里没有任何一行是靠
+     * {@code ApplicationLifecycleService} 用它拒绝跳步 —— 但表里没有任何一行是靠
      * "记得检查"保证的, 所以这里给的是唯一的判定入口。
      */
     public boolean canMoveTo(ApplicationStatus next) {
-        if (next == null || next == this || !LEGAL_SUCCESSORS.contains(next)) return false;
+        if (next == null || next == this) return false;
         return switch (this) {
             case DRAFT -> next == DEVELOPING;
             case DEVELOPING -> next == TESTING || next == DRAFT;
@@ -69,5 +65,19 @@ public enum ApplicationStatus {
             case SUSPENDED -> next == PUBLISHED || next == DEPRECATED;
             case DEPRECATED -> false;
         };
+    }
+
+    /**
+     * 从某个状态出发的合法后继, <b>由 {@link #canMoveTo} 推导</b>而不是再写一张表 ——
+     * 两张表迟早会有一张忘了改, 而那种偏差的表现是"错误信息说 A 可以, 实际拒绝 A"。
+     * 用途是拒绝信息本身: 告诉调用方"合法的下一步是哪些", 而不是只说一句"不行"。
+     */
+    public static Set<ApplicationStatus> legalSuccessorsOf(ApplicationStatus from) {
+        if (from == null) {
+            return Set.of();
+        }
+        return java.util.Arrays.stream(values())
+                .filter(from::canMoveTo)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 }

@@ -2,7 +2,7 @@
 # Luxera Companion — 全量验收测试(唯一入口)
 # 覆盖: 表结构 / 端到端(登录→创建伴侣→指定关系类型) / 消息同步落库 / clientMessageId 幂等
 #       / Person+多维关系 / 会话参与者 / SSE 游标重放 / 行为引擎 / 会话线程 / 反 AI 评估
-#       / 提醒 REST 契约(LAP v1 R5: 数据归应用, 接口未变)
+#       / 提醒 REST 契约(LAP v1 R5: 数据归应用, 接口未变; R8: 旧表已 DROP)
 # 用法: BASE=http://127.0.0.1:8081 bash scripts/check.sh
 set -euo pipefail
 BASE="${BASE:-http://127.0.0.1:8081}"
@@ -173,8 +173,11 @@ RAPI="$BASE/api/companions/$CID/reminders"
 RJSON=/tmp/check-reminders.json
 rg() { $PY -c "import sys,json;d=json.load(open('$RJSON'));print($1)" 2>/dev/null || echo ""; }
 
-# 旧表基线 —— 后面每一步都要确认它一动不动(R8 会把这行连同表一起删掉)
-LEGACY0=$(PGPASSWORD=shared-secret $PSQL "select count(*) from reminders" 2>/dev/null | tr -d ' ')
+# R8 把旧表 DROP 了 —— "没有人偷偷回写"这件事因此有了一个更强的判据: 表根本不在, 想写也没地方写。
+# 注意这是 set -e 下必须写成 && || 形式的那类语句: psql 查一张不存在的表会以非 0 退出,
+# 直接放进赋值里会让整个脚本在没有任何输出提示的情况下当场停住(R8 就这么被绊过一次)。
+table_exists reminders && fail "旧 reminders 表又出现了 —— 跑 scripts/lap-drop-legacy.sh --apply" \
+                        || ok "旧 reminders 表不存在"
 
 CODE=$(curl -s -o "$RJSON" -w '%{http_code}' "$RAPI" -H "Authorization: Bearer $TOKEN")
 [ "$CODE" = "200" ] && ok "GET 列表 200" || fail "GET 列表状态码 $CODE"
@@ -195,9 +198,11 @@ RID=$(rg "d['id']")
 # 单一数据源: 这一条提醒在应用的表里, 不在数字人的旧表里
 APPN=$(PGPASSWORD=shared-secret $PSQL "select count(*) from reminder_item where id='$RID'" 2>/dev/null | tr -d ' ')
 [ "$APPN" = "1" ] && ok "落在应用的 reminder_item 表里" || fail "reminder_item 里没有 $RID"
-LEGACY1=$(PGPASSWORD=shared-secret $PSQL "select count(*) from reminders" 2>/dev/null | tr -d ' ')
-[ "$LEGACY1" = "$LEGACY0" ] && ok "旧 reminders 表没有被回写(仍是 $LEGACY0 行)" \
-  || fail "旧表多了 $((LEGACY1 - LEGACY0)) 行 —— 两个 Source of Truth 并存了"
+# 终局复检: 走完一整轮增删改之后, 提醒仍然只有 reminder_item 一个家。
+# 这里刻意在**写入路径跑过之后**再查一次 —— 开头那次查的是"启动时没被重建",
+# 这一次查的是"运行期也没有第二条路"。
+table_exists reminders && fail "运行期冒出旧 reminders 表 —— 有代码把它写回来了" \
+                        || ok "写入路径跑完, 旧表依然不存在"
 
 CODE=$(curl -s -o "$RJSON" -w '%{http_code}' "$RAPI" -H "Authorization: Bearer $TOKEN")
 [ "$(rg 'len(d)')" = "1" ] && ok "列表读得到刚建的那条" || fail "列表数量不符"

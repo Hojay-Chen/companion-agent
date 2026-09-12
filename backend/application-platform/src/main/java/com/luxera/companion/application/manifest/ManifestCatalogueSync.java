@@ -25,12 +25,12 @@ import java.util.List;
  * <p>为什么 manifest 运行时已经在内存里了, 还要落库:
  * <ul>
  *   <li>{@code action_invocation} 要指向一个<em>版本行</em>, 否则"这次调用跑的是哪一版"无从解释;</li>
- *   <li>生命周期状态机(R8)要有一个可以持久化的状态字段;</li>
+ *   <li>生命周期状态机要有一个可以持久化的状态字段;</li>
  *   <li>历史版本要查得到 —— 内存注册表只有当前发布的那些。</li>
  * </ul>
  *
  * <p><b>关于"发布后不可变"与内置应用的关系</b>: 不可变是<em>开发者 API</em> 的性质 ——
- * 通过 HTTP 改写已发布版本的 manifest 必须被拒(R8 的 {@code VersionImmutabilityTest})。
+ * 通过 HTTP 改写已发布版本的 manifest 必须被拒({@code VersionImmutabilityTest})。
  * 内置参考应用是随二进制发布的: 换了构建、manifest 变了, 启动同步就应当让新内容生效,
  * 否则改一行 JSON 要手工删库才能生效。所以这里比对 {@code manifest_hash}, 不一致时更新并
  * <b>大声告警</b> —— 让"构建换了内容"这件事在日志里看得见, 而不是悄悄发生。
@@ -69,7 +69,12 @@ public class ManifestCatalogueSync {
         });
         application.setName(manifest.identity().name());
         application.setCategory(manifest.identity().category());
-        application.setStatus(ApplicationStatus.PUBLISHED.name());
+        // 只在"还没被任何人推过状态机"时自动上架。否则运营把某个应用挂起(SUSPENDED)之后,
+        // 下一次重启会被启动同步推回 PUBLISHED —— 一个被启动流程悄悄撤销的运营决定,
+        // 而日志里只会看到一条"应用已注册"。状态字段一旦有一个未经请求的改写者, 它就不再是事实。
+        if (ApplicationStatus.DRAFT.name().equals(application.getStatus())) {
+            application.setStatus(ApplicationStatus.PUBLISHED.name());
+        }
         application.setLatestVersion(version);
         applications.save(application);
 
@@ -88,7 +93,11 @@ public class ManifestCatalogueSync {
         versionRow.setManifestJson(rawJson);
         versionRow.setManifestHash(hash);
         versionRow.setRuntimeType(manifest.runtime().type().name());
-        versionRow.setStatus(ApplicationStatus.PUBLISHED.name());
+        // 与上面同一条理由: 首次同步才上架。已经被人推过的版本行(DRAFT 之外的任何状态)
+        // 由生命周期状态机掌管 —— 一个被挂起的版本不该在重启时自己回到架上。
+        if (ApplicationStatus.DRAFT.name().equals(versionRow.getStatus())) {
+            versionRow.setStatus(ApplicationStatus.PUBLISHED.name());
+        }
         if (versionRow.getPublishedAt() == null) versionRow.setPublishedAt(LocalDateTime.now());
         versions.save(versionRow);
 
@@ -131,7 +140,8 @@ public class ManifestCatalogueSync {
         }
     }
 
-    static String sha256(String text) {
+    /** manifest 的规范 hash。写入路径({@code ApplicationVersionService})也用它, 所以是公开的。 */
+    public static String sha256(String text) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] bytes = digest.digest(text.getBytes(StandardCharsets.UTF_8));

@@ -59,11 +59,15 @@ echo "══════════ LAP v1 应用平台验收 ═════�
 note "断言 1: LAP 表结构"
 for t in developer application application_version capability application_capability \
          installation permission_grant application_session resource subscription \
-         action_invocation application_action_log; do
+         action_invocation application_action_log lap_outbox; do
   table_exists "$t" && ok "$t 表存在" || fail "缺 $t 表"
 done
-# 旧表: R8 跑完 lap-drop-legacy.sh 之后才打开这半边断言(R3–R7 期间 /api/v10 与 reminders 还在服役)
-skip "旧表 (dh_application / dh_game_session / dh_application_action_log / reminders) 不存在 — R8 打开"
+# 旧表这一半在 R8 打开 —— 到此为止 /api/v10 与 reminders 的读路径已全部下线, 表本身该由
+# scripts/lap-drop-legacy.sh 清掉。留着它不会报错, 只会让下一个读到这张表的人以为它还是事实。
+for t in dh_application dh_game_session dh_application_action_log reminders; do
+  table_exists "$t" && fail "遗留表 $t 还在 — 跑 scripts/lap-drop-legacy.sh --apply" \
+                     || ok "遗留表 $t 已删除"
+done
 
 # ── 登录 ──
 note "登录取令牌"
@@ -483,6 +487,125 @@ else
     || fail "application_session 从 $SESSIONS_BEFORE 涨到 $SESSIONS_AFTER —— MCP 会话污染了归属链"
 
   mcp_cleanup
+fi
+
+# ── 断言 16: 生命周期状态机 + 发布后不可变 ──
+# 这一段的判据不是"PATCH 返回了 200", 而是"被挂起的应用从发现链上<em>真的</em>消失了" ——
+# 一个从不被读的状态字段与一个不存在的状态字段没有任何区别。
+#
+# 上下架是平台/开发者的事, 不是使用者的事, 所以这里的身份走服务密钥(APPLICATION), 不走 JWT。
+# 最后那条"You can't do this as a human"是刻意加的: 真人拿 JWT 也能到达这个端点, 但必须被
+# 403 挡下, 而不是被"反正他也会点对"放过去。
+note "断言 16: 开发者 API —— 状态机与发布后不可变"
+DEV_APP="com.luxera.gomoku"
+dev() {
+  local method="$1" url="$2" payload="${3:-}"
+  local args=(-s -m 20 -o "$TMP/body" -D "$TMP/hdr" -w '%{http_code}' -X "$method" "$BASE$url"
+    -H "X-Mcp-Principal: APPLICATION:check-lap-dev"
+    -H "X-Mcp-Service-Key: $MCP_KEY"
+    -H "X-Correlation-Id: check-lap-dev-$(stamp)")
+  if [ -n "$payload" ]; then args+=(-H 'Content-Type: application/json' -d "$payload"); fi
+  curl "${args[@]}" || echo "000"
+}
+
+if [ -z "$MCP_KEY" ]; then
+  skip "开发者面 — 需要 LAP_MCP_SERVICE_KEY 才能以 APPLICATION 身份鉴权"
+else
+  CODE=$(dev PATCH "/api/v1/applications/$DEV_APP/status" '{"status":"SUSPENDED"}')
+  [ "$CODE" = "200" ] && ok "PATCH → SUSPENDED 200" || fail "PATCH 状态码 $CODE"
+  GOT=$(jq_ "d['status']")
+  [ "$GOT" = "SUSPENDED" ] && ok "status=SUSPENDED (previous=$(jq_ "d['previous']"))" || fail "status=$GOT"
+
+  CODE=$(http GET /api/v1/capabilities/game.play/applications)
+  [ "$CODE" = "200" ] && ok "重读候选应用 200" || fail "状态码 $CODE"
+  body | grep -q "$DEV_APP" && fail "已挂起的应用仍出现在候选里 — 状态字段没被任何人读" \
+                           || ok "已挂起的应用从候选里消失"
+  body | grep -q "$APP_ID" && ok "同能力的另一个应用不受影响" || fail "$APP_ID 也一起消失了"
+
+  # 从 PUBLISHED 直接跳回 DEVELOPING 是不合法的 —— 那会让已发布版本重新可变。
+  CODE=$(dev PATCH "/api/v1/applications/$DEV_APP/status" '{"status":"DEVELOPING"}')
+  [ "$CODE" = "409" ] && ok "跳步 → 409" || fail "跳步状态码 $CODE"
+  GOT=$(jq_ "d['error']['code']")
+  [ "$GOT" = "ILLEGAL_TRANSITION" ] && ok "code=ILLEGAL_TRANSITION" || fail "code=$GOT"
+
+  # 真人走 JWT 打同一个端点 —— 必须被挡下。
+  CODE=$(http PATCH "/api/v1/applications/$DEV_APP/status" '{"status":"PUBLISHED"}')
+  [ "$CODE" = "403" ] && ok "真人推状态机 → 403" || fail "真人状态码 $CODE"
+
+  # 复原: 应用回到架上, 版本行也跟着回来(否则"恢复了但还没上架"这种状态会留在库里)。
+  CODE=$(dev PATCH "/api/v1/applications/$DEV_APP/status" '{"status":"PUBLISHED"}')
+  [ "$CODE" = "200" ] && ok "PATCH → PUBLISHED 200" || fail "恢复状态码 $CODE"
+  CODE=$(http GET /api/v1/capabilities/game.play/applications)
+  body | grep -q "$DEV_APP" && ok "恢复后重新出现在候选里" || fail "恢复之后仍然查不到"
+
+  # 发布后不可变: 对<em>随二进制发出去的那一版</em>写 manifest 必须被拒。
+  # 这里不造一个人为的已发布行 —— 真实的行是启动同步写的, 那才是要挡住的场景。
+  # 载荷是半截 JSON 也无所谓: 状态检查排在解析之前, 所以要拿到的仍然是 VERSION_IMMUTABLE,
+  # 而不是"你的 JSON 有问题"。这一条正是校验顺序的端到端体现。
+  CODE=$(dev PUT "/api/v1/applications/$APP_ID/versions/1.0.0/manifest" \
+    '{"identity":{"id":"com.luxera.tictactoe","name":"改过的","version":"1.0.0","description":"x","category":"game"}}')
+  [ "$CODE" = "409" ] && ok "改写已发布版本的 manifest → 409" || fail "状态码 $CODE"
+  GOT=$(jq_ "d['error']['code']")
+  [ "$GOT" = "VERSION_IMMUTABLE" ] && ok "code=VERSION_IMMUTABLE" || fail "code=$GOT"
+fi
+
+# ── 断言 17: INBOX 订阅的持久投递 ──
+# 订阅有两种出口: SINK 是"现在就送到", INBOX 是"我一定会送到"。后者靠 lap_outbox ——
+# 事件先落成一行数据(与业务同一个事务), 再由 relay 重试到送达或判死。
+#
+# 判据刻意分成两步: 先"有一行", 再"这行被投出去了"。只断言第一步的话, 一个从不投递的
+# relay 也能全绿; 只断言第二步的话, 一个不落库就直投的实现也能全绿 —— 而那样进程一死就丢。
+note "断言 17: INBOX 订阅落进 lap_outbox 并被 relay 投出"
+if [ "$FAIL" != "0" ]; then
+  skip "outbox 投递 — 前面的断言已经失败, 这一局的起点不可信"
+else
+  # 开一盘<em>全新</em>的棋: 前面几段都在同一局上落过子, 复用那个 URI 会让"这两手有没有真的
+  # 产生事件"取决于前面跑成什么样。事件 id 里带 moves 计数, 所以两手之间不会互相去重。
+  #
+  # 新会话而不是自己编一个新 URI —— target 里那一段是**真的会话 id**, 网关会拿它去查会话,
+  # 编一个 `game://session/outbox-<时间戳>` 得到的是 404 UNKNOWN_SESSION, 而那一手连同它
+  # 本该发出的 game.move 事件根本不会发生(这行注释是照着一次真实的失败写的: 断言当时报的是
+  # "lap_outbox 里没有这个订阅的行", 看起来像投递坏了, 实际是压根没有事件可投)。
+  install '{}'
+  SUB_URI="$URI"
+  CODE=$(http POST /api/v1/actions:execute \
+    "{\"action\":\"game.create\",\"target\":\"$SUB_URI\",\"input\":{}}" \
+    "check-lap-ob-0-$(stamp)")
+  [ "$CODE" = "200" ] && ok "新开一局: $SUB_URI" || fail "开局状态码 $CODE"
+
+  CODE=$(http POST /api/v1/subscriptions \
+    "{\"sessionId\":\"$SESSION_ID\",\"resourceUriPattern\":\"game://session/**\",\"eventTypes\":[\"game.move\"],\"deliveryMode\":\"INBOX\"}")
+  [ "$CODE" = "200" ] && ok "建 INBOX 订阅 200" || fail "订阅状态码 $CODE"
+  SUB_ID=$(jq_ "d['subscriptionId']")
+  [ -n "$SUB_ID" ] && ok "拿到订阅 id=$SUB_ID" || fail "响应里没有 subscriptionId"
+
+  http POST /api/v1/actions:execute \
+    "{\"action\":\"game.make_move\",\"target\":\"$SUB_URI\",\"input\":{\"position\":0}}" \
+    "check-lap-ob-1-$(stamp)" >/dev/null
+  http POST /api/v1/actions:execute \
+    "{\"action\":\"game.make_move\",\"target\":\"$SUB_URI\",\"input\":{\"position\":1}}" \
+    "check-lap-ob-2-$(stamp)" >/dev/null
+
+  ROWS=$(sql "select count(*) from lap_outbox where subscription_id='$SUB_ID'")
+  [ "${ROWS:-0}" -ge 1 ] && ok "收件箱里落下 $ROWS 行" \
+    || fail "lap_outbox 里没有这个订阅的行 — INBOX 还是只被记下来而已"
+
+  # relay 默认每 5 秒一轮, 给 20 秒的余量。
+  DELIVERED=0
+  for _ in $(seq 1 20); do
+    DELIVERED=$(sql "select count(*) from lap_outbox where subscription_id='$SUB_ID' and status='DELIVERED'")
+    [ "${DELIVERED:-0}" -ge 1 ] && break
+    sleep 1
+  done
+  [ "${DELIVERED:-0}" -ge 1 ] && ok "relay 在 20 秒内投出 $(printf '%s' "$DELIVERED") 行" \
+    || fail "20 秒过去仍没有一行被投出 — 收件箱攒着但没人送"
+
+  LASTA=$(sql "select (last_delivered_at is not null) from subscription where id='$SUB_ID'")
+  [ "$LASTA" = "t" ] && ok "订阅自己的 last_delivered_at 跟上了" \
+    || fail "last_delivered_at 仍为空 — 排障时无从知道这个订阅还活着没有"
+
+  # 收尾: 撤掉订阅, 免得重跑时同一批事件被两条订阅各收一次。
+  http DELETE "/api/v1/subscriptions/$SUB_ID" >/dev/null
 fi
 
 # ── 断言 15: 共享世界 —— 一行 resource, 两个 principal ──

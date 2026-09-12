@@ -148,6 +148,27 @@ public class ApplicationSessionService {
         });
     }
 
+    /**
+     * 结束空闲太久的会话, 返回条数。由 {@link SessionReaperJob} 定期调用。
+     *
+     * <p>只动 {@code ACTIVE} 的: 已经结束的会话若被反复 save, 会不断刷新
+     * {@code last_active_at} 之外的字段并让 JPA 产生无谓的 UPDATE。
+     */
+    @Transactional
+    public int reapIdle(long idleHours) {
+        if (idleHours <= 0) {
+            return 0;
+        }
+        LocalDateTime cutoff = LocalDateTime.now().minusHours(idleHours);
+        List<ApplicationSessionRecord> idle =
+                sessions.findByStatusAndLastActiveAtBefore(ApplicationSessionRecord.STATUS_ACTIVE, cutoff);
+        for (ApplicationSessionRecord row : idle) {
+            row.setStatus(ApplicationSessionRecord.STATUS_ENDED);
+            sessions.save(row);
+        }
+        return idle.size();
+    }
+
     public List<ApplicationSessionRecord> ofCompanion(String companionId) {
         return sessions.findByCompanionIdAndStatus(companionId, ApplicationSessionRecord.STATUS_ACTIVE);
     }

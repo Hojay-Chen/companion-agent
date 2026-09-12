@@ -53,6 +53,21 @@ public interface PrincipalResolver {
                                             String correlationId) {
             return new PrincipalRequest(null, mcpPrincipalHeader, mcpServiceKey, null, correlationId);
         }
+
+        /**
+         * 开发者面: <b>同一个端点上可能来两种人</b> —— 带 JWT 的真人(会被
+         * {@code ApplicationLifecycleService} 以 {@code LIFECYCLE_FORBIDDEN} 挡下)与带服务密钥的
+         * 平台/开发者身份。两者都交给同一条解析链按固定顺序裁决, 而不是在控制器里写
+         * "有 MCP 头就走 MCP, 否则当真人" —— 后者会让一个既没有 JWT 也没有服务密钥的请求
+         * 以某个默认身份通过。
+         */
+        public static PrincipalRequest ofDeveloper(String authorizationHeader,
+                                                   String mcpPrincipalHeader,
+                                                   String mcpServiceKey,
+                                                   String correlationId) {
+            return new PrincipalRequest(authorizationHeader, mcpPrincipalHeader, mcpServiceKey,
+                    null, correlationId);
+        }
     }
 
     /** 解析失败一律是这个 —— 翻成 401/403, 绝不"继续以匿名身份执行"。 */

@@ -123,7 +123,7 @@ backend/
 数据面则经 **DHCP v1 WebSocket 协议**（`contracts.dhcp`）流动，聊天平台只看见一台"机器用户设备"，
 完全不知道 Companion 的存在。
 
-### 重构成果（9 轮，当时全量 294 测试全绿；应用平台拆出后为 329，LAP v1 的 R7 落地后为 601 —— 见下一节）
+### 重构成果（9 轮，当时全量 294 测试全绿；应用平台拆出后为 329，LAP v1 全部落地后为 646 —— 见下一节）
 
 **架构解耦（R1-R4）**：
 1. **Maven 多模块拆分**：见上（V10 落地时为五模块，LAP v1 拆出 `application-platform` 后为六个）。
@@ -183,9 +183,9 @@ backend/
 | 表 | 用途 |
 |----|------|
 | `simulator_devices` | Simulator 设备（配对码/secretHash/tokenVersion/状态机 PAIRING→ACTIVE→REVOKED） |
-| `dh_application` | Application Platform 应用注册（code/manifest/权限）**（过渡期遗留，R8 删除）** |
-| `dh_game_session` | 井字棋对局（roomId/局面 JSON/胜负状态）**（过渡期遗留，R8 删除）** |
-| `dh_application_action_log` | LAP 动作审计（谁/什么应用/结果/权限决策/幂等键/因果链）**（过渡期遗留，R8 删除）** |
+| ~~`dh_application`~~ | ~~Application Platform 应用注册（code/manifest/权限）~~ —— **R8 已 DROP**（`scripts/lap-drop-legacy.sh`） |
+| ~~`dh_game_session`~~ | ~~井字棋对局（roomId/局面 JSON/胜负状态）~~ —— **R8 已 DROP** |
+| ~~`dh_application_action_log`~~ | ~~LAP 动作审计~~ —— **R8 已 DROP**（旧表的 `permission_decision` 是废字段，新表把权限判定与执行结果分开记） |
 
 ### 重构验收
 
@@ -230,7 +230,7 @@ backend/
 3. **没有"操作"的抽象** —— `/api/v10/games/tictactoe/*` 从请求体里手取 `userId`/`companionId`，
    忽略已认证身份；`Idempotency-Key` 收下就丢。
 
-### 已完成（R1–R7）
+### 已完成（R1–R8）
 
 | 轮 | 内容 | 证据 |
 |---|---|---|
@@ -241,6 +241,7 @@ backend/
 | **R5** | **参考应用：五子棋 + 提醒/日程**（含 DH 提醒只读改造）：`com.luxera.gomoku`（`game.play` 第二候选，action id 与井字棋相同、URI scheme 不同）；`com.luxera.reminder`（`reminder.manage`，`backing: APP_OWNED` + `ReminderResourceProjector` + `ReminderDispatchJob`）；DH 侧 `ReminderService` 改为读 Resource / 写 action，`ReminderRepository` 与 `@Entity Reminder` 删除，`Reminder` 降级为 DTO；新增 `ApplicationNotificationBridge`（`notify` 块 → `companion_notifications`）；`ProactiveEngine` 的提醒循环删除 | `check-lap.sh` 断言 2/3/9b/10 由 skip 转正（全绿，5 项待轮次）；`check.sh` 新增 16 条提醒契约断言全绿（含"旧 `reminders` 表一行没多"）；DH **229 → 253 测试**、application-platform **153 → 222**；三条禁止项逐条 grep 通过 |
 | **R6** | **MCP 适配器**：`POST /mcp`（JSON-RPC 2.0，协议 `2025-06-18`）实现 `initialize` / `notifications/*` / `ping` / `tools/list` / `tools/call`，`DELETE /mcp` 关会话；`McpToolCatalog` 把动作投影成工具（描述 = `agentHint` + 资源模板，schema = 动作 schema + 平台保留的 `target`）；工具名撞车时整个目录退化到全名；`McpPrincipalResolver`（`X-Mcp-Principal` + 服务密钥，**密钥留空即 MCP 关闭**）；`SecurityConfig` 放行 `/mcp`（MCP 客户端没有 JWT，身份由适配器自己验） | `McpProtocolTest` **19 条**（含"整条 MCP 往返不创建 `ApplicationSession`"）；`check-lap.sh` **断言 14 由 skip 转正** —— 真人经 REST 落子后，MCP 客户端在**同一行** resource 上应手；`McpEndpointSecurityTest`（过滤器链可达性）|
 | **R7** | **Agent 的 capability→action LLM 契约**：`AgentApplicationFlow` 长出**能力选择**与**应用选择**（`route()` = 意图 → 能力 → 应用，逐级收窄；门槛 `app.lap.capability-threshold`，默认 0.6）；动作选择改为**点名**（`pickAction`：在候选里挑一个；只有唯一候选时才允许不点名；编造的动作 id 一律不行动）；`LlmRouter` 三处修正（未知 task 原样通过 / 调用方给的 model 优先 / metadata 透传）；`application.yml` 加 `app.lap.capability-threshold` 与 `app.llm.purpose.application`；`ReminderPlanner` 成为 `route()` 的生产调用方 —— "这句话该不该动用应用"从此由平台回答，不由适配器自己猜 | `AgentApplicationFlowTest` **9 → 21 条**、新增 `LlmRouterPurposeTest` **7 条**、新增 `DhApplicationKnowledgeArchitectureTest` **3 条**（DH 源码里不许再出现任何具体应用的知识）、`check-lap.sh` 断言 11 从"跳过"改为**双模式断言**（见下）|
+| **R8** | **生命周期状态机 + REMOTE + 收尾**：`ApplicationStatus` 上的十态迁移表（`canMoveTo` / `legalSuccessorsOf`）+ `ApplicationLifecycleService` + `PATCH /api/v1/applications/{id}/status`（**只有 `SYSTEM`/`APPLICATION` 推得动**，真人 403）；应用与版本行状态**一起**推进，于是发现链真的会因挂起而收敛；`RemoteApplicationRegistrar` + `RemoteApplicationInvoker`（**每个 action 各挂一个转发 handler**、HMAC-SHA256 over `timestamp + "." + body`、转发**派生**幂等键、硬超时、HTTP → `ActionStatus` 同一套映射、`authRef` 是名字不是密钥）；`OutboxRelay` + `ApplicationOutboxRelayJob`（让 subscription 的 `INBOX` 模式成真，主键是事件的确定函数，至少一次投递、失败转 `DEAD` 不静默丢弃）；`SessionReaperJob`（7 天空闲会话**只结束不删除**）；`lap-drop-legacy.sh` DROP 四张遗留表 | 新增 `LifecycleStateMachineTest` **8 条**（含 `theVersionRowsMoveWithTheApplication`，它在实现里抓出一个真 bug —— 恢复分支的条件写反，成了死代码）、`VersionImmutabilityTest` **5 条**、`OutboxRelayTest` **7 条**、`SessionReaperTest` **5 条**、`RemoteApplicationInvokerTest` **12 条**（真 `HttpServer`，验签/超时/幂等键派生逐条断言）、`RemoteApplicationRegistrarTest` **7 条**（手工装配，避免污染共享内存注册表）；application-platform **241 → 285 测试**；`check-lap.sh` 断言 1 的"旧表不存在"半边**打开**（逐张断言四张遗留表已删）、新增断言 16（生命周期 + 版本不可变）与断言 17（`INBOX` 真的投出去了：`lap_outbox` 落行 → `status='DELIVERED'` → `last_delivered_at` 非空）|
 
 **R5 的关键决定**（两个新增参考应用 + DH 提醒只读改造）：
 
@@ -351,6 +352,56 @@ backend/
 前者该去重装，后者该去装。HTTP 状态与 `ActionStatus` 的映射集中在**唯一一个** `ActionStatusMapper`，
 REST / MCP / `ApplicationRuntimePort` 共用。
 
+**R8 的关键决定**（生命周期状态机 + REMOTE + 投递 + 收尾）：
+
+1. **状态字段必须真的被读，否则它与不存在没有区别。** 这是整轮里唯一一条能解释"为什么非做不可"的
+   理由，所以有两条硬后果：`transition()` 把 `application.status` 与 `application_version.status`
+   一起推进（后者正是 `VERSION_IMMUTABLE` 的依据），发现面按 `isDiscoverable()` 过滤 ——
+   被挂起的应用从能力/应用/动作三个列表上**一起消失**。`check-lap.sh` 断言 16 在真实服务上验这一条：
+   挂起 `com.luxera.gomoku` 后它从 `GET /api/v1/capabilities/game.play/applications` 里没了，
+   而 `com.luxera.tictactoe` 还在。
+2. **`SUSPENDED` 是软停用，不是停机。** 从发现链上撤下，但**已安装的调用不受影响** ——
+   一盘正在下的棋不该因为运营点了"暂停"而突然走不动。`DEPRECATED` 才是终态（`canMoveTo` 恒 false）。
+3. **应用与版本行的状态必须一起动。** 否则会出现"应用已停用、版本仍在架上"这种谁也不知道该信哪一份
+   的状态。**这条在实现里抓出过一个真 bug**：恢复分支的条件写成了"当前是 PUBLISHED"，而挂起那一步
+   刚把版本改成 SUSPENDED，于是那条分支是一段**谁也没走到过的死代码**，症状是"应用恢复了、版本还在
+   架下"——恢复了个寂寞。`LifecycleStateMachineTest.theVersionRowsMoveWithTheApplication` 抓的它。
+   正确条件是"当前是 SUSPENDED"，且**只放回 `latestVersion` 那一版**（单独被废弃过的历史版本不该被
+   这次恢复复活）。
+4. **REMOTE 的每一条保证都落在"远端是别人写的"这个前提上。** 所以：转发的是**派生**幂等键而不是调用方
+   那把（调用方的键只在 `(principal, key)` 里唯一，两个人各用 `"1"` 会在远端撞成同一次调用；派生键是
+   这次逻辑调用的确定函数 —— 重试仍幂等、跨调用方必不同）；签名把**时间戳纳入 HMAC**
+   （`sha256=HMAC(secret, timestamp + "." + body)`），否则一次被截获的请求可以被无限期重放；
+   `authRef` 是**名字**不是密钥，manifest 里永不出现密钥；超时/连不上/HTTP 错误码一律映射到与 REST
+   **同一套** `ActionStatus`。一个连不上的远端是"暂时不可用"（`REMOTE_UNAVAILABLE`）而不是"你没权限"——
+   调用方该做的是稍后重试。`authRef` 解析不到则相反：那是**平台没部署好**（`REMOTE_AUTH_UNRESOLVED`，
+   FAILED 而非 DENIED —— 报 403 会让人去查权限，查半天发现是配置漏了）。
+5. **`INBOX` 订阅的真相是一张表，不是一个内存队列。** 主键是 `sha256(eventId + "@" + subscriptionId)`
+   ——**该事件的确定函数**，于是"同一事件重复入队"是同一次投递而不是第二次，至少一次投递的代价
+   （重复）由这个主键在库层面兜住。`OutboxRelay` **刻意不带 `@Transactional`**：每行自己的 `save`
+   就是一次事务，投递成功与状态回写不会因为隔壁行失败而一起回滚。失败**绝不静默丢弃** ——
+   `attempts` + `last_error` 落库，超过上限转 `DEAD` 停手，留一行能查的死信好过让它消失。
+6. **回收会话只结束、从不删除。** 被结束的会话仍然解释得通（还记得是谁、装的哪一版、在哪个安装下开的），
+   而删掉的会话会让它名下所有 `action_invocation` 变成查不到上下文的孤儿。阈值 7 天与
+   `ActionInvocationReaperJob` 的 60 秒差三个数量级，因为问的是两个不同的问题："这个人还在玩吗"
+   与"这次调用还活着吗"。
+7. **`lap-drop-legacy.sh` 是运维脚本，不是启动钩子。** 应用启动时删表是 footgun（一次误启动就没了）。
+   四张遗留表（`dh_application` / `dh_game_session` / `dh_application_action_log` / `reminders`）在
+   R8 手工执行删除，`check-lap.sh` 断言 1 之前一直是"跳过"的那半边也同时打开 —— 逐张断言它们**不存在**，
+   于是"哪天有人把写入方加回来"会立刻炸在 CI 上，而不是等到某天发现数据长了两份。
+8. **六个模块第一次同处一个 Spring 上下文时，抓出了一个所有既有守卫都看不见的 bug。** LAP 的
+   `lap_outbox` 仓储原本叫 `OutboxEventRepository`，与平台核心里那张 `outbox_event` 表的仓储**撞了简名**
+   —— Spring 的默认 Bean 名是*类简名首字母小写*，不是全限定名，于是 `bootstrap-app` 直接起不来：
+   `The bean 'outboxEventRepository' … has already been defined`。它隐形的原因是**每一层守卫都恰好
+   管不着**：各模块自己的测试只看得到一个类；包归属与 Maven 依赖全都正确，`check-v10.sh` 十条边界规则
+   一条都不会响；ArchUnit 的依赖规则也看不到（类型不同、没有依赖关系，冲突的东西是**一个字符串**）。
+   修法是把 LAP 那个改名为 `LapOutboxRepository`（对应它真正映射的 `lap_outbox` 表），
+   **不是**打开 `allow-bean-definition-overriding` —— 那只是把失败推迟到运行期。
+   补的守卫是 `bootstrap-app` 的 `BeanNameCollisionArchitectureTest`：扫描全部六个模块，
+   按 Spring 的规则算出每个 Bean 的名字并断言不重复；扫描面**刻意比"带注解的类"宽一层**，
+   因为 Spring Data 仓储接口没有注解（靠继承 `Repository` 标记被扫到）—— 只扫 `@Component` 一族
+   会正好漏掉这次的真凶。
+
 ### 参考应用口径（统一说法，避免后续误判工作量）
 
 **一个迁移应用（TicTacToe）+ 两个新增参考应用（Gomoku 15×15、Reminder 提醒/日程）。**
@@ -364,25 +415,32 @@ DH 的改动全是提醒只读改造带来的），R7 之后它又多了一道�
 
 ### 当前验收
 
-- `mvn test`：**601 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform 24 /
-  digital-human-platform **275** / application-platform **241** / bootstrap-app **38**
+- `mvn test`：**646 测试全绿** —— contracts 23 / platform-kernel 0 / chat-platform 24 /
+  digital-human-platform **275** / application-platform **285** / bootstrap-app **39**
 - `bash scripts/check-v10.sh` → `check-v10 OK`（41 个顶层包分属 5 个所有权模块，10 对引用 + 10 对 pom）
 - `bash scripts/check.sh`（起 jar）→ **✅ 全量验收全部通过**（聊天/数字人链路无回归；
   含 R5 新增的 16 条提醒契约断言）
-- `bash scripts/check-lap.sh` → **✅ 验收通过（3 项未到轮次，已跳过）**；断言 2 / 3 / 9b / 10 / 11 / 14 已转正
+- `bash scripts/check-lap.sh` → **✅ 验收通过**；断言 2 / 3 / 9b / 10 / 11 / 14 / **16 / 17** 已转正
   （`reminder.manage` 入目录、`game.play` 两个候选、未安装 → `NOT_INSTALLED`、
   装上提醒应用后经同一个 execute 端点建提醒并读回收件箱；**断言 14**：MCP 客户端与真人在
   **同一行** resource 上对弈 —— `board[0]=X`(真人 REST) / `board[4]=O`(Agent MCP)，且
-  `application_session` 一行没多；**断言 11** 见 R7 的决定 7）；断言 13 确认 `GET /api/v10/applications` → **404**
-- 仍未到轮次的 3 项：断言 1 的"旧表不存在"半边（等 **R8** 的 `lap-drop-legacy.sh`）、
-  断言 12（reality ledger 条目）与断言 15（共享世界）—— 后两项是**同一个前提**：数字人真的动手了，
-  而在本机的 mock LLM 下"不行动"是有意为之，所以它们只在 `LAP_EXPECT_AGENT_MOVE=1` 且服务接了真实
-  LLM 时才会执行（断言 12 的判据是 `timeline_event` 里那一条 `APPLICATION_ACTION_EXECUTED`）
+  `application_session` 一行没多；**断言 11** 见 R7 的决定 7；**断言 16**：挂起 `com.luxera.gomoku`
+  后它从 `GET /api/v1/capabilities/game.play/applications` 里**真的消失**、跳步 → `409 ILLEGAL_TRANSITION`、
+  真人 → `403`、复原后重新出现，最后对已发布版本写 manifest → `409 VERSION_IMMUTABLE`；
+  **断言 17**：`INBOX` 订阅的事件先落进 `lap_outbox` 一行，再由 relay 在 20 秒内投成 `DELIVERED`，
+  订阅自己的 `last_delivered_at` 同时跟上 —— 只断言"有一行"会让一个从不投递的 relay 全绿，
+  只断言"投出去了"会让一个不落库就直投的实现全绿）；断言 13 确认 `GET /api/v10/applications` → **404**
+- **断言 1 的"旧表不存在"半边已在 R8 打开**（`lap-drop-legacy.sh` 已执行）：
+  `dh_application` / `dh_game_session` / `dh_application_action_log` / `reminders` 四张表逐张断言不存在，
+  于是"哪天有人把写入方加回来"会立刻炸在 CI 上
+- 仍只在**真实 LLM** 下执行的 2 项：断言 12（reality ledger 条目）与断言 15（共享世界）——
+  两者是**同一个前提**：数字人真的动手了，而在本机的 mock LLM 下"不行动"是有意为之，所以它们只在
+  `LAP_EXPECT_AGENT_MOVE=1` 且服务接了真实 LLM 时才会执行（断言 12 的判据是 `timeline_event` 里
+  那一条 `APPLICATION_ACTION_EXECUTED`）
 - `cd frontend && npm run build` → 通过
 - **CI 顺序**（每一轮都照这个跑）：`check-v10.sh` → `mvn test` → 起 jar（断言 14 要求带
   `LAP_MCP_SERVICE_KEY`）→ `check.sh` → `check-lap.sh` → `npm run build`
-- 尚未完成：**R8** 生命周期状态机 + REMOTE + outbox + `SessionReaperJob` +
-  `lap-drop-legacy.sh` 清理遗留表（R7 已完成）
+- **LAP v1 的九轮（R0–R8）已全部完成。**
 
 ---
 
@@ -591,7 +649,7 @@ DH 的改动全是提醒只读改造带来的），R7 之后它又多了一道�
 | 认知 | `thoughts`、`intentions`、`open_loops`、`emotional_episodes` |
 | 世界 | `world_events`、`digital_world_events`、`event_log`、`scheduled_actions`、`pending_message_states`、`interaction_sessions` |
 | 行为 | `behavior_patterns` |
-| 工具 | `reminders`（遗留，R8 删除）、`companion_notifications`、`reflection_records` |
+| 工具 | ~~`reminders`~~（R8 已 DROP）、`companion_notifications`、`reflection_records` |
 
 ### 验收
 
@@ -692,7 +750,7 @@ users 1─* companions 1─* conversations 1─* messages
                      ├─* memories 1─* memory_links（自关联图谱）
                      ├─* user_facts / user_preferences / user_patterns / user_hypotheses
                      ├─1 agent_states
-                     ├─* reminders（遗留，R8 删除）
+                     ├─* （遗留 `reminders` 已于 R8 DROP）
                      └─* companion_notifications
 ```
 
@@ -750,7 +808,7 @@ users 1─* companions 1─* conversations 1─* messages
 | `shared_experiences` | id, relationship_id, type, title, description, importance, occurred_at |
 | `agent_states` | id, companion_id, mood, energy, stress, social_energy, curiosity, emotional_closeness, updated_at |
 | `reflection_records` | id, user_id, companion_id, type(daily/weekly), period, summary, insights(JSON), memory_candidates(JSON), user_model_candidates(JSON), relationship_candidates(JSON) |
-| `reminders` | id, user_id, companion_id, type(birthday/user_set/check_in), title, content, remind_at, status, payload(JSON) —— **过渡期遗留**：LAP v1 R5 起无写入方，提醒已归 `com.luxera.reminder` 的 `reminder_item` 表（见「LAP v1 · 应用平台」一节），R8 由 `lap-drop-legacy.sh` DROP |
+| ~~`reminders`~~ | id, user_id, companion_id, type(birthday/user_set/check_in), title, content, remind_at, status, payload(JSON) —— **已删除**（R8 由 `scripts/lap-drop-legacy.sh` DROP）。LAP v1 R5 起就没有写入方，提醒已归 `com.luxera.reminder` 的 `reminder_item` 表（见「LAP v1 · 应用平台」一节）；`check-lap.sh` 断言 1 现在会断言它**不存在** |
 | `companion_notifications` | id, user_id, companion_id, type, title, content, is_read, created_at |
 
 ### 9.6 JSON 存储实现

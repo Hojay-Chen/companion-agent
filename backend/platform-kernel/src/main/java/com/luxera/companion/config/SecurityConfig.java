@@ -1,6 +1,7 @@
 package com.luxera.companion.config;
 
 import org.springframework.context.annotation.Bean;
+import org.springframework.http.HttpMethod;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -46,6 +47,17 @@ public class SecurityConfig {
                         // (app.lap.mcp.service-key) 为空时 resolver 拒绝一切请求 —— 没配密钥的部署上,
                         // /mcp 仍然是一个 403 的死端点, 只是回的是 JSON-RPC 形状的 403。
                         .antMatchers("/mcp").permitAll()
+                        // LAP §Developer API: 开发者面与 MCP 同一个道理 —— "上架/写 manifest" 的身份
+                        // 是**服务密钥**(APPLICATION/SYSTEM), JWT 这一层表达不了它。留在 anyRequest()
+                        // 后面的话, 平台自己的调用会在过滤器上变成 403, 连控制器都到不了,
+                        // 于是这两个端点看起来"已经实现"却谁都调不通。
+                        //
+                        // 只放行这两个具体方法与路径, 不是整个 /api/v1/applications/** —— 发现面
+                        // (GET capabilities / applications / actions) 仍然在 anyRequest() 后面,
+                        // 真人 JWT 照旧。鉴权本身在控制器第一步: 解析链认不出身份就 401, 认出来是
+                        // 真人则被 ApplicationLifecycleService 以 LIFECYCLE_FORBIDDEN 拒成 403。
+                        .antMatchers(HttpMethod.PATCH, "/api/v1/applications/*/status").permitAll()
+                        .antMatchers(HttpMethod.PUT, "/api/v1/applications/*/versions/*/manifest").permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();

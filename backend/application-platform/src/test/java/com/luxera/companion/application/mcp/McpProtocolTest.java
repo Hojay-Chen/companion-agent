@@ -4,7 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luxera.companion.application.StubPrincipalTokenReader;
 import com.luxera.companion.application.manifest.ApplicationManifest;
+import com.luxera.companion.application.lifecycle.ApplicationCatalogue;
 import com.luxera.companion.application.manifest.ManifestRegistry;
+import com.luxera.companion.application.repository.ApplicationRepository;
 import com.luxera.companion.application.manifest.RuntimeType;
 import com.luxera.companion.application.principal.ResolvedPrincipal;
 import com.luxera.companion.application.repository.ApplicationSessionRepository;
@@ -75,6 +77,9 @@ class McpProtocolTest {
 
     @Autowired
     McpSessions protocolSessions;
+
+    @Autowired
+    ApplicationRepository applications;
 
     @Autowired
     InstallationService installations;
@@ -286,11 +291,14 @@ class McpProtocolTest {
     @Test
     void collidingShortNamesFallBackToTheFullApplicationId() {
         // 用一份独立的注册表: 共享的那份是启动时装好的, 往里塞测试应用会污染别的用例。
+        // 发现链要的是"注册表 ∩ 账本"的交点, 所以这里也得配一个 catalogue —— 账本里没有
+        // 这两个应用, 于是按 ApplicationCatalogue 的语义它们是在架的(见该类的类注释)。
         ManifestRegistry isolated = new ManifestRegistry();
         isolated.register(minimalManifest("com.luxera.alpha.game"));
         isolated.register(minimalManifest("com.luxera.beta.game"));
 
-        List<String> names = new McpToolCatalog(isolated, objectMapper).tools(null, null).stream()
+        List<String> names = new McpToolCatalog(new ApplicationCatalogue(isolated, applications),
+                objectMapper).tools(null, null).stream()
                 .map(McpToolCatalog.McpTool::name)
                 .toList();
 

@@ -6,9 +6,10 @@ import java.util.List;
 /**
  * LAP v1 — an agent subscribes and waits, rather than polling.
  *
- * <p>Kept honest by being explicit about its limits: with the in-process sink, a subscription is a
- * filter evaluated just before delivery; durable delivery (an {@code INBOX} a subscriber drains)
- * only becomes real once the outbox relay exists.
+ * <p>Two delivery modes, two exits. {@code SINK} is a filter evaluated just before in-process
+ * delivery. {@code INBOX} is durable: matching events are written to the platform's outbox inside
+ * the business transaction and retried until delivered, so a subscriber that goes away and comes
+ * back still finds them.
  *
  * <p>One thing this is <em>not</em>: a scheduler. "Remind me at 15:00" is an application's own
  * due-time job, not a subscription — modelling it here would produce an agent that never reminds

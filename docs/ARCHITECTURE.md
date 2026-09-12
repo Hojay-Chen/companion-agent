@@ -256,6 +256,61 @@ MCP 是**适配器，不是第二个平台**。它只做两件翻译，两件都
 `contracts.provision` 里的 `CompanionProvisioningPort` / `ChatProvisioningPort` 是伴侣创建时的
 跨平台编排端口（DH 拥有 companion，chat 拥有 user account + simulator device）。
 
+### 生命周期、REMOTE 与投递（R8 起）
+
+**状态机**在 `ApplicationStatus` 上，不在服务里 —— 合法迁移表是领域知识，放枚举上就只有一个地方
+能回答"能不能"。`ApplicationLifecycleService` 只做三件事：查当前状态、问规则、把结果落下去。
+`PATCH /api/v1/applications/{id}/status` 是唯一入口，**只有 `SYSTEM` 与 `APPLICATION` 身份推得动**
+（真人拿 JWT 能到达这个端点，但会被 403 挡下）。
+
+```
+DRAFT → DEVELOPING → TESTING → SUBMITTED → REVIEWING ─┬─→ REJECTED → DEVELOPING
+                                                      └─→ APPROVED → PUBLISHED ─┬─→ SUSPENDED ⇄ PUBLISHED
+                                                                                └─→ DEPRECATED（终态）
+```
+
+> **状态字段必须真的被读，否则它与不存在没有区别。** 这里有两处实际后果：`transition()` 把
+> `application.status` 与 `application_version.status` **一起**推进（后者正是 `VERSION_IMMUTABLE`
+> 的依据），而发现面按 `isDiscoverable()` 过滤 —— 一个被挂起的应用从能力/应用/动作三个列表上
+> **一起消失**，而不是只在一个没人读的字段上写着 `SUSPENDED`。
+>
+> **`SUSPENDED` 是软停用**：从发现链上撤下，**已安装的调用不受影响**。一盘正在下的棋不该因为
+> 运营点了"暂停"而突然走不动。`DEPRECATED` 是终态，`canMoveTo` 对任何目标都返回 false。
+>
+> 应用与版本行的状态必须一起动，否则会出现"应用已停用、版本仍在架上"这种谁也不知道该信哪一份的
+> 状态。`LifecycleStateMachineTest` 里有一条 `theVersionRowsMoveWithTheApplication` 就是钉这个的 ——
+> 它在实现里抓出过一个真 bug：恢复分支的条件写成了"当前是 PUBLISHED"，而挂起那一步刚把它改成
+> SUSPENDED，于是那条分支是**谁也没走到过的死代码**，症状是"应用恢复了、版本还在架下"。
+
+**REMOTE 应用**是「加一种运行时 = 加一个 handler」这句话在远端上的兑现。内置与远端在宿主侧唯一的
+实质差别是：后者的 handler 由**平台**提供，应用作者不需要提交任何代码，只需要一个能收 HTTP 的地址。
+`RemoteApplicationRegistrar` 为 manifest 里的**每一个** action 各挂一个转发 handler（而不是挂一个
+"远端应用"再靠动作名分派），于是"每个动作都要有 handler"那条发布前校验自动成立。
+
+| 关切 | 做法 |
+|---|---|
+| 身份 | 头 `X-Lap-Application` / `Version` / `Action` / `Principal` / `Timestamp` + body 里带 `principal` 与 `correlationId` |
+| 完整性 | `X-Lap-Signature: sha256=…` —— HMAC-SHA256 over `timestamp + "." + body`。**时间戳纳入签名**，一次被截获的请求才不能在没有密钥的情况下被无限期重放 |
+| 密钥 | manifest 里写的是 `runtime.remote.authRef`，那是**名字**不是密钥；名字由平台配置解析（`app.lap.remote.auth.<name>`），**manifest 里永不出现密钥** |
+| 幂等 | 转发的是**派生**键（`sha256(applicationId@version@action@principal@resource@input)`），不是调用方那把。调用方的键只在 `(principal, key)` 作用域里唯一，两个人各用 `"1"` 会在远端撞成同一次调用；派生键是"这一次逻辑调用"的确定函数，所以重试仍幂等、跨调用方必不同 |
+| 失败 | 硬超时 → `REMOTE_TIMEOUT`；连不上 → `REMOTE_UNAVAILABLE`；HTTP 409/404/403/401/400/422/500 映射到与 REST **同一套** `ActionStatus`；`authRef` 解析不到是**平台没部署好**（`REMOTE_AUTH_UNRESOLVED`，FAILED 而非 DENIED —— 报 403 会让人去查权限，查半天发现是配置漏了） |
+| 配置 | `app.lap.remote-applications` **默认为空** —— 一个默认指向某台服务器的地址，会让机器在启动时才暴露出来 |
+
+**投递**分两种模式，同一个 `SubscriptionService` 发出去：`SINK` 立即调 `ApplicationEventSink`
+（`afterCommit`，无事务时立即投递），`INBOX` 落 `lap_outbox` 由 `OutboxRelay` 异步投递。
+outbox 的主键是 `sha256(eventId + "@" + subscriptionId)` —— **该事件的确定函数**，所以
+"同一事件的重复入队"是同一次投递而不是第二次；重放安全由此成立，不需要消费者那边再取一次幂等。
+`OutboxRelay` **刻意不带 `@Transactional`**：每行自己的 `save` 就是一次事务，投递成功与状态回写
+不会因为隔壁行失败而一起回滚 —— 语义是**至少一次**，代价（重复投递）由上面那把确定主键兜住。
+
+> **投递失败绝不静默丢弃**：`attempts` 累加 + `last_error` 落库，超过 `app.lap.outbox.max-attempts`
+> 转 `DEAD` 并停止重试。留一行能查的死信，好过让它消失。
+
+**空闲会话回收**（`SessionReaperJob`，默认阈值 168 小时）**只结束、从不删除**。这条区别不是措辞上的：
+被结束的会话仍然解释得通（还记得是谁、装的哪一版、在哪个安装下开的），而删掉的会话会让它名下所有
+`action_invocation` 变成查不到上下文的孤儿。阈值与 `ActionInvocationReaperJob` 差着三个数量级
+（7 天 vs 60 秒），因为两件事问的是不同的问题："这个人还在玩吗"与"这次调用还活着吗"。
+
 ---
 
 ## 4. 测试怎么在"没有另一个平台"的情况下跑
@@ -290,7 +345,7 @@ MCP 是**适配器，不是第二个平台**。它只做两件翻译，两件都
 
 ```bash
 cd backend
-mvn clean test                       # 全模块 601 测试
+mvn clean test                       # 全模块 646 测试
 mvn -DskipTests package              # 产出可执行 jar
 ```
 
@@ -365,12 +420,13 @@ java -jar backend/bootstrap-app/target/companion-platform-bootstrap-1.0.0.jar
 | `permission_grant` | 安装之下的第二维：能力级或动作级授权 + 风险上限 + 过期 |
 | `application_session` | 平台级会话；应用自己的业务对象挂在它下面 |
 | `resource` | **统一读模型**：`uri` 唯一 + `state_json` + `state_version`（CAS 用） |
-| `subscription` | 会话之内的事件订阅（`SINK` 模式；`INBOX` 要等 R8 的 outbox） |
+| `subscription` | 会话之内的事件订阅：`SINK` 立即投递，`INBOX` 落 `lap_outbox` 由 `OutboxRelay` 异步投递 |
 | `action_invocation` | 幂等账本，`UQ(principal_type, principal_id, idempotency_key)` + `request_hash` + `started_at` |
 | `application_action_log` | 审计（权限判定 + 执行结果分开记 —— 旧表把两者塞进同一个字段，是废字段） |
 | `reminder_item` | **应用自有**（`backing: APP_OWNED`）：提醒的真相在这里，读的时候由 `ReminderResourceProjector` 投影成 `reminder://owner/{ownerId}` 的 `ResourceView`。字段名与旧表不同（`note` / `dueAt`），但 DH 的 REST 面把它们翻译回 `content` / `remindAt` |
-| `dh_application` / `dh_game_session` / `dh_application_action_log` | **遗留**：`/api/v10` 应用面自 R4 起已删（实测 404），这三张表从此没有写入方；R8 由 `lap-drop-legacy.sh` 统一 DROP |
-| `reminders` | **遗留**：数字人的提醒表。R5 起**也没有写入方**了 —— 提醒（含生日提醒）的创建/完成/取消全部经 `reminder.create` / `reminder.complete` / `reminder.cancel` 落到 `reminder_item`；DH 侧只剩 `ReminderService` 通过 `ApplicationRuntimePort` 的读与调用。R8 一并 DROP |
+| `lap_outbox` | `INBOX` 订阅的待投递事件（主键 = `sha256(eventId + "@" + subscriptionId)`，**该事件的确定函数** —— 于是重放不会投第二次）；`status ∈ PENDING/DELIVERED/DEAD` + `attempts` + `last_error` |
+| `dh_application` / `dh_game_session` / `dh_application_action_log` | **已删除**（R8 由 `scripts/lap-drop-legacy.sh` DROP）。`/api/v10` 应用面自 R4 起已删（实测 404），这三张表从那时起就没有写入方 |
+| `reminders` | **已删除**（R8 一并 DROP）。R5 起就没有写入方了 —— 提醒（含生日提醒）的创建/完成/取消全部经 `reminder.create` / `reminder.complete` / `reminder.cancel` 落到 `reminder_item`；DH 侧只剩 `ReminderService` 通过 `ApplicationRuntimePort` 的读与调用。`check-lap.sh` 断言 1 现在会**逐张断言这四张表不存在** |
 
 > **棋局状态最终不建表**：棋盘**就是**一条 Resource（`game://session/{id}` 的 `state_json`），
 > 在 action 的同事务内经 `ResourceStore` 写入。这是「Resource 是统一读模型」最直接的证明。

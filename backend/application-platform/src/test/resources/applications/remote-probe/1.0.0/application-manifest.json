@@ -1,0 +1,87 @@
+{
+  "identity": {
+    "id": "com.luxera.probe",
+    "name": "远端探针",
+    "version": "1.0.0",
+    "description": "测试夹具, 不是一个参考应用: 它只用来证明一份 REMOTE 的 manifest 能被平台注册、它的每个动作都能挂上转发 handler。",
+    "category": "diagnostics"
+  },
+
+  "capabilities": [
+    {
+      "id": "probe.diagnostics",
+      "title": "远端探针",
+      "description": "只有测试会装它",
+      "category": "diagnostics"
+    }
+  ],
+
+  "actions": [
+    {
+      "id": "probe.ping",
+      "capability": "probe.diagnostics",
+      "title": "打个招呼",
+      "description": "让远端回一句话",
+      "permission": "READ",
+      "risk": "NONE",
+      "attention": "NONE",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "echo": { "type": "string" }
+        }
+      },
+      "agentHint": "只读探针。"
+    },
+    {
+      "id": "probe.touch",
+      "capability": "probe.diagnostics",
+      "title": "记一下",
+      "description": "远端有副作用的那个动作, 用来验签与幂等键转发",
+      "permission": "WRITE",
+      "risk": "LOW",
+      "attention": "AWARE",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "note": { "type": "string" }
+        }
+      },
+      "agentHint": "写探针。"
+    }
+  ],
+
+  "resources": [
+    {
+      "type": "probe.state",
+      "uriTemplate": "probe://probe/{id}",
+      "backing": "APP_OWNED",
+      "agentHint": "状态在远端, 平台不持有它 —— 这正是 REMOTE 与 NATIVE 的差别。"
+    }
+  ],
+
+  "events": [
+    {
+      "type": "probe.touched",
+      "title": "远端记了一笔",
+      "triggersAgent": false,
+      "idTemplate": "{uri}#TOUCH-{note}"
+    }
+  ],
+
+  "permissions": [
+    {
+      "capability": "probe.diagnostics",
+      "level": "WRITE",
+      "riskCeiling": "LOW"
+    }
+  ],
+
+  "runtime": {
+    "type": "REMOTE",
+    "remote": {
+      "baseUrl": "http://127.0.0.1:9/lap/actions:execute",
+      "authRef": "probe"
+    }
+  }
+}

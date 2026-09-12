@@ -124,6 +124,12 @@ app:
     relationship-projection-cron: '0 0 4 * * *'
     # LAP v1 幂等调用回收(默认每 5 分钟) — 崩溃遗留的 IN_PROGRESS 行靠它收敛到 EXPIRED
     invocation-reaper-cron: '0 */5 * * * *'
+    # LAP v1 空闲会话回收(默认每天 04:30) — 结束长时间没人碰的 ApplicationSession。
+    # 频率刻意是"天"而不是"分钟": 一个会话卡住不影响任何人, 而误杀一个人正在玩的棋局会。
+    session-reaper-cron: '0 30 4 * * *'
+    # LAP v1 订阅投递轮询(默认每 5 秒) — 频率与 invocation reaper 相反, 因为
+    # "数字人怎么不理我"是用户能感知的时延, 而一条卡住的调用记录只有排障的人会去看。
+    lap-outbox-relay-cron: '*/5 * * * * *'
 
   # ── LAP v1 应用平台 ────────────────────────
   lap:
@@ -140,6 +146,22 @@ app:
     # MCP 适配器的服务密钥(R6); 留空 = MCP 完全关闭, 不是"无鉴权"
     mcp:
       service-key: ${LAP_MCP_SERVICE_KEY:}
+    # 空闲会话门槛(R8)。168 小时 = 7 天没碰过才结束 —— 与上面的 invocation-timeout 是两个
+    # 完全不同的问题("这次调用还活着吗" vs "这个人还在玩吗"), 所以不共用同一个数字。
+    session:
+      reap-idle-hours: ${LAP_SESSION_REAP_IDLE_HOURS:168}
+    # 订阅投递(R8): 一轮取多少条、同一个事件失败几次才判死。
+    # 判死之后行留在表里并带上 last_error —— 排障的人能看到"它为什么没送到", 而不是一片空白。
+    outbox:
+      batch-size: ${LAP_OUTBOX_BATCH_SIZE:50}
+      max-attempts: ${LAP_OUTBOX_MAX_ATTEMPTS:5}
+    # 远端应用(R8)。默认空 —— 一个默认指向某台服务器的地址, 会让一台什么都没部署的机器
+    # 在启动时才暴露出来。密钥本身走 app.lap.remote.auth.<authRef>, 永不进 manifest。
+    remote-applications: ${LAP_REMOTE_APPLICATIONS:}
+    remote:
+      timeout-ms: ${LAP_REMOTE_TIMEOUT_MS:3000}
+      # auth:            # 形如
+      #   probe: ${LAP_REMOTE_AUTH_PROBE:}   # key 是 manifest 里 runtime.remote.authRef 的名字
 
   # 主动消息打断控制
   proactive:

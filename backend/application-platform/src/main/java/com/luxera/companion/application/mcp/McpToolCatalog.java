@@ -4,8 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.luxera.companion.application.lifecycle.ApplicationCatalogue;
 import com.luxera.companion.application.manifest.ApplicationManifest;
-import com.luxera.companion.application.manifest.ManifestRegistry;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -18,7 +18,7 @@ import java.util.Optional;
  * LAP v1 §MCP: <b>动作 → MCP 工具</b>的那一层翻译。
  *
  * <p>翻译的方向是刻意单向的: <em>manifest 是真相, 工具描述是它的投影</em>。这里不新增任何
- * 语义、不缓存任何东西 —— 每次 {@code tools/list} 都从 {@link ManifestRegistry} 现算一遍。
+ * 语义、不缓存任何东西 —— 每次 {@code tools/list} 都由 {@link ApplicationCatalogue} 现算一遍。
  * 缓存一份工具表意味着"应用发了新版本但工具列表还是旧的", 而这类不一致没有第二个地方能发现。
  *
  * <p><b>工具名 = {@code <应用短名>.<动作 id 里的点换成下划线>}</b>, 例如
@@ -42,11 +42,11 @@ public class McpToolCatalog {
     private static final List<String> RESERVED_ARGUMENTS =
             List.of(ARG_TARGET, ARG_EXPECTED_VERSION, ARG_IDEMPOTENCY_KEY);
 
-    private final ManifestRegistry manifests;
+    private final ApplicationCatalogue catalogue;
     private final ObjectMapper objectMapper;
 
-    public McpToolCatalog(ManifestRegistry manifests, ObjectMapper objectMapper) {
-        this.manifests = manifests;
+    public McpToolCatalog(ApplicationCatalogue catalogue, ObjectMapper objectMapper) {
+        this.catalogue = catalogue;
         this.objectMapper = objectMapper;
     }
 
@@ -75,7 +75,8 @@ public class McpToolCatalog {
      * "不要把 50000 个 action 塞给 LLM"在传输层的落点 —— Agent 先选能力, 再选应用, 再拿动作。
      */
     public List<McpTool> tools(String capabilityId, String applicationId) {
-        List<ApplicationManifest> all = manifests.applications();
+        // 发现链与 REST 面共用同一份"谁在架"的判断 —— 下架的应用不该在这个传输面上还活着。
+        List<ApplicationManifest> all = catalogue.discoverable();
         Map<String, Integer> shortNameCensus = census(all);
 
         Map<String, McpTool> byName = new LinkedHashMap<>();

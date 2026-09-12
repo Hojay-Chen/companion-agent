@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.luxera.companion.application.manifest.ApplicationManifest;
+import com.luxera.companion.application.outbox.OutboxEventStore;
 import com.luxera.companion.contracts.application.ApplicationEvent;
 import com.luxera.companion.contracts.spi.ApplicationEventSink;
 import lombok.extern.slf4j.Slf4j;
@@ -34,10 +35,14 @@ import java.util.Optional;
  * 一个随后回滚的状态, 然后自信地回应一步根本没发生的棋。没有事务时立即投递 —— 那种情况下
  * 没有"以后"可言。
  *
- * <p><b>本轮是进程内直投。</b>{@code delivery_mode=INBOX}(持久投递, 订阅者自己来取)要等 R8 的
- * outbox relay。在那之前 {@code SubscriptionService} 只记录与匹配, 不假装能持久投递 ——
- * 这一条写在类注释里而不是留给人猜, 是因为"订阅看起来生效了但其实没有"是这类系统里最贵的
- * 一类误解。
+ * <p><b>出口有两条, 而且只有两条。</b>
+ * <ul>
+ *   <li><b>直投</b>(下面的 {@code deliver}) —— 事务提交之后, 进程内交给 sink。快, 但不保证:
+ *       投递失败只写一条 WARN, 没有重试;</li>
+ *   <li><b>收件箱</b>({@code OutboxEventStore} + {@code ApplicationOutboxRelayJob}) ——
+ *       在<em>业务事务之内</em>落一行, 由 relay 慢慢投, 失败重试、试满 DEAD。慢一点, 但不丢。</li>
+ * </ul>
+ * 一条事件如果已经被收件箱接走, 就不再直投 —— 见 {@link #publishAfterCommit}。
  *
  * <p>投递失败<em>不影响</em>动作结果: 动作已经提交了, 数字人没接住这条事件是它自己的问题,
  * 不该让一次成功的落子变成 500。
@@ -48,19 +53,39 @@ public class LapEventPublisher {
 
     private final List<ApplicationEventSink> sinks;
     private final AgentRouteResolver router;
+    private final OutboxEventStore outbox;
     private final ObjectMapper objectMapper;
 
     public LapEventPublisher(List<ApplicationEventSink> sinks,
                              AgentRouteResolver router,
+                             OutboxEventStore outbox,
                              ObjectMapper objectMapper) {
         this.sinks = List.copyOf(sinks);
         this.router = router;
+        this.outbox = outbox;
         this.objectMapper = objectMapper;
     }
 
-    /** 按 manifest 过滤后, 在事务提交之后交给所有 sink。 */
+    /**
+     * 事件出平台的唯一入口: <b>先落收件箱(同事务), 再在事务提交之后直投。</b>
+     *
+     * <p>两条路一起走是有讲究的, 顺序不能反:
+     * <ol>
+     *   <li>{@code outbox.enqueue} 在<em>调用方的业务事务里</em>执行 —— 它写下的行与业务同生共死,
+     *       这是"不丢"的唯一来源;</li>
+     *   <li>直投仍然挂在 {@code afterCommit} 上 —— 它换来的是"快", 代价是不保证;</li>
+     *   <li>已经被收件箱接走的事件<em>不再直投</em>: 否则同一条步骤会走两遍, 数字人会对着同一步
+     *       棋动两次手。持久路径赢, 因为它至少不会少投。</li>
+     * </ol>
+     */
     public void publishAfterCommit(ApplicationManifest manifest, List<ApplicationEvent> events) {
-        List<ApplicationEvent> forward = forwardable(manifest, events);
+        if (events == null || events.isEmpty()) {
+            return;
+        }
+        List<String> inboxed = outbox.enqueue(manifest, events);
+        List<ApplicationEvent> forward = forwardable(manifest, events).stream()
+                .filter(event -> !inboxed.contains(event.id()))
+                .toList();
         if (forward.isEmpty()) {
             return;
         }

@@ -6,6 +6,7 @@ import com.luxera.companion.application.audit.ActionAuditRecorder;
 import com.luxera.companion.application.domain.ApplicationSessionRecord;
 import com.luxera.companion.application.domain.InstallationRecord;
 import com.luxera.companion.application.event.LapEventPublisher;
+import com.luxera.companion.application.lifecycle.ApplicationCatalogue;
 import com.luxera.companion.application.manifest.ApplicationManifest;
 import com.luxera.companion.application.manifest.ManifestRegistry;
 import com.luxera.companion.application.permission.PermissionDecision;
@@ -70,6 +71,7 @@ import java.util.Optional;
 public class ActionGateway implements ApplicationRuntimePort {
 
     private final ManifestRegistry manifests;
+    private final ApplicationCatalogue catalogue;
     private final ActionHandlerRegistry handlers;
     private final PendingActionRegistry pendingActions;
     private final ActionResolver resolver;
@@ -86,6 +88,7 @@ public class ActionGateway implements ApplicationRuntimePort {
     private final TransactionTemplate transaction;
 
     public ActionGateway(ManifestRegistry manifests,
+                         ApplicationCatalogue catalogue,
                          ActionHandlerRegistry handlers,
                          PendingActionRegistry pendingActions,
                          ActionResolver resolver,
@@ -101,6 +104,7 @@ public class ActionGateway implements ApplicationRuntimePort {
                          ObjectMapper objectMapper,
                          PlatformTransactionManager transactionManager) {
         this.manifests = manifests;
+        this.catalogue = catalogue;
         this.handlers = handlers;
         this.pendingActions = pendingActions;
         this.resolver = resolver;
@@ -136,17 +140,17 @@ public class ActionGateway implements ApplicationRuntimePort {
 
     @Override
     public List<ApplicationView> applicationsFor(String capabilityId) {
-        return manifests.byCapability(capabilityId).stream().map(ActionGateway::toView).toList();
+        return catalogue.discoverableFor(capabilityId).stream().map(ActionGateway::toView).toList();
     }
 
-    /** 全部已发布应用 —— 真人 UI 的"应用商店"页用。 */
+    /** 全部在架应用 —— 真人 UI 的"应用商店"页用。被挂起的应用在这里就看不见了。 */
     public List<ApplicationView> applications() {
-        return manifests.applications().stream().map(ActionGateway::toView).toList();
+        return catalogue.discoverable().stream().map(ActionGateway::toView).toList();
     }
 
     @Override
     public List<ActionSpec> actionsOf(String applicationId) {
-        return manifests.published(applicationId)
+        return catalogue.discoverable(applicationId)
                 .map(m -> m.actions().stream().map(a -> toSpec(m, a)).toList())
                 .orElse(List.of());
     }
